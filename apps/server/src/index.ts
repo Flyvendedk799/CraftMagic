@@ -160,8 +160,16 @@ await app.register(
 if (!config.anthropicApiKey) {
   app.log.warn('ANTHROPIC_API_KEY not set — generation endpoints will return 503');
 } else {
+  // Only checked when a key is present: without one nothing can be spent, so an unwritable
+  // ledger is harmless and must not stop the editor, exports and guide from being served.
+  ledger.assertWritable();
   app.log.info(
-    { model: config.anthropicModel, budgetUsd: config.monthlyBudgetUsd, spentUsd: ledger.spentThisMonth() },
+    {
+      model: config.anthropicModel,
+      budgetUsd: config.monthlyBudgetUsd,
+      spentUsd: ledger.spentThisMonth(),
+      ledger: ledger.path,
+    },
     'generation enabled',
   );
 }

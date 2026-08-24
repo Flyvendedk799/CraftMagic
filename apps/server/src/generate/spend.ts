@@ -59,6 +59,42 @@ export class SpendLedger {
 		this.load();
 	}
 
+	/** Where the ledger is kept. Reported at startup so a misconfigured path is visible. */
+	get path(): string {
+		return this.file;
+	}
+
+	/**
+	 * Prove the ledger can actually be written, before any money can be spent.
+	 *
+	 * A ledger that cannot be saved is worse than no ledger: `record()` runs *after* Anthropic
+	 * has already billed the call, so a failure there loses the entry while the charge stands.
+	 * Every later request then reads a ledger missing that spend and happily allows more — the
+	 * ceiling silently stops being a ceiling.
+	 *
+	 * This is a real configuration, not a hypothetical: the container runs as `node` while the
+	 * mounted data volume is owned by root, so the first paid call would have hit EACCES.
+	 * Callers should run this at startup whenever an API key is present and refuse to serve if
+	 * it throws.
+	 */
+	assertWritable(): void {
+		const dir = path.dirname(this.file);
+		try {
+			fs.mkdirSync(dir, { recursive: true });
+			const probe = path.join(dir, `.write-probe-${process.pid}`);
+			fs.writeFileSync(probe, 'probe', 'utf8');
+			fs.unlinkSync(probe);
+		} catch (err) {
+			throw new Error(
+				`the spend ledger directory ${dir} is not writable (${(err as Error).message}). ` +
+					`Refusing to start with an API key configured: spend is recorded after the call ` +
+					`is billed, so an unwritable ledger would let the monthly ceiling be exceeded ` +
+					`without trace. Fix the directory's ownership, or point ANTHROPIC_SPEND_LEDGER ` +
+					`somewhere writable.`,
+			);
+		}
+	}
+
 	private load(): void {
 		try {
 			if (!fs.existsSync(this.file)) return;

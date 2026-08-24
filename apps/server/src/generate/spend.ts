@@ -1,0 +1,140 @@
+/**
+ * Spend ledger and budget ceiling.
+ *
+ * This exists because the account behind this key holds a small fixed balance meant to last
+ * a month. A bug that retries in a loop, or a stray load test, could drain it in minutes —
+ * so every call is recorded, and the guard runs *before* the request, sized on what the call
+ * could cost at `max_tokens`, not what a typical one does.
+ *
+ * The ledger is a plain JSON file rather than a database row: it must work before Postgres
+ * is wired up, survive a server restart, and be readable by a human who wants to know where
+ * the money went.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { costOf, formatUsd, worstCaseCost, type ModelId, type TokenUsage } from './pricing.js';
+
+export interface SpendEntry {
+	at: string;
+	model: ModelId;
+	purpose: string;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+	costUsd: number;
+}
+
+export interface SpendSummary {
+	monthlyBudgetUsd: number;
+	spentThisMonthUsd: number;
+	remainingUsd: number;
+	callsThisMonth: number;
+	lifetimeUsd: number;
+	entries: SpendEntry[];
+}
+
+export class BudgetExceededError extends Error {
+	constructor(
+		readonly spent: number,
+		readonly budget: number,
+		readonly wouldCost: number,
+	) {
+		super(
+			`Anthropic monthly budget reached: ${formatUsd(spent)} of ${formatUsd(budget)} used, and this call could cost up to ${formatUsd(wouldCost)}. ` +
+				`Raise ANTHROPIC_MONTHLY_BUDGET_USD to continue.`,
+		);
+		this.name = 'BudgetExceededError';
+	}
+}
+
+export class SpendLedger {
+	private entries: SpendEntry[] = [];
+
+	constructor(
+		private readonly file: string,
+		readonly monthlyBudgetUsd: number,
+	) {
+		this.load();
+	}
+
+	private load(): void {
+		try {
+			if (!fs.existsSync(this.file)) return;
+			const parsed: unknown = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+			if (Array.isArray(parsed)) this.entries = parsed as SpendEntry[];
+		} catch {
+			// A corrupt ledger must not take the server down, but it must not silently reset
+			// the recorded spend either — keep the file and start a fresh in-memory list only
+			// after moving the old one aside.
+			const backup = `${this.file}.corrupt-${Date.now()}`;
+			try {
+				fs.renameSync(this.file, backup);
+			} catch {
+				// Nothing more to do; the guard below still applies to this process's calls.
+			}
+			this.entries = [];
+		}
+	}
+
+	private save(): void {
+		fs.mkdirSync(path.dirname(this.file), { recursive: true });
+		fs.writeFileSync(this.file, JSON.stringify(this.entries, null, 2), 'utf8');
+	}
+
+	private static monthKey(iso: string): string {
+		return iso.slice(0, 7); // YYYY-MM
+	}
+
+	spentThisMonth(now = new Date()): number {
+		const key = SpendLedger.monthKey(now.toISOString());
+		return this.entries
+			.filter((e) => SpendLedger.monthKey(e.at) === key)
+			.reduce((sum, e) => sum + e.costUsd, 0);
+	}
+
+	/**
+	 * Throw unless this call can be afforded at its worst case.
+	 *
+	 * Called before the request, never after — the point is to refuse to spend, not to
+	 * report having spent.
+	 */
+	assertCanAfford(model: ModelId, estimatedInputTokens: number, maxTokens: number): void {
+		const spent = this.spentThisMonth();
+		const ceiling = worstCaseCost(model, estimatedInputTokens, maxTokens);
+		if (spent + ceiling > this.monthlyBudgetUsd) {
+			throw new BudgetExceededError(spent, this.monthlyBudgetUsd, ceiling);
+		}
+	}
+
+	record(model: ModelId, purpose: string, usage: TokenUsage): SpendEntry {
+		const cost = costOf(model, usage);
+		const entry: SpendEntry = {
+			at: new Date().toISOString(),
+			model,
+			purpose,
+			inputTokens: usage.input_tokens,
+			outputTokens: usage.output_tokens,
+			cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+			cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+			costUsd: cost.totalUsd,
+		};
+		this.entries.push(entry);
+		this.save();
+		return entry;
+	}
+
+	summary(): SpendSummary {
+		const spent = this.spentThisMonth();
+		const key = SpendLedger.monthKey(new Date().toISOString());
+		return {
+			monthlyBudgetUsd: this.monthlyBudgetUsd,
+			spentThisMonthUsd: spent,
+			remainingUsd: Math.max(0, this.monthlyBudgetUsd - spent),
+			callsThisMonth: this.entries.filter((e) => SpendLedger.monthKey(e.at) === key).length,
+			lifetimeUsd: this.entries.reduce((sum, e) => sum + e.costUsd, 0),
+			entries: this.entries,
+		};
+	}
+}

@@ -1,0 +1,30 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+# anthropic spend ledger
+.spend/
+.env.local
+
+# mod / gradle
+mod/build/
+mod/.gradle/
+mod/run/
+
+# registry generation working dir (large jars, never committed)
+tools/registry-gen/work/
+
+# exported schematics / scratch output
+/out/
+
+
+# local postgres data
+.pgdata/
+
+# editor
+.vscode/
+.idea/
+*.log

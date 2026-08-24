@@ -1,0 +1,118 @@
+:root {
+  --bg: #0f1216;
+  --panel: #171b21;
+  --border: #262c35;
+  --text: #e6e9ee;
+  --muted: #8b949e;
+  --ok: #4ade80;
+  --fail: #f87171;
+  --pending: #fbbf24;
+  --accent: #6ee7b7;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 2.5rem;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  color: var(--muted);
+  margin: 0.5rem 0 0;
+  max-width: 46ch;
+}
+
+.panel {
+  margin-top: 2.5rem;
+  padding: 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.panel h2 {
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.checks {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.check {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.625rem 0.875rem;
+  background: #12161b;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 8px;
+}
+
+.check--ok {
+  border-left-color: var(--ok);
+}
+.check--fail {
+  border-left-color: var(--fail);
+}
+.check--pending {
+  border-left-color: var(--pending);
+}
+
+.check__label {
+  font-weight: 600;
+}
+
+.check__detail {
+  color: var(--muted);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.8125rem;
+  text-align: right;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.5rem 1rem;
+  color: var(--bg);
+  background: var(--accent);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}

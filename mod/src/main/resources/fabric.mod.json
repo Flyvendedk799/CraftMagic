@@ -1,0 +1,28 @@
+{
+	"schemaVersion": 1,
+	"id": "imaginecraft",
+	"version": "${version}",
+	"name": "ImagineCraft Agent",
+	"description": "Connects your world to ImagineCraft so a builder bot can construct AI-generated structures in game.",
+	"authors": [
+		"ImagineCraft"
+	],
+	"contact": {
+		"homepage": "https://imaginecraft.dev/"
+	},
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"dev.imaginecraft.agent.ImagineCraftMod"
+		],
+		"client": [
+			"dev.imaginecraft.agent.client.ImagineCraftClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25"
+	}
+}

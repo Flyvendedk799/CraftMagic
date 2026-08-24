@@ -1,0 +1,28 @@
+{
+  "name": "imaginecraft",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @imaginecraft/core && npm run build --workspace @imaginecraft/web && npm run build --workspace @imaginecraft/server",
+    "dev": "npm run dev --workspace @imaginecraft/server",
+    "dev:web": "npm run dev --workspace @imaginecraft/web",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "tsc -b packages/core apps/server apps/web --pretty"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0",
+    "typescript": "^5.7.2"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.21.5": true
+  }
+}

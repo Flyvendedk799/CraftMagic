@@ -1,0 +1,87 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+repositories {
+	// Loom adds the Minecraft/Fabric repositories itself; only third-party mod repos go here.
+}
+
+loom {
+	// Splits client-only code into src/client, which the plugin refuses to let server code
+	// reference. That compile-time wall is what keeps a dedicated server from ever loading
+	// the hologram renderer.
+	splitEnvironmentSourceSets()
+
+	mods {
+		"imaginecraft" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+// Only the Fabric API modules we actually use, bundled into our jar with `include`
+// (Jar-in-Jar). Users install one file instead of two, and if they already run the full
+// Fabric API the loader picks whichever version is higher.
+def fabricApiModules = [
+		'fabric-command-api-v2',      // /imaginecraft ...
+		'fabric-lifecycle-events-v1', // server start/stop, per-tick block placement
+		'fabric-networking-api-v1',   // client <-> server payloads for the placement preview
+		'fabric-rendering-v1',        // hologram rendering (client only)
+		'fabric-key-mapping-api-v1',  // anchor move/rotate/confirm keybinds
+]
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+	fabricApiModules.each { moduleName ->
+		implementation fabricApi.module(moduleName, project.fabric_api_version)
+		include fabricApi.module(moduleName, project.fabric_api_version)
+	}
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+	it.options.encoding = 'UTF-8'
+}
+
+java {
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	// Development-only verification harness; never ship it to players.
+	exclude 'dev/imaginecraft/agent/tools/**'
+
+	from("../LICENSE") {
+		rename { "${it}_imaginecraft" }
+	}
+}
+
+/**
+ * Prove a .schem written by packages/core is readable by Minecraft itself, and that every
+ * palette entry resolves to a real BlockState. This is the path the builder bot takes, and
+ * neither the TypeScript round-trip nor the prismarine-nbt test covers it.
+ *
+ *   gradlew verifySchematic -Pschem=../out/oak-cottage.schem
+ */
+tasks.register('verifySchematic', JavaExec) {
+	group = 'verification'
+	description = 'Read a generated .schem with vanilla NBT and resolve its palette.'
+	dependsOn tasks.named('classes')
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'dev.imaginecraft.agent.tools.SchematicReadCheck'
+	args = [project.findProperty('schem') ?: '../out/oak-cottage.schem']
+}

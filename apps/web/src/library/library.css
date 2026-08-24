@@ -1,0 +1,337 @@
+/* Accounts and the build library.
+
+   Two homes, one stylesheet. The account panel is embedded in the editor's HUD, where it must
+   live inside a 19rem column and inherit the HUD's tokens; the library is an ordinary
+   document page built from the same `.panel` the status page uses. Nothing here introduces a
+   colour — every value is one of the tokens in styles.css. */
+
+/* --- account ------------------------------------------------------------ */
+
+.account {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.account__note {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.account__who {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.account__email {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account__open,
+.account__tab,
+.account__actions button {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.6rem;
+  background: #212832;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.account__open {
+  width: 100%;
+}
+
+.account__form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.account__tabs {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.account__tab {
+  flex: 1;
+}
+
+.account__tab[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.account__input {
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: #12161b;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.account__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.account__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.account__actions button {
+  flex: 1;
+}
+
+.account__submit {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.account__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.account__error {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--fail);
+}
+
+/* A link in everything but element name — it sits inside a sentence. */
+.account__link,
+.save__inline {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* --- save to library ---------------------------------------------------- */
+
+.save {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.save__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.save__actions button {
+  background: #1d232b;
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.save__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.save__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.save__note--ok {
+  color: var(--ok);
+}
+
+.save__note--error {
+  color: var(--fail);
+}
+
+/* --- library page ------------------------------------------------------- */
+
+.library {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+}
+
+.library__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.library__title {
+  font-size: 2rem;
+}
+
+.library__sub {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.library__back {
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.library__account {
+  max-width: 24rem;
+}
+
+.library__error {
+  margin: 1.5rem 0 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--fail);
+  background: color-mix(in srgb, var(--fail) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fail) 35%, transparent);
+  border-radius: 8px;
+}
+
+.library__empty {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.library__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.library__row {
+  display: grid;
+  /* One column below 46rem: the metadata row and the action row both need their own line on a
+     phone, and squeezing them side by side truncates the name, which is the only part that
+     tells one build from another. */
+  grid-template-columns: minmax(8rem, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  background: #12161b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+@media (max-width: 46rem) {
+  .library__row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.library__name {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.library__name:hover {
+  color: var(--accent);
+  filter: none;
+}
+
+.library__meta {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 0.1rem 1.25rem;
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.library__meta dt {
+  color: var(--muted);
+}
+
+.library__meta dd {
+  margin: 0;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.library__actions,
+.library__rename {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.library__rename {
+  grid-column: 1 / -1;
+}
+
+.library__actions button,
+.library__rename button {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  background: #212832;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.library__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.library__delete:hover {
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 50%, transparent);
+  filter: none;
+}
+
+.library__input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: #0d1014;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.library__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

@@ -1,0 +1,721 @@
+/* Editor chrome. Everything floats over a full-viewport canvas, so each panel is its own
+   translucent island rather than part of a document flow. */
+
+.editor {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+.editor__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.editor__canvas canvas {
+  display: block;
+  touch-action: none;
+}
+
+.hud {
+  position: absolute;
+  padding: 0.875rem 1rem;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+/* Fixed width, not just a minimum: a long warning message would otherwise stretch the
+   panel across the viewport and cover the build it is describing. */
+/* The reserve at the bottom is sized to the layer bar and nothing more: the panel gained a
+   tool palette and a block picker, so every rem of slack it does not need is a rem of the
+   export controls that would otherwise sit below the fold. */
+.hud--top {
+  top: 1rem;
+  left: 1rem;
+  width: 19rem;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 6.5rem);
+  overflow-y: auto;
+}
+
+.hud__issues li,
+.hud__generated {
+  overflow-wrap: anywhere;
+}
+
+.hud--layers {
+  left: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.hud__title {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.hud__sub {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.hud__stats {
+  margin: 0.875rem 0 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+.hud__stats dt {
+  color: var(--muted);
+}
+
+.hud__stats dd {
+  margin: 0;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  text-align: right;
+}
+
+.hud__actions {
+  margin-top: 0.875rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hud__actions button {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.7rem;
+  background: #212832;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.hud__actions button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+}
+
+.hud__link {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border);
+}
+
+.hud__link:hover {
+  color: var(--accent);
+}
+
+.layers__label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.layers__value {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.8125rem;
+  min-width: 6.5rem;
+  text-align: right;
+}
+
+.layers__slider {
+  flex: 1;
+  accent-color: var(--accent);
+  min-width: 8rem;
+}
+
+.params {
+  margin-top: 0.875rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.params__title {
+  margin: 0 0 0.5rem;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.param {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.5rem;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
+.param + .param {
+  margin-top: 0.5rem;
+}
+
+.param__label {
+  color: var(--muted);
+}
+
+.param__value {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  text-align: right;
+}
+
+.param__slider {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.hud__issues {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+}
+
+.hud__issues li {
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--pending);
+  color: var(--muted);
+}
+
+.hud__issues .issue--error {
+  border-left-color: var(--fail);
+}
+
+.hud__issues code {
+  color: var(--text);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.hud--layers button {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.7rem;
+  white-space: nowrap;
+}
+
+.hud--layers button:disabled {
+  background: #212832;
+  color: var(--muted);
+  cursor: default;
+  filter: none;
+}
+
+.hud__progress {
+  margin-top: 0.75rem;
+  height: 3px;
+  border-radius: 2px;
+  background: #212832;
+  overflow: hidden;
+}
+
+.hud__progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+/* Bottom-centred rather than top-right: the prompt panel owns the top-right corner, and
+   this readout follows the cursor's meaning, not a fixed slot. */
+.hover-readout {
+  position: absolute;
+  bottom: 5.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.75rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  min-width: 11rem;
+}
+
+.hover-readout strong {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+/* --- generation prompt ------------------------------------------------- */
+
+.prompt {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: 22rem;
+  max-width: calc(100vw - 2.5rem);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.hud__section {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.prompt__input {
+  width: 100%;
+  resize: vertical;
+  padding: 0.625rem 0.75rem;
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: #12161b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.prompt__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.prompt__input:disabled {
+  opacity: 0.6;
+}
+
+.prompt__examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.prompt__example {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.prompt__example:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+  filter: none;
+}
+
+.prompt__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.prompt__actions button {
+  flex: 1;
+  background: #1d232b;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.prompt__actions .prompt__primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.prompt__actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.prompt__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+/* Deliberately not `.prompt__status`, which is a flex row built for a spinner beside one
+   short line. An inline link inside it becomes a flex item and gets squeezed to its narrowest
+   wrap — "Sign / in" on two lines. This is ordinary running text. */
+.prompt__notice {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.prompt__status--busy {
+  color: var(--accent);
+}
+
+.prompt__status--error {
+  color: var(--fail);
+  align-items: flex-start;
+  line-height: 1.4;
+}
+
+.prompt__spinner {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex: none;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: prompt-spin 0.7s linear infinite;
+}
+
+@keyframes prompt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt__spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.prompt__estimate {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.prompt__estimate dt {
+  color: var(--muted);
+}
+
+.prompt__estimate dd {
+  margin: 0;
+  text-align: right;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.prompt__budget {
+  margin: 0;
+  font-size: 0.75rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.prompt__muted {
+  color: var(--muted);
+}
+
+.hud__generated {
+  margin: 0.75rem 0 0;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--accent);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+/* --- editing tools ------------------------------------------------------ */
+
+.tools {
+  margin-top: 0.875rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.tools__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tools__tool,
+.tools__mode {
+  flex: 1 1 auto;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  background: #212832;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.tools__tool[aria-pressed='true'],
+.tools__mode[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.tools__row--modes {
+  margin-top: 0.5rem;
+}
+
+.tools__mode {
+  font-size: 0.6875rem;
+}
+
+.tools__hint,
+.tools__notice,
+.tools__detached {
+  margin: 0.5rem 0 0;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.tools__notice {
+  color: var(--accent);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+.tools__detached {
+  color: var(--pending);
+}
+
+/* A link in everything but element name: it sits inside a sentence, so the default filled
+   button would break the line. */
+.tools__inline {
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted currentColor;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.tools__check {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  margin-top: 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.tools__check input {
+  accent-color: var(--accent);
+  margin: 0.1rem 0 0;
+}
+
+.tools__row--history {
+  margin-top: 0.625rem;
+  align-items: center;
+}
+
+.tools__row--history button {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.6rem;
+  background: #212832;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.tools__row--history button:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: default;
+  filter: none;
+}
+
+.tools__count {
+  margin-left: auto;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: var(--muted);
+}
+
+.tools__count[data-modified='true'] {
+  color: var(--pending);
+}
+
+/* --- block picker ------------------------------------------------------- */
+
+.picker {
+  margin-top: 0.5rem;
+}
+
+.picker__current,
+.picker__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.75rem;
+  text-align: left;
+  color: var(--text);
+  background: #12161b;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.picker__item {
+  background: transparent;
+  border-color: transparent;
+}
+
+.picker__item:hover,
+.picker__item[aria-pressed='true'] {
+  background: #212832;
+  filter: none;
+}
+
+.picker__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker__caret {
+  color: var(--muted);
+}
+
+/* Outlined rather than bare: the darkest blocks are near-black and would vanish into the
+   panel without an edge. */
+.picker__swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: none;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.18);
+}
+
+.picker__search {
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--text);
+  background: #12161b;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.picker__search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.picker__list {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  /* Its own scroll region inside an already-scrolling panel: the alternative is a HUD that
+     grows past the viewport every time the search is opened. */
+  max-height: 11rem;
+  overflow-y: auto;
+}
+
+.picker__empty,
+.picker__more {
+  margin: 0.35rem 0 0;
+  padding-left: 0.5rem;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+/* --- detach warning ----------------------------------------------------- */
+
+.detach {
+  margin-top: 0.875rem;
+  padding: 0.625rem 0.75rem;
+  background: color-mix(in srgb, var(--pending) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pending) 45%, transparent);
+  border-radius: 8px;
+}
+
+.detach__text {
+  margin: 0;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.detach__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.detach__actions button {
+  flex: 1;
+  font-size: 0.6875rem;
+  padding: 0.3rem 0.5rem;
+  background: #212832;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.detach__actions .detach__confirm {
+  background: var(--pending);
+  color: var(--bg);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* --- export ------------------------------------------------------------ */
+
+.export {
+  margin-top: 0.875rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.export__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.export__actions button {
+  background: #1d232b;
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 0.8125rem;
+}
+
+.export__link {
+  font-size: 0.8125rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.export__link:hover {
+  text-decoration: underline;
+}
+
+.export__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.6875rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.export__note--error {
+  color: var(--fail);
+}

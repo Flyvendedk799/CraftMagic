@@ -342,19 +342,66 @@ cd mod && JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew verifySchematic -Psch
 
 ## Deployment
 
-Runs on the VPS at `85.190.100.23:3016` as a systemd service, with its own Postgres in Docker.
+**It is one service.** The Fastify process in `apps/server` serves the built frontend as
+static files *and* hosts the API *and* the agent WebSocket gateway. There is no separate
+backend for the mod: `craftmagic.online` serves the site, and the mod dials
+`wss://craftmagic.online/agent/ws` — the same origin, the same container, one port.
+
+```
+                    ┌──────────────────────────────────────────┐
+  browser  ────────►│  craftmagic.online   (one container)     │
+                    │                                          │
+  Minecraft ───────►│  Fastify ─┬─ static  apps/web/dist       │
+  (the mod, dialling│           ├─ /api/*  REST + SSE          │──► Postgres
+   out over wss://) │           └─ /agent/ws  WebSocket hub    │──► Anthropic
+                    └──────────────────────────────────────────┘
+```
+
+The mod always dials *out*. Nothing connects inbound to a player's machine, which is what
+makes this work behind home routers with no port forwarding.
+
+### Production: ServerHoster
+
+Production is a ServerHoster service built from this repo. ServerHoster clones the repo and
+builds the `Dockerfile`, so a deploy is a push plus a rebuild in its UI.
+
+Set these in the service's environment:
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATABASE_URL` | `postgres://…` | From a ServerHoster Postgres resource. Without it, pairing and the library are disabled but the site still runs. |
+| `SESSION_SECRET` | 32+ random bytes | Set once. Changing it signs everyone out. |
+| `PUBLIC_ORIGIN` | `https://craftmagic.online` | Must match what the mod dials — it is baked into the pairing and schematic URLs handed to the mod. |
+| `ANTHROPIC_API_KEY` | `sk-ant-…` | Omit to run with generation disabled (`503`) and everything else working. |
+| `ANTHROPIC_MONTHLY_BUDGET_USD` | e.g. `1.5` | Hard pre-call ceiling. **Per instance** — see the warning below. |
+| `PORT` | `3016` | Optional; the image defaults to this and ServerHoster maps it. |
+
+Two things that are easy to get wrong:
+
+- **`PUBLIC_ORIGIN` and the mod's `serverUrl` are one setting in two places.** The jar has
+  `https://craftmagic.online` compiled in as its default. If the site's origin changes, the
+  mod must be rebuilt and re-published or already-installed copies keep dialling the old
+  address. `/craftmagic server <url>` is the per-world escape hatch.
+- **The spend ledger is per instance, not per API key.** Each deployment keeps its own
+  `.spend/ledger.json` and enforces its own ceiling, so running two instances on one key
+  doubles the real ceiling. Budget the sum, not each one.
+
+### Staging: the systemd service
+
+`tools/deploy.mjs` is the older path and still works — it deploys to `85.190.100.23:3016` as a
+systemd unit with its own Postgres in Docker. Useful as staging, but **do not run it against
+the same database as production**, and stop it once ServerHoster owns the domain, or two
+instances will answer for the same product with separate ledgers.
 
 ```bash
 node tools/deploy.mjs              # build, ship, restart, health-check
-node tools/verify-deployed.mjs     # check the live instance (free — makes no Anthropic call)
+node tools/verify-deployed.mjs     # check a live instance (free — makes no Anthropic call)
 ```
 
-`tools/deploy.mjs` builds locally and ships only `dist` output plus the lockfile. That split is
-deliberate: `tsc` and `vite` emit platform-independent JavaScript, but `argon2` is a native
-module whose Windows binary is useless on Linux, so dependencies are installed on the far side
-with `npm ci --omit=dev`.
-
-What is on the server:
+It builds locally and ships only `dist` output plus the lockfile. That split is deliberate:
+`tsc` and `vite` emit platform-independent JavaScript, but `argon2` is a native module whose
+Windows binary is useless on Linux, so dependencies are installed on the far side with
+`npm ci --omit=dev`.
 
 | Piece | Where | Notes |
 |---|---|---|
@@ -363,10 +410,10 @@ What is on the server:
 | Secrets | `/opt/craftmagic/.env`, mode 600 | written once, never overwritten by a redeploy |
 | Logs | `journalctl -u craftmagic -f` | |
 
-The database listens on loopback rather than `0.0.0.0` because the host's firewall script only
+That database listens on loopback rather than `0.0.0.0` because the host's firewall script only
 covers ports someone remembered to add to its `PORTS=` list, and a port that never faces the
-internet cannot be left off that list by accident. Port 3016 itself *must* stay open — the mod
-dials in from the player's own machine.
+internet cannot be left off that list by accident. The app's own port *must* stay open — the
+mod dials in from the player's own machine.
 
 `.env` is written on first deploy and then left alone, so a redeploy cannot rotate
 `SESSION_SECRET` (which would log everyone out) or invalidate paired worlds.

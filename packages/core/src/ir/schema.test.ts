@@ -50,6 +50,14 @@ describe('schema accepts real programs', () => {
 	it.each(Object.keys(samples))('accepts the %s sample', (name) => {
 		expect(valid(samples[name] as BuildProgram)).toBe(true);
 	});
+
+	it('accepts a resized program, so refining one does not cost a repair round', () => {
+		// The editor writes `scale` into the program and refine hands that program back to the
+		// model. If the schema did not know the field, the model echoing it would fail
+		// validation and buy a paid repair round for a field it was right to keep.
+		expect(valid({ ...(samples.cottage as BuildProgram), scale: { x: 200, y: 150, z: 200 } })).toBe(true);
+		expect(validate({ ...(samples.cottage as BuildProgram), scale: { x: 200, y: 150 } })).toBe(false);
+	});
 });
 
 describe('schema accepts valid coordinate expressions', () => {

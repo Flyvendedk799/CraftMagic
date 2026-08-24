@@ -2,9 +2,9 @@
  * Build programs → something the viewer can draw.
  *
  * The whole point of the IR is that a program is re-expanded rather than edited, so this
- * module is deliberately stateless: change a param, call `expandBuild` again, get a fresh
- * grid. That is what makes the resize slider a real feature demo rather than a stretch —
- * walls stay walls because every coordinate is re-derived from the new param value.
+ * module is deliberately stateless: change a param or the scale, call `expandBuild` again,
+ * get a fresh grid. That is what makes the resize slider a real feature demo rather than a
+ * stretch — walls stay walls because every coordinate is re-derived, not resampled.
  *
  * `paletteColors`/`paletteFlags` are the seam that keeps the renderer independent of
  * Minecraft: from here down, the mesher only ever sees colours and flag bytes.
@@ -12,15 +12,20 @@
 
 import {
   expand,
-  LIMITS,
+  isScaled,
+  NO_SCALE,
   paletteColors,
   paletteFlags,
   samples,
+  scaledSize,
   type BuildProgram,
   type ExpandIssue,
   type ProgramParam,
+  type ScalePercent,
   type VoxelGrid,
 } from '@craftmagic/core';
+
+export { NO_SCALE, scaledSize, type ScalePercent };
 
 export interface BuildParam {
   name: string;
@@ -272,28 +277,7 @@ export function paramsOf(id: string): BuildParam[] {
   return toParams(programOf(id)?.params);
 }
 
-/**
- * Expand a build, optionally overriding param values.
- *
- * Overrides are clamped here as well as inside the expander. The expander's clamp protects
- * the geometry; this one keeps `params` in the result truthful, so a hand-edited URL shows
- * the slider at the value that was actually built rather than the one that was asked for.
- */
-/**
- * Per-axis scale, as a percentage of the program's own size. 100 means unchanged.
- *
- * This is the payoff of emitting a program rather than voxels: resizing re-runs the program at
- * a new size, so a wall anchored at `max-1` stays against the far wall and a door at `center`
- * stays centred. Scaling a voxel grid could only stretch or resample it.
- */
-export interface ScalePercent {
-  x: number;
-  y: number;
-  z: number;
-}
-
-export const NO_SCALE: ScalePercent = { x: 100, y: 100, z: 100 };
-
+/** What the user has done to a build since it was generated: turned a dial, resized it. */
 export interface BuildOverrides {
   params?: Readonly<Record<string, number>>;
   scale?: ScalePercent;
@@ -306,6 +290,13 @@ export interface ScaleOutcome {
   clamped: boolean;
 }
 
+/**
+ * Expand a build, optionally overriding param values and resizing it.
+ *
+ * Overrides are clamped here as well as inside the expander. The expander's clamp protects
+ * the geometry; this one keeps `params` in the result truthful, so a hand-edited URL shows
+ * the slider at the value that was actually built rather than the one that was asked for.
+ */
 export function expandBuild(id: string, overrides: BuildOverrides = {}): LoadedBuild {
   const stored = library.get(id);
   if (stored?.kind === 'voxels') return fromVoxels(id, stored.name, stored.grid);
@@ -372,9 +363,12 @@ function applyOverrides(
 ): BuildProgram {
   let next = program;
 
-  if (scale && (scale.x !== 100 || scale.y !== 100 || scale.z !== 100)) {
-    next = { ...next, size: scaledSize(program.size, scale) };
-  }
+  // The scale rides along *in* the program rather than being baked into `size`. Rewriting the
+  // size only grew the volume — every literal coordinate, radius and repeat stride inside the
+  // program stayed where it was, which is why resizing used to move some of a build and not
+  // the rest. The expander scales the coordinates themselves, and it needs the program's own
+  // size to do it.
+  if (isScaled(scale)) next = { ...next, scale };
 
   if (!next.params) return next;
 
@@ -387,28 +381,6 @@ function applyOverrides(
         : { ...param, value: Math.min(param.max, Math.max(param.min, Math.round(override))) };
   }
   return { ...next, params };
-}
-
-/**
- * The size a scale produces, clamped to what the expander accepts.
- *
- * Clamped rather than rejected: a slider that silently stops moving at the cap is far better
- * than one that lets you drag into an error. The floor of 1 matters as much as the ceiling —
- * a zero-thickness axis expands to nothing at all, and "my build vanished" is a worse outcome
- * than "it stopped getting smaller".
- */
-export function scaledSize(
-  size: { x: number; y: number; z: number },
-  scale: ScalePercent,
-): { x: number; y: number; z: number } {
-  const axis = (value: number, percent: number, max: number) =>
-    Math.max(1, Math.min(max, Math.round((value * percent) / 100)));
-
-  return {
-    x: axis(size.x, scale.x, LIMITS.maxSizeX),
-    y: axis(size.y, scale.y, LIMITS.maxSizeY),
-    z: axis(size.z, scale.z, LIMITS.maxSizeZ),
-  };
 }
 
 /** The size a scale would produce, and whether any axis hit the cap. Used to label the UI. */
@@ -442,44 +414,4 @@ function toParams(params: BuildProgram['params']): BuildParam[] {
     min: param.min,
     max: param.max,
   }));
-}
-
-/**
- * The box the build actually occupies, inside its declared volume.
- *
- * Needed because scaling an axis only does something if the program's coordinates depend on
- * that axis. The cottage anchors width and depth with `min`/`max`, so those scale; its height
- * comes from `$floors*5`, so growing the volume's Y adds empty headroom and nothing else. The
- * slider moves, the number changes, and the building does not — which reads as a broken
- * control unless the UI says what happened.
- *
- * Returns null for an empty build, where "occupied" means nothing.
- */
-export function occupiedBounds(grid: VoxelGrid): { x: number; y: number; z: number } | null {
-  const { size, voxels } = grid;
-  let minX = size.x;
-  let minY = size.y;
-  let minZ = size.z;
-  let maxX = -1;
-  let maxY = -1;
-  let maxZ = -1;
-
-  // One pass in storage order (YZX), so this stays cache-friendly on a 300k-block build.
-  let index = 0;
-  for (let y = 0; y < size.y; y++) {
-    for (let z = 0; z < size.z; z++) {
-      for (let x = 0; x < size.x; x++, index++) {
-        if (voxels[index] === 0) continue;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-        if (z < minZ) minZ = z;
-        if (z > maxZ) maxZ = z;
-      }
-    }
-  }
-
-  if (maxX < 0) return null;
-  return { x: maxX - minX + 1, y: maxY - minY + 1, z: maxZ - minZ + 1 };
 }

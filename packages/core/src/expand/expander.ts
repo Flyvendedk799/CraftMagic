@@ -24,6 +24,7 @@ import type {
 } from '../ir/types.js';
 import { AIR_BLOCK, COMPONENT_TYPES, LIMITS } from '../ir/types.js';
 import { CoordError, clampParam, resolveCoord } from '../ir/coords.js';
+import { scaleFactors, scaleLen, scalePos, scaledSize, type Size3 } from '../ir/scale.js';
 import { validateBlockRef } from '../registry/registry.js';
 import {
 	Brush,
@@ -53,7 +54,13 @@ export function expand(program: BuildProgram): ExpandResult {
 	const errors: ExpandIssue[] = [];
 	const warnings: ExpandIssue[] = [];
 
-	const size = clampSize(program.size, errors);
+	// Coordinates resolve against the program's *own* size and are scaled afterwards, so a
+	// resize enlarges the structure rather than only the volume it sits in. At 100% the factors
+	// are 1 and every coordinate comes out exactly as it did before.
+	const base = clampSize(program.size, errors);
+	const size = scaledSize(base, program.scale);
+	const factor = scaleFactors(base, program.scale);
+
 	const canvas = new VoxelCanvas(size);
 	const palette = new Palette(program.palette ?? {});
 	const params = normalizeParams(program.params);
@@ -71,7 +78,7 @@ export function expand(program: BuildProgram): ExpandResult {
 		});
 	}
 
-	const ctx: ExpandContext = { size, palette, params, errors, warnings, canvas };
+	const ctx: ExpandContext = { base, size, factor, palette, params, errors, warnings, canvas };
 
 	components.slice(0, LIMITS.maxComponents).forEach((component, index) => {
 		drawComponent(rootBrush, component, `components[${index}]`, ctx);
@@ -121,7 +128,12 @@ export function expand(program: BuildProgram): ExpandResult {
 }
 
 interface ExpandContext {
-	size: { x: number; y: number; z: number };
+	/** The program's own size — the space its coordinates are written in. */
+	base: Size3;
+	/** The volume actually drawn, after `program.scale`. */
+	size: Size3;
+	/** Per-axis multiplier from base space to drawn space. All 1 when nothing is scaled. */
+	factor: Size3;
 	palette: Palette;
 	params: Record<string, import('../ir/types.js').ProgramParam> | undefined;
 	errors: ExpandIssue[];
@@ -206,12 +218,12 @@ function drawComponent(brush: Brush, component: Component, path: string, ctx: Ex
 
 function draw(brush: Brush, component: Component, path: string, ctx: ExpandContext): void {
 	const pos = (v: CVec3) => resolvePos(v, ctx);
-	const len = (v: CVec3) => resolveLen(v, ctx);
+	const box = (at: CVec3, size: CVec3) => region(at, size, ctx);
 
 	switch (component.type) {
 		case 'box':
 			checkRoles(component.fill, path, ctx);
-			buildBox(brush, ctx.palette, { pos: pos(component.pos), size: len(component.size) }, component.fill);
+			buildBox(brush, ctx.palette, box(component.pos, component.size), component.fill);
 			return;
 
 		case 'hollow_box':
@@ -219,37 +231,45 @@ function draw(brush: Brush, component: Component, path: string, ctx: ExpandConte
 			buildHollowBox(
 				brush,
 				ctx.palette,
-				{ pos: pos(component.pos), size: len(component.size) },
+				box(component.pos, component.size),
 				component.fill,
 				{
-					wallThickness: count(component.wallThickness, ctx, 1),
+					// Thickness reaches into all three axes: the walls in x/z, the floor and
+					// ceiling in y.
+					wallThickness: magnitude(component.wallThickness, ctx, AXES, 1),
 					floor: component.floor,
 					ceiling: component.ceiling,
 				},
 			);
 			return;
 
-		case 'cylinder':
+		case 'cylinder': {
 			checkRoles(component.fill, path, ctx);
+			// The radius lies in the two axes the cylinder does *not* run along, and the height
+			// along the one it does.
+			const axis = component.axis ?? 'y';
 			buildCylinder(
 				brush,
 				ctx.palette,
 				pos(component.base),
-				scalar(component.radius, ctx, 'x'),
-				scalar(component.height, ctx, 'y'),
-				component.axis ?? 'y',
+				scalar(component.radius, ctx, 'x', AXES.filter((a) => a !== axis)),
+				scalar(component.height, ctx, axis),
+				axis,
 				component.hollow ?? false,
 				component.fill,
 			);
 			return;
+		}
 
 		case 'sphere':
 			checkRoles(component.fill, path, ctx);
+			// A sphere is round in all three, so under a per-axis resize it stays a sphere and
+			// takes the axis that grew least rather than bulging out of its own build.
 			buildSphere(
 				brush,
 				ctx.palette,
 				pos(component.center),
-				scalar(component.radius, ctx, 'x'),
+				scalar(component.radius, ctx, 'x', AXES),
 				component.hollow ?? false,
 				component.cap ?? 'full',
 				component.fill,
@@ -263,7 +283,8 @@ function draw(brush: Brush, component: Component, path: string, ctx: ExpandConte
 				ctx.palette,
 				pos(component.pos),
 				[scalar(component.baseSize[0], ctx, 'x'), scalar(component.baseSize[1], ctx, 'z')],
-				count(component.step, ctx, 1),
+				// The inset each tier takes is a horizontal distance, so it follows x and z.
+				magnitude(component.step, ctx, ['x', 'z'], 1),
 				component.hollow ?? false,
 				component.fill,
 			);
@@ -274,9 +295,10 @@ function draw(brush: Brush, component: Component, path: string, ctx: ExpandConte
 			buildGableRoof(
 				brush,
 				ctx.palette,
-				{ pos: pos(component.pos), size: len(component.size) },
+				box(component.pos, component.size),
 				component.ridgeAxis,
-				count(component.overhang, ctx, 0),
+				// Eaves project horizontally, so the overhang grows with the footprint.
+				magnitude(component.overhang, ctx, ['x', 'z'], 0, 0),
 				component.style ?? 'stairs',
 				component.roofRole,
 				component.trimRole,
@@ -288,8 +310,8 @@ function draw(brush: Brush, component: Component, path: string, ctx: ExpandConte
 			buildHipRoof(
 				brush,
 				ctx.palette,
-				{ pos: pos(component.pos), size: len(component.size) },
-				count(component.overhang, ctx, 0),
+				box(component.pos, component.size),
+				magnitude(component.overhang, ctx, ['x', 'z'], 0, 0),
 				component.style ?? 'stairs',
 				component.roofRole,
 			);
@@ -311,19 +333,28 @@ function draw(brush: Brush, component: Component, path: string, ctx: ExpandConte
 			);
 			return;
 
-		case 'window_grid':
+		case 'window_grid': {
 			requireRole(component.role, path, ctx);
+			// A north/south wall spans x, an east/west wall spans z. Window width and the
+			// corner margin lie along that axis; window height is always y. The row and column
+			// *counts* stay put, so a resized wall gets bigger windows rather than more of them
+			// — the facade keeps its design instead of being redrawn.
+			const span: AxisName = component.face === 'north' || component.face === 'south' ? 'x' : 'z';
 			buildWindowGrid(brush, ctx.palette, {
 				face: component.face,
-				region: { pos: pos(component.region.pos), size: len(component.region.size) },
+				region: box(component.region.pos, component.region.size),
 				rows: count(component.rows, ctx, 1),
 				cols: count(component.cols, ctx, 1),
-				windowSize: [count(component.windowSize[0], ctx, 1), count(component.windowSize[1], ctx, 1)],
-				margin: count(component.margin, ctx, 0),
+				windowSize: [
+					magnitude(component.windowSize[0], ctx, [span], 1),
+					magnitude(component.windowSize[1], ctx, ['y'], 1),
+				],
+				margin: magnitude(component.margin, ctx, [span], 0, 0),
 				role: component.role,
 				sill: component.sill ?? false,
 			});
 			return;
+		}
 
 		case 'door':
 			requireRole(component.role, path, ctx);
@@ -345,24 +376,31 @@ function draw(brush: Brush, component: Component, path: string, ctx: ExpandConte
 				ctx.palette,
 				pos(component.from),
 				pos(component.to),
-				count(component.thickness, ctx, 1),
+				// A line's girth is perpendicular to a direction only known at draw time.
+				magnitude(component.thickness, ctx, AXES, 1),
 				component.fill,
 			);
 			return;
 
-		case 'stairs_run':
+		case 'stairs_run': {
 			requireRole(component.role, path, ctx);
+			// Each step climbs one and travels one, so the number of them is bounded by
+			// whichever of those two axes grew least; width runs across the travel direction.
+			const travel: AxisName =
+				component.direction === 'north' || component.direction === 'south' ? 'z' : 'x';
+			const across: AxisName = travel === 'z' ? 'x' : 'z';
 			buildStairsRun(
 				brush,
 				ctx.palette,
 				pos(component.pos),
 				component.direction,
-				scalar(component.width, ctx, 'x'),
-				scalar(component.steps, ctx, 'y'),
+				scalar(component.width, ctx, 'x', [across]),
+				scalar(component.steps, ctx, 'y', ['y', travel]),
 				component.role,
 				component.style ?? 'stairs',
 			);
 			return;
+		}
 
 		case 'group':
 			drawGroup(brush, component, path, ctx);
@@ -397,10 +435,13 @@ function drawGroup(
 	path: string,
 	ctx: ExpandContext,
 ): void {
+	// The pivot is the *scaled* centre of the program's own volume, not the centre of the drawn
+	// one: children arrive here already scaled, so mirroring them about anything else would
+	// land the reflection a block or two off its original position.
 	const centre: Vec3 = [
-		Math.floor((ctx.size.x - 1) / 2),
-		Math.floor((ctx.size.y - 1) / 2),
-		Math.floor((ctx.size.z - 1) / 2),
+		scalePos(Math.floor((ctx.base.x - 1) / 2), ctx.factor.x),
+		scalePos(Math.floor((ctx.base.y - 1) / 2), ctx.factor.y),
+		scalePos(Math.floor((ctx.base.z - 1) / 2), ctx.factor.z),
 	];
 
 	const repeats: Transform[] = [];
@@ -409,13 +450,13 @@ function drawGroup(
 	for (const transform of group.transform ?? []) {
 		switch (transform.op) {
 			case 'translate':
-				frame = translated(frame, transform.by);
+				frame = translated(frame, scaleVec(transform.by, ctx));
 				break;
 			case 'rotate90':
-				frame = rotated(frame, transform.times, resolvePivot(transform.pivot, centre));
+				frame = rotated(frame, transform.times, resolvePivot(transform.pivot, centre, ctx));
 				break;
 			case 'mirror':
-				frame = mirrored(frame, transform.axis, resolvePivot(transform.pivot, centre));
+				frame = mirrored(frame, transform.axis, resolvePivot(transform.pivot, centre, ctx));
 				break;
 			case 'repeat':
 				repeats.push(transform);
@@ -443,12 +484,18 @@ function drawGroup(
 		}
 		const repeat = repeats[index] as Extract<Transform, { op: 'repeat' }>;
 		const count = Math.max(1, Math.min(256, Math.floor(repeat.count)));
+		// The stride is a distance, so it scales; the count is a count, so it does not. A row
+		// of pillars spreads across the larger footprint instead of huddling in one corner of
+		// it, and stays the same row of pillars.
+		//
+		// The *accumulated* offset is what gets scaled, never the stride on its own: rounding a
+		// stride of 2.6 up to 3 and then multiplying by the index walks the last pillar of a
+		// long row clean out of the build volume.
 		for (let i = 0; i < count; i++) {
-			let stepFrame = translated(current, [
-				repeat.step[0] * i,
-				repeat.step[1] * i,
-				repeat.step[2] * i,
-			]);
+			let stepFrame = translated(
+				current,
+				scaleVec([repeat.step[0] * i, repeat.step[1] * i, repeat.step[2] * i], ctx),
+			);
 			if (repeat.alternateMirror && i % 2 === 1) {
 				stepFrame = mirrored(stepFrame, 'x', centre);
 			}
@@ -459,47 +506,142 @@ function drawGroup(
 	expandRepeats(0, frame, path);
 }
 
-function resolvePivot(pivot: 'center' | CVec3 | undefined, centre: Vec3): Vec3 {
+function resolvePivot(
+	pivot: 'center' | CVec3 | undefined,
+	centre: Vec3,
+	ctx: ExpandContext,
+): Vec3 {
 	if (pivot === undefined || pivot === 'center') return centre;
 	// A pivot given as raw numbers is used as-is; expressions are not supported here
-	// because a pivot must stay fixed while children move around it.
-	return [Number(pivot[0]) || 0, Number(pivot[1]) || 0, Number(pivot[2]) || 0];
+	// because a pivot must stay fixed while children move around it. It is still a position in
+	// the program's own space, so it scales like one.
+	return scaleVec([Number(pivot[0]) || 0, Number(pivot[1]) || 0, Number(pivot[2]) || 0], ctx);
+}
+
+/** Scale a literal offset written in the program's own coordinate space. */
+function scaleVec(v: Vec3, ctx: ExpandContext): Vec3 {
+	return [
+		scalePos(v[0], ctx.factor.x),
+		scalePos(v[1], ctx.factor.y),
+		scalePos(v[2], ctx.factor.z),
+	];
 }
 
 // --- coordinate helpers -------------------------------------------------
 
-function resolvePos(v: CVec3, ctx: ExpandContext): [number, number, number] {
+type AxisName = 'x' | 'y' | 'z';
+
+const AXES = ['x', 'y', 'z'] as const;
+
+/**
+ * Everything below resolves against `ctx.base` — the size the program was written for — and
+ * then scales the result. That is what makes a resize move *every* block: a literal `radius: 7`
+ * or a `$height` param has no relationship to the build volume, so re-resolving it against a
+ * bigger volume changes nothing, while scaling what it resolved to changes it by exactly the
+ * factor the user asked for.
+ */
+function resolvePos(v: CVec3, ctx: ExpandContext): Vec3 {
+	const raw = basePos(v, ctx);
 	return [
-		resolveCoord(v[0], { extent: ctx.size.x, params: ctx.params }),
-		resolveCoord(v[1], { extent: ctx.size.y, params: ctx.params }),
-		resolveCoord(v[2], { extent: ctx.size.z, params: ctx.params }),
+		scalePos(raw[0], ctx.factor.x),
+		scalePos(raw[1], ctx.factor.y),
+		scalePos(raw[2], ctx.factor.z),
 	];
 }
 
-/** Sizes are lengths, so they resolve against `extent`, not `extent - 1`. */
-function resolveLen(v: CVec3, ctx: ExpandContext): [number, number, number] {
-	const extents = [ctx.size.x, ctx.size.y, ctx.size.z];
-	return [0, 1, 2].map((i) =>
-		Math.max(0, resolveCoord(v[i]!, { extent: extents[i]! + 1, params: ctx.params })),
-	) as [number, number, number];
-}
-
-function scalar(value: Coord, ctx: ExpandContext, axis: 'x' | 'y' | 'z'): number {
-	const extent = axis === 'x' ? ctx.size.x : axis === 'y' ? ctx.size.y : ctx.size.z;
-	return resolveCoord(value, { extent: extent + 1, params: ctx.params });
+/** A position in the program's own space, before scaling. */
+function basePos(v: CVec3, ctx: ExpandContext): Vec3 {
+	return [
+		resolveCoord(v[0], { extent: ctx.base.x, params: ctx.params }),
+		resolveCoord(v[1], { extent: ctx.base.y, params: ctx.params }),
+		resolveCoord(v[2], { extent: ctx.base.z, params: ctx.params }),
+	];
 }
 
 /**
- * Resolve a count or thickness — a magnitude rather than a position.
+ * A component's box, scaled by its two corners rather than by its position and length
+ * separately.
+ *
+ * Rounding a position and a length independently lets them drift apart: at 54% a roof that sat
+ * flush inside its volume comes out a block wider than the volume it is inside, and the eaves
+ * are silently dropped. Scaling `pos` and `pos + size` and subtracting keeps every edge exactly
+ * where the scaled coordinate space puts it.
+ */
+function region(at: CVec3, size: CVec3, ctx: ExpandContext): { pos: Vec3; size: Vec3 } {
+	const near = basePos(at, ctx);
+	const extent = baseLen(size, ctx);
+	const pos = scaleVec(near, ctx);
+
+	return {
+		pos,
+		size: AXES.map((axis, i) => {
+			if (extent[i]! <= 0) return 0;
+			const far = scalePos(near[i]! + extent[i]!, ctx.factor[axis]);
+			return Math.max(1, far - pos[i]!);
+		}) as Vec3,
+	};
+}
+
+/** Sizes are lengths, so they resolve against `extent`, not `extent - 1`. */
+function baseLen(v: CVec3, ctx: ExpandContext): Vec3 {
+	return AXES.map((axis, i) =>
+		Math.max(0, resolveCoord(v[i]!, { extent: ctx.base[axis] + 1, params: ctx.params })),
+	) as Vec3;
+}
+
+/**
+ * A length along one known axis — a radius, a height, a run of steps.
+ *
+ * `spans` is the axes the length actually occupies, which is not always the one it is written
+ * against: a radius resolves as an x-axis length but a cylinder's radius reaches into two axes
+ * at once, and under a per-axis resize it can only follow the smaller of them.
+ */
+function scalar(
+	value: Coord,
+	ctx: ExpandContext,
+	axis: AxisName,
+	spans: readonly AxisName[] = [axis],
+): number {
+	const raw = resolveCoord(value, { extent: ctx.base[axis] + 1, params: ctx.params });
+	return scaleLen(raw, minFactor(ctx, spans));
+}
+
+/**
+ * Resolve a count — a number of things rather than a distance.
  *
  * These accept expressions for the same reason coordinates do: "one row of windows per
  * floor" is `rows: "$floors"`, and a program that cannot say that has to hard-code a number
  * that then stops matching when the param moves. There is no axis to anchor against, so
  * `min`/`max`/`%` are meaningless here and simply resolve against a unit span.
+ *
+ * Counts do not scale. A house twice the size wants windows twice as big, not twice as many —
+ * doubling the count would redesign the facade rather than resize it.
  */
 function count(value: Coord | undefined, ctx: ExpandContext, fallback: number): number {
 	if (value === undefined) return fallback;
 	return resolveCoord(value, { extent: 1, params: ctx.params });
+}
+
+/**
+ * A distance whose axis is ambiguous — wall thickness, a roof overhang, a line's girth.
+ *
+ * Takes the smallest factor of the axes it could lie along. Under a linked resize they are all
+ * the same number anyway; under a per-axis one, the smallest is the only choice that cannot
+ * push a thickness through the geometry it is meant to sit inside.
+ */
+function magnitude(
+	value: Coord | undefined,
+	ctx: ExpandContext,
+	axes: readonly AxisName[],
+	fallback: number,
+	/** Where shrinking stops — 0 for trim a small build is better off without. */
+	min = 1,
+): number {
+	return scaleLen(count(value, ctx, fallback), minFactor(ctx, axes), min);
+}
+
+function minFactor(ctx: ExpandContext, axes: readonly AxisName[]): number {
+	return Math.min(...axes.map((axis) => ctx.factor[axis]));
 }
 
 function checkRoles(fill: import('../ir/types.js').Fill, path: string, ctx: ExpandContext): void {
@@ -531,11 +673,18 @@ function applyDetails(brush: Brush, details: DetailOp[], ctx: ExpandContext): vo
 		let at: Vec3 | undefined;
 		let from: Vec3 | undefined;
 		let to: Vec3 | undefined;
+		// The unscaled corners are kept because the fill cap below measures what the *program*
+		// asked for. Charging it for the resize would turn a legal detail into an error the
+		// moment somebody dragged the size slider.
+		let baseFrom: Vec3 | undefined;
+		let baseTo: Vec3 | undefined;
 		try {
 			if (op.op === 'set') at = resolvePos(op.at, ctx);
 			else {
-				from = resolvePos(op.from, ctx);
-				to = resolvePos(op.to, ctx);
+				baseFrom = basePos(op.from, ctx);
+				baseTo = basePos(op.to, ctx);
+				from = scaleVec(baseFrom, ctx);
+				to = scaleVec(baseTo, ctx);
 			}
 		} catch (err) {
 			ctx.errors.push({
@@ -558,7 +707,7 @@ function applyDetails(brush: Brush, details: DetailOp[], ctx: ExpandContext): vo
 			}
 			case 'fill':
 			case 'clear': {
-				const volume = boxVolume(from!, to!);
+				const volume = boxVolume(baseFrom!, baseTo!);
 				if (volume > LIMITS.maxDetailFillVolume) {
 					ctx.errors.push({
 						path,

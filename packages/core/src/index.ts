@@ -1,5 +1,6 @@
 export * from './ir/types.js';
 export * from './ir/coords.js';
+export * from './ir/scale.js';
 export * from './registry/registry.js';
 export * from './expand/expander.js';
 export * from './samples/index.js';

@@ -2,9 +2,9 @@
  * Resize the whole build.
  *
  * This is the visible payoff of generating a *program* rather than voxels: changing the size
- * re-runs the program, so a wall anchored at `max-1` stays against the far wall and a door at
- * `center` stays centred. Scaling a voxel grid could only stretch or resample it, which is why
- * this control belongs here and not in the editing tools.
+ * re-runs the program with every coordinate scaled, so the walls, the roof pitch, the pillar
+ * spacing and the dome all grow together. Scaling a voxel grid could only stretch or resample
+ * it, which is why this control belongs here and not in the editing tools.
  *
  * Two modes, because both are things people actually want:
  *
@@ -19,6 +19,9 @@
 import { useCallback } from 'react';
 import type { ScaleOutcome } from './builds.js';
 import { NO_SCALE, type ScalePercent } from './builds.js';
+// Shared with the URL clamp: a slider that ranges wider than the link can carry would snap
+// back on reload.
+import { SCALE_MAX as MAX, SCALE_MIN as MIN } from './urlState.js';
 
 export interface ScalePanelProps {
   scale: ScalePercent;
@@ -26,15 +29,8 @@ export interface ScalePanelProps {
   outcome: ScaleOutcome | null;
   /** The program's own size — what 100% means. */
   base: { x: number; y: number; z: number } | null;
-  /** The box the build actually fills, so an axis that ignores scaling can be named. */
-  occupied: { x: number; y: number; z: number } | null;
-  /** Whether this build has shape parameters to point at instead. */
-  hasShape: boolean;
   onChange: (next: ScalePercent) => void;
 }
-
-const MIN = 25;
-const MAX = 400;
 
 /** Round to a step so dragging lands on tidy numbers rather than 137%. */
 const STEP = 5;
@@ -45,7 +41,7 @@ const AXES = [
   { key: 'z', label: 'Depth', hint: 'Z' },
 ] as const;
 
-export function ScalePanel({ scale, outcome, base, occupied, hasShape, onChange }: ScalePanelProps) {
+export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) {
   const linked = scale.x === scale.y && scale.y === scale.z;
   const uniform = scale.x;
 
@@ -60,14 +56,6 @@ export function ScalePanel({ scale, outcome, base, occupied, hasShape, onChange 
   );
 
   const changed = scale.x !== 100 || scale.y !== 100 || scale.z !== 100;
-
-  // An axis counts as inert when the build leaves a third of it empty. A generous threshold on
-  // purpose: a roof's overhang legitimately leaves a little slack, and crying wolf about a
-  // control that works is worse than staying quiet.
-  const inertAxes =
-    occupied && outcome
-      ? AXES.filter(({ key }) => occupied[key] < outcome.size[key] * 0.67).map((a) => a.label)
-      : [];
 
   return (
     <div className="params scale">
@@ -156,17 +144,6 @@ export function ScalePanel({ scale, outcome, base, occupied, hasShape, onChange 
         <p className="scale__warn">
           At the engine’s size limit — an axis stopped growing rather than producing a build the
           expander would refuse.
-        </p>
-      )}
-
-      {/* Scaling an axis only does something if the program's coordinates depend on it. A
-          build whose height comes from a shape parameter grows a taller *volume* and an
-          unchanged *building*, which looks like a broken slider unless it is named. */}
-      {inertAxes.length > 0 && (
-        <p className="scale__warn">
-          {inertAxes.join(' and ')} {inertAxes.length === 1 ? 'is' : 'are'} fixed by this build’s
-          own recipe, so scaling {inertAxes.length === 1 ? 'it' : 'them'} only adds empty space.
-          {hasShape ? ' Use the Shape sliders below instead.' : ''}
         </p>
       )}
     </div>

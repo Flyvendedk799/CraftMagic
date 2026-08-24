@@ -31,12 +31,19 @@ import {
   paramsOf,
   previewScale,
   baseSize,
-  occupiedBounds,
   NO_SCALE,
   type ScalePercent,
   registerGeneratedBuild,
   registerLibraryBuild,
 } from './builds.js';
+import {
+  carrySettings,
+  parseScale,
+  scaleKey as readScaleKey,
+  writeScale,
+  PARAM_PREFIX,
+  SCALE_PREFIX,
+} from './urlState.js';
 import { ExportBar } from './ExportBar.js';
 import { ScalePanel } from './ScalePanel.js';
 import { Section } from './Section.js';
@@ -62,14 +69,6 @@ import './editor.css';
  * saw was already made. The samples are still one click away in the picker.
  */
 const DEFAULT_BUILD = BLANK_BUILD;
-/** Namespaced so a param can never collide with `build` or `layer`. */
-const PARAM_PREFIX = 'p.';
-/** Scale lives in the URL too, so a resized build is shareable and survives a reload. */
-const SCALE_PREFIX = 's.';
-
-/** Slider bounds, in percent. Below a quarter a small build loses its features entirely. */
-const SCALE_MIN = 25;
-const SCALE_MAX = 400;
 
 /** Common enough to be a sane starting block, and present in most sample palettes. */
 const DEFAULT_BLOCK = 'minecraft:oak_planks';
@@ -160,11 +159,7 @@ export function EditorPage() {
 
   // Scale keyed as a string for the same reason as params: the memo must not re-run because
   // an object literal is a new object every render.
-  const scaleKey = [
-    params.get(SCALE_PREFIX + 'x') ?? '100',
-    params.get(SCALE_PREFIX + 'y') ?? '100',
-    params.get(SCALE_PREFIX + 'z') ?? '100',
-  ].join('/');
+  const scaleKey = readScaleKey(params);
   const scale = useMemo(() => parseScale(scaleKey), [scaleKey]);
 
   const build = useMemo(
@@ -177,8 +172,6 @@ export function EditorPage() {
 
   const scalePreview = useMemo(() => previewScale(buildId, scale), [buildId, scale]);
   const scaleBase = useMemo(() => baseSize(buildId), [buildId]);
-  // One pass over the voxels per re-expansion — trivial next to the meshing that follows.
-  const occupied = useMemo(() => occupiedBounds(grid), [grid]);
 
   /**
    * The program a refine would edit, or null when refining makes no sense.
@@ -208,10 +201,9 @@ export function EditorPage() {
     if (isLibraryId(buildId)) return null;
     const search = new URLSearchParams();
     search.set('build', buildId);
-    for (const spec of paramsOf(buildId)) {
-      const value = params.get(PARAM_PREFIX + spec.name);
-      if (value !== null) search.set(PARAM_PREFIX + spec.name, value);
-    }
+    // Params *and* scale: the guide prints the build on screen, and a resized one is a
+    // different build to put together block by block.
+    carrySettings(params, search);
     return `/guide?${search.toString()}`;
   }, [buildId, params]);
 
@@ -234,15 +226,7 @@ export function EditorPage() {
             }
           }
           if (next.param) search.set(PARAM_PREFIX + next.param.name, String(next.param.value));
-          if (next.scale !== undefined) {
-            // 100% is the program's own size, so it is the absence of a setting rather than a
-            // value to store — that keeps a shared link clean when nothing was resized.
-            for (const axis of ['x', 'y', 'z'] as const) {
-              const percent = next.scale?.[axis] ?? 100;
-              if (percent === 100) search.delete(SCALE_PREFIX + axis);
-              else search.set(SCALE_PREFIX + axis, String(percent));
-            }
-          }
+          if (next.scale !== undefined) writeScale(search, next.scale);
           if (next.layer !== undefined) {
             if (next.layer === null) search.delete('layer');
             else search.set('layer', String(next.layer));
@@ -595,8 +579,6 @@ export function EditorPage() {
             scale={scale}
             outcome={scalePreview}
             base={scaleBase}
-            occupied={occupied}
-            hasShape={build.params.length > 0}
             onChange={(next) => guard({ kind: 'scale', scale: next })}
           />
         )}
@@ -749,21 +731,4 @@ function readLayer(raw: string | null, topLayer: number): number | null {
 function blockAt(grid: { size: { x: number; y: number; z: number }; palette: string[]; voxels: Uint16Array }, at: VoxelHit): string {
   const index = grid.voxels[voxelIndex(grid.size, at.x, at.y, at.z)] ?? 0;
   return displayName(grid.palette[index] ?? AIR_BLOCK);
-}
-
-/**
- * Scale percentages from the URL, clamped to the slider's own range.
- *
- * Clamped rather than trusted: `?s.x=100000` would otherwise ask the expander for a build
- * larger than the engine allows, and a hand-edited or stale link should degrade to something
- * sensible rather than to an error page.
- */
-function parseScale(key: string): ScalePercent {
-  const [x, y, z] = key.split('/');
-  const axis = (raw: string | undefined) => {
-    const value = Number.parseInt(raw ?? '', 10);
-    if (!Number.isFinite(value)) return 100;
-    return Math.max(SCALE_MIN, Math.min(SCALE_MAX, value));
-  };
-  return { x: axis(x), y: axis(y), z: axis(z) };
 }

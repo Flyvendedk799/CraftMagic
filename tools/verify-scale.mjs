@@ -132,6 +132,9 @@ try {
       return true;
     })()`);
 
+  /** "6,740" → 6740, so block counts can be compared rather than only differenced. */
+  const blocks = (s) => Number(String(s.blocks).replace(/[^0-9]/g, ''));
+
   const before = await stats();
   check('the scale panel exists', await evaluate("!!document.querySelector('.scale')"));
   check('it starts linked', await evaluate("!!document.querySelector('.scale__mode--on')"));
@@ -148,6 +151,16 @@ try {
   const [bx, by, bz] = before.size.split('×').map(Number);
   const [dx, dy, dz] = doubled.size.split('×').map(Number);
   check('every axis grew', dx > bx && dy > by && dz > bz, `${bx},${by},${bz} → ${dx},${dy},${dz}`);
+
+  // The one that matters, and the one the earlier checks missed: a bigger *volume* is not a
+  // bigger *build*. Doubling every axis has to multiply the blocks several times over — a
+  // hollow structure grows with its surface area, so 4x is the conservative floor. When
+  // scaling only moved anchored coordinates, the cottage managed 3.7x and the tower 1.0x.
+  check(
+    'the building itself got bigger, not just its plot',
+    blocks(doubled) > blocks(before) * 4,
+    `${blocks(before)} → ${blocks(doubled)} blocks (${(blocks(doubled) / blocks(before)).toFixed(1)}x)`,
+  );
 
   // --- per axis ------------------------------------------------------------------------------
   await evaluate(`[...document.querySelectorAll('.scale__mode')].find(b => b.textContent.includes('Per axis')).click()`);
@@ -178,6 +191,26 @@ try {
   const maxed = await stats();
   const [mx, my, mz] = maxed.size.split('×').map(Number);
   check('the engine cap is respected', mx <= 256 && my <= 160 && mz <= 256, maxed.size);
+
+  // --- a build with nothing anchored ------------------------------------------------------
+  // The tower is a cylinder of literal radius on a `$height` param: not one coordinate in it
+  // refers to the build volume, so it is the build a volume-only resize cannot touch at all.
+  await send('Page.navigate', { url: `${ORIGIN}/?build=tower` });
+  await settle();
+  await openSection('Details');
+  await sleep(300);
+  const towerBefore = await stats();
+
+  await send('Page.navigate', { url: `${ORIGIN}/?build=tower&s.x=200&s.y=200&s.z=200` });
+  await settle();
+  await openSection('Details');
+  await sleep(300);
+  const towerBig = await stats();
+  check(
+    'a build with no anchored coordinates resizes too',
+    blocks(towerBig) > blocks(towerBefore) * 3,
+    `${blocks(towerBefore)} → ${blocks(towerBig)} blocks (${(blocks(towerBig) / blocks(towerBefore)).toFixed(1)}x)`,
+  );
 
   fs.mkdirSync('out', { recursive: true });
   const shot = await send('Page.captureScreenshot', { format: 'png' });

@@ -68,6 +68,33 @@
 				}
 			}
 		},
+		"scale": {
+			"description": "Set by the editor's resize control, never by you. Percentage per axis of the size above; every coordinate in the program is multiplied by it. Omit it when writing a new build, and leave it untouched when editing one that already has it.",
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"x",
+				"y",
+				"z"
+			],
+			"properties": {
+				"x": {
+					"type": "number",
+					"minimum": 1,
+					"maximum": 1000
+				},
+				"y": {
+					"type": "number",
+					"minimum": 1,
+					"maximum": 1000
+				},
+				"z": {
+					"type": "number",
+					"minimum": 1,
+					"maximum": 1000
+				}
+			}
+		},
 		"params": {
 			"description": "Named numbers referenced from coordinate expressions as $name. Each becomes a slider, so the build must still make sense anywhere in the declared range.",
 			"type": "object",

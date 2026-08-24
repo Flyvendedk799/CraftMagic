@@ -233,10 +233,29 @@ export interface ProgramParam {
   label?: string;
 }
 
+/**
+ * Per-axis resize, as a percentage of the program's own `size`. 100 leaves an axis alone.
+ *
+ * Part of the program rather than an argument to the expander so that a resized build is a
+ * *program* like any other: it downloads, saves to the library, and re-expands to exactly what
+ * was on screen. A scale kept outside the program would be lost by every one of those paths.
+ */
+export interface ScalePercent {
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface BuildProgram {
   version: 1;
   meta: { name: string; description?: string; style?: string };
   size: { x: number; y: number; z: number };
+  /**
+   * Resize the whole build, as a percentage per axis. Written by the editor's scale control,
+   * not by the generator: a program describes a structure at its natural size, and the scale
+   * is what the user did to it afterwards.
+   */
+  scale?: ScalePercent;
   /** Named numbers referenced by coordinate expressions as `$name`. Drive the UI sliders. */
   params?: Record<string, ProgramParam>;
   palette: Record<string, BlockRef | WeightedBlockRef[]>;

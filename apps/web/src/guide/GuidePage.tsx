@@ -22,13 +22,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { buildGuide, colorOf, type BuildGuide, type BuildStep, type MaterialCount } from '@craftmagic/core';
 import { expandBuild, isBuildId, type LoadedBuild } from '../editor/builds.js';
+import { carrySettings, parseScale, scaleKey as readScaleKey, PARAM_PREFIX } from '../editor/urlState.js';
 import { IsoFilmstrip } from './isoRender.js';
 import { drawLayerPlan, earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
 import './print.css';
 
 const DEFAULT_BUILD = 'cottage';
-/** Same convention as the editor, so a guide link is the editor's URL with a new path. */
-const PARAM_PREFIX = 'p.';
 
 /** Step art. Sized for print (~88mm at 190dpi) rather than for the screen. */
 const STEP_W = 640;
@@ -71,7 +70,15 @@ export function GuidePage() {
     [params],
   );
 
-  const build = useMemo(() => expandBuild(buildId, parseOverrides(overrideKey)), [buildId, overrideKey]);
+  const scaleKey = readScaleKey(params);
+
+  // Both halves of the editor's URL, or the guide prints a different build from the one the
+  // link came from: `parseOverrides` alone was silently dropped, because it is a bare map of
+  // values where `expandBuild` expects them under `params`.
+  const build = useMemo(
+    () => expandBuild(buildId, { params: parseOverrides(overrideKey), scale: parseScale(scaleKey) }),
+    [buildId, overrideKey, scaleKey],
+  );
   const guide = useMemo(() => buildGuide(build.grid, build.name), [build]);
 
   const printable = guide.steps.length <= MAX_PRINTABLE_STEPS;
@@ -82,14 +89,9 @@ export function GuidePage() {
   const editorHref = useMemo(() => {
     const search = new URLSearchParams();
     search.set('build', buildId);
-    if (overrideKey) {
-      for (const entry of overrideKey.split('&')) {
-        const [name, value] = entry.split('=');
-        if (name && value) search.set(PARAM_PREFIX + name, value);
-      }
-    }
+    carrySettings(params, search);
     return `/?${search.toString()}`;
-  }, [buildId, overrideKey]);
+  }, [buildId, params]);
 
   return (
     <div

@@ -2,10 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { expand } from './expander.js';
 import { cottage, pavilion, samples, tower } from '../samples/index.js';
 import type { BuildProgram, VoxelGrid } from '../ir/types.js';
-import { AIR_BLOCK, voxelIndex } from '../ir/types.js';
+import { AIR_BLOCK, LIMITS, voxelIndex } from '../ir/types.js';
 
 function blockAt(grid: VoxelGrid, x: number, y: number, z: number): string {
 	return grid.palette[grid.voxels[voxelIndex(grid.size, x, y, z)]!]!;
+}
+
+/** The box the build actually fills, which is what a resize has to move. */
+function occupied(grid: VoxelGrid): { x: number; y: number; z: number } {
+	const lo = [grid.size.x, grid.size.y, grid.size.z];
+	const hi = [-1, -1, -1];
+
+	for (let i = 0; i < grid.voxels.length; i++) {
+		if (grid.voxels[i] === 0) continue;
+		const layer = grid.size.x * grid.size.z;
+		const p = [i % grid.size.x, Math.floor(i / layer), Math.floor((i % layer) / grid.size.x)];
+		for (const axis of [0, 1, 2]) {
+			if (p[axis]! < lo[axis]!) lo[axis] = p[axis]!;
+			if (p[axis]! > hi[axis]!) hi[axis] = p[axis]!;
+		}
+	}
+
+	return { x: hi[0]! - lo[0]! + 1, y: hi[1]! - lo[1]! + 1, z: hi[2]! - lo[2]! + 1 };
 }
 
 function withComponents(components: BuildProgram['components'], extra: Partial<BuildProgram> = {}): BuildProgram {
@@ -463,5 +481,116 @@ describe('expand — determinism and resize', () => {
 		const result = expand(pavilion);
 		expect(result.errors).toEqual([]);
 		expect(blockAt(result.grid, 2, 3, 2)).toContain('log');
+	});
+});
+
+/**
+ * The bug these guard against: resizing used to change `size` and nothing else, so only
+ * coordinates written against the volume (`min`/`max`/`center`/`%`) moved. Everything written
+ * as a number or driven by a param — a radius, a storey height, a pillar stride — stayed
+ * exactly where it was, and the build sat unchanged in a larger empty box. The tower, which is
+ * all literals and params, did not gain or lose a single block at 200%.
+ */
+describe('expand — scale moves every block, not just the anchored ones', () => {
+	const at = (percent: number) => ({ x: percent, y: percent, z: percent });
+
+	it('changes nothing at 100%', () => {
+		for (const [name, program] of Object.entries(samples)) {
+			const plain = expand(program).grid;
+			const scaled = expand({ ...program, scale: at(100) }).grid;
+			expect(Array.from(scaled.voxels), name).toEqual(Array.from(plain.voxels));
+		}
+	});
+
+	it('grows a build with no anchored coordinates at all', () => {
+		// The tower is a cylinder of literal radius on a `$height` param — before the fix this
+		// came back byte-for-byte identical to the unscaled build.
+		const base = expand(tower);
+		const big = expand({ ...tower, scale: at(200) });
+
+		expect(big.errors).toEqual([]);
+		expect(big.blockCount).toBeGreaterThan(base.blockCount * 2);
+		expect(occupied(big.grid).x).toBeGreaterThan(occupied(base.grid).x * 1.8);
+		expect(occupied(big.grid).y).toBeGreaterThan(occupied(base.grid).y * 1.8);
+	});
+
+	it('scales a param-driven height, and a literal one', () => {
+		// The cottage's storey height is `$floors*5` and its roof is a literal 8, so its Y used
+		// to be the same twelve blocks at every setting of the slider.
+		const base = occupied(expand(cottage).grid);
+		expect(occupied(expand({ ...cottage, scale: at(200) }).grid).y).toBeGreaterThan(base.y * 1.8);
+	});
+
+	it('moves one axis without touching the other two', () => {
+		const base = occupied(expand(cottage).grid);
+		const tall = occupied(expand({ ...cottage, scale: { x: 100, y: 200, z: 100 } }).grid);
+
+		// The walls double. The roof does not: a gable's height comes from the span it covers,
+		// and that span is on an axis the user left alone — so the pitch holds and the building
+		// grows by a storey rather than stretching into a spire.
+		expect(tall.y).toBeGreaterThan(base.y);
+		expect(tall.x).toBe(base.x);
+		expect(tall.z).toBe(base.z);
+	});
+
+	it('spreads repeated children over the new footprint instead of bunching them', () => {
+		// The pavilion's pillars are one box repeated on a stride of 5. A stride that does not
+		// scale leaves all sixteen pillars in one quarter of a doubled plot.
+		const big = expand({ ...pavilion, scale: at(200) });
+		expect(big.errors).toEqual([]);
+		expect(occupied(big.grid).x).toBeGreaterThan(occupied(expand(pavilion).grid).x * 1.8);
+
+		// Corner pillar, at twice its original offset.
+		expect(blockAt(big.grid, 4, 6, 4)).toContain('log');
+	});
+
+	it('shrinks without dropping a serious share of the build', () => {
+		// The far edge of a component is scaled, not its length, so a box that fitted its
+		// volume exactly still fits after an awkward factor rather than overhanging by one.
+		for (const [name, program] of Object.entries(samples)) {
+			for (const percent of [50, 65, 80, 150, 250, 400]) {
+				const result = expand({ ...program, scale: at(percent) });
+				expect(result.errors, `${name} at ${percent}%`).toEqual([]);
+				expect(
+					result.warnings.filter((w) => w.code === 'OUT_OF_BOUNDS'),
+					`${name} at ${percent}% spills out of its own volume`,
+				).toEqual([]);
+			}
+		}
+	});
+
+	it('holds the engine cap, and keeps the geometry inside it', () => {
+		// 400% of the tower's 30 is 120, but x and z would reach 68 — the point is that the
+		// clamped axis stops growing rather than drawing past the volume it was given.
+		const huge = expand({ ...tower, scale: at(400) });
+		expect(huge.grid.size.x).toBeLessThanOrEqual(LIMITS.maxSizeX);
+		expect(huge.grid.size.y).toBeLessThanOrEqual(LIMITS.maxSizeY);
+		expect(occupied(huge.grid).x).toBeLessThanOrEqual(huge.grid.size.x);
+	});
+
+	it('leaves counts alone while scaling the things they count', () => {
+		// Windows get bigger; there are still exactly two of them.
+		const wall = withComponents(
+			[
+				{
+					type: 'window_grid',
+					face: 'south',
+					region: { pos: [0, 0, 8], size: [9, 4, 1] },
+					rows: 1,
+					cols: 2,
+					windowSize: [2, 2],
+					role: 'a',
+				},
+			],
+			{ palette: { a: 'minecraft:glass' } },
+		);
+
+		const plain = expand(wall);
+		const big = expand({ ...wall, scale: at(200) });
+
+		// Two windows, 2x2, through a wall one block thick.
+		expect(plain.blockCount).toBe(2 * (2 * 2) * 1);
+		// Still two windows — 4x4 now, through a wall that is two blocks thick.
+		expect(big.blockCount).toBe(2 * (4 * 4) * 2);
 	});
 });

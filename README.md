@@ -110,12 +110,35 @@ minecraft-common-deobf/26.2/minecraft-common-deobf-26.2.jar net.minecraft.server
 
 ### One-jar install
 
-The mod bundles only the five Fabric API modules it uses (`fabric-command-api-v2`,
-`fabric-lifecycle-events-v1`, `fabric-networking-api-v1`, `fabric-rendering-v1`,
-`fabric-key-mapping-api-v1`) via Gradle `include` / Jar-in-Jar. Users install a single file;
-anyone already running the full Fabric API keeps whichever version is higher. This is why
-`fabric.mod.json` does **not** declare a `fabric-api` dependency — adding one back would
-force a second download on every user.
+**Players do not need to install Fabric API separately.** The mod bundles the six modules it
+uses (`fabric-api-base`, `fabric-command-api-v2`, `fabric-lifecycle-events-v1`,
+`fabric-networking-api-v1`, `fabric-rendering-v1`, `fabric-key-mapping-api-v1`) via Gradle
+`include` / Jar-in-Jar, so `fabric.mod.json` declares no `fabric-api` dependency. Anyone
+already running the full Fabric API keeps whichever version is higher.
+
+**`include` is not transitive.** It bundles exactly the artifact named and nothing that
+artifact depends on. Every module above except `fabric-key-mapping-api-v1` declares
+`"fabric-api-base": "*"` as a hard dependency, and shipping without it made the jar refuse to
+load for anyone who did not already have the full Fabric API — while `runClient` and
+`runServer` worked perfectly, because the dev runtime puts all of Fabric API on the classpath.
+No test in this repo could see it.
+
+When adding a module, read its `depends` block out of the built jar and bundle every Fabric
+module it names:
+
+```bash
+unzip -p mod/build/libs/craftmagic-0.1.0.jar 'META-INF/jars/*.jar' > /dev/null   # list them
+unzip -p <module>.jar fabric.mod.json | grep depends
+```
+
+The only verification that actually proves this is a **real Fabric server with nothing else in
+`mods/`** — the dev runtime cannot show the failure:
+
+```bash
+curl -L -o server.jar https://meta.fabricmc.net/v2/versions/loader/26.2/0.19.3/1.1.2/server/jar
+mkdir mods && cp <the built jar> mods/ && echo "eula=true" > eula.txt
+java -jar server.jar nogui      # expect every module nested under "craftmagic" in the mod list
+```
 
 ## Block registry
 

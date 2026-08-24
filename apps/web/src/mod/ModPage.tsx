@@ -102,9 +102,14 @@ export function ModPage() {
             <strong>Launch the Fabric profile</strong> and open a world — single-player is fine.
           </li>
         </ol>
+        {/* Most Fabric mods require the Fabric API jar alongside them, so people reasonably
+            assume this one does too and go looking for it. Saying so plainly here saves a
+            support question and a wasted download. */}
         <p className="modpage__note">
-          Nothing else to install. The mod bundles the parts of the Fabric API it uses, so this is
-          the only file you need.
+          <strong>You do not need the Fabric API jar.</strong> Most mods ask you to install it
+          separately; this one bundles the six modules it uses, so the file above is the only one
+          that goes in your mods folder. If you already run the full Fabric API, that keeps
+          working — Fabric just uses whichever version is newer.
         </p>
       </section>
 

@@ -719,3 +719,166 @@
 .export__note--error {
   color: var(--fail);
 }
+
+/* --- scale ---------------------------------------------------------------
+   Resizing the whole build. Shares `.param` with the shape sliders so the two
+   read as one family; only the header, readout and mode switch are new. */
+
+.scale__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.scale__modes {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.scale__mode {
+  font-size: 0.6875rem;
+  padding: 0.2rem 0.45rem;
+  background: #212832;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.scale__mode--on {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.scale__axis {
+  color: var(--muted);
+  font-size: 0.6875rem;
+}
+
+/* The resulting dimensions, which is the number people actually watch while dragging. */
+.scale__readout {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: var(--text);
+}
+
+.scale__base {
+  color: var(--muted);
+}
+
+.scale__reset {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.scale__warn {
+  margin: 0.4rem 0 0;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--pending);
+}
+
+/* The shortcut digit on each tool button. Dim by default so the label stays the thing you
+   read, and it only needs to be legible once. */
+.tools__key {
+  margin-left: 0.35rem;
+  font-size: 0.625rem;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.tools__tool[aria-pressed='true'] .tools__key {
+  color: var(--bg);
+  opacity: 0.55;
+}
+
+/* --- collapsible HUD sections --------------------------------------------
+   The HUD is one long column and "Send to game" used to sit below the fold.
+   Collapsing is what makes it reachable without scrolling past everything. */
+
+.section {
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+}
+
+/* The first one has the panel's own edge above it already. */
+.section:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.section__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.15rem 0;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.section__head:hover {
+  color: var(--text);
+}
+
+.section__chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transform: rotate(0deg);
+  transition: transform 120ms ease;
+  flex: none;
+  align-self: center;
+}
+
+.section--open .section__chevron {
+  transform: rotate(90deg);
+}
+
+.section__title {
+  flex: 1;
+}
+
+/* The one number worth seeing without opening the section. */
+.section__summary {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.section__body {
+  padding-top: 0.5rem;
+}
+
+/* Sections already carry the heading, so the panels inside them must not repeat it. */
+.section__body > .params > .params__title:first-child,
+.section__body > .export > .params__title:first-child {
+  display: none;
+}

@@ -38,6 +38,27 @@ const port = 9700 + (process.pid % 200);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ic-edit-'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Open a collapsed HUD section.
+ *
+ * The editor's panels collapse now, and several of them start closed, so a driver has to open
+ * what it needs exactly as a person would rather than assuming everything is on screen.
+ */
+/**
+ * Expression that opens a collapsed HUD section.
+ *
+ * The editor's panels collapse now and several start closed, so a driver has to open what it
+ * needs exactly as a person would rather than assuming everything is on screen.
+ */
+const openSection = (title) => `(() => {
+	const head = [...document.querySelectorAll('.section__head')]
+		.find((h) => h.textContent.includes(${JSON.stringify(title)}));
+	if (!head) return false;
+	if (head.getAttribute('aria-expanded') !== 'true') head.click();
+	return true;
+})()`;
+
+
 const child = spawn(
 	EDGE,
 	[
@@ -161,6 +182,8 @@ try {
 	await send('Page.navigate', { url: `${ORIGIN}/?build=${buildId}` });
 	await waitFor("!!document.querySelector('.editor')", 'editor', 30_000);
 	await meshed();
+	// Details holds the block and palette counts this driver reads, and starts collapsed.
+	await evaluate(openSection('Details'));
 	await sleep(500);
 
 	const before = await stats();
@@ -243,10 +266,13 @@ try {
 	check('Redo button re-applied the edit', afterRedo.blocks === before.blocks + 1, `${afterUndo.blocks} → ${afterRedo.blocks}`);
 
 	// --- fill ----------------------------------------------------------------
+	// Selected by `data-tool` rather than by the button's text: the buttons now carry their
+	// keyboard shortcut inside them, so matching on textContent broke on "Place1".
+	const TOOL_IDS = { Place: 'place', Erase: 'erase', Fill: 'fill', Box: 'select', Swap: 'swap' };
 	const useTool = (label) =>
 		evaluate(`
 			(() => {
-				const button = [...document.querySelectorAll('.tools__tool')].find((b) => b.textContent.trim() === ${JSON.stringify(label)});
+				const button = document.querySelector('.tools__tool[data-tool=' + JSON.stringify(${JSON.stringify(TOOL_IDS)}[${JSON.stringify(label)}]) + ']');
 				if (!button) throw new Error('no such tool: ' + ${JSON.stringify(label)});
 				button.click();
 				return true;
@@ -339,10 +365,17 @@ try {
 	// --- the re-expansion guard ----------------------------------------------
 	const guard = await evaluate(`
 		(() => {
-			const slider = document.querySelector('.param__slider');
-			if (!slider) return 'no params on this build';
+			// Not just any slider: Scale now renders first and steps in fives, so nudging it by
+			// one snaps back to the same value and React never fires a change at all. This
+			// check is about a *shape* param, which lives in the panel that is not .scale.
+			const slider = document.querySelector('.params:not(.scale) .param__slider');
+			if (!slider) return 'no shape params on this build';
 			const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-			setter.call(slider, String(Number(slider.value) + 1));
+			const step = Number(slider.step) || 1;
+			const next = Number(slider.value) + step <= Number(slider.max)
+				? Number(slider.value) + step
+				: Number(slider.value) - step;
+			setter.call(slider, String(next));
 			slider.dispatchEvent(new Event('input', { bubbles: true }));
 			return null;
 		})()

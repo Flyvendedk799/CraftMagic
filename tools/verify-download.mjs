@@ -27,6 +27,27 @@ const port = 9800 + (process.pid % 150);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ic-dl-'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Open a collapsed HUD section.
+ *
+ * The editor's panels collapse now, and several of them start closed, so a driver has to open
+ * what it needs exactly as a person would rather than assuming everything is on screen.
+ */
+/**
+ * Expression that opens a collapsed HUD section.
+ *
+ * The editor's panels collapse now and several start closed, so a driver has to open what it
+ * needs exactly as a person would rather than assuming everything is on screen.
+ */
+const openSection = (title) => `(() => {
+	const head = [...document.querySelectorAll('.section__head')]
+		.find((h) => h.textContent.includes(${JSON.stringify(title)}));
+	if (!head) return false;
+	if (head.getAttribute('aria-expanded') !== 'true') head.click();
+	return true;
+})()`;
+
+
 fs.mkdirSync(outDir, { recursive: true });
 for (const file of fs.readdirSync(outDir)) fs.rmSync(path.join(outDir, file), { force: true });
 
@@ -101,6 +122,8 @@ try {
 	};
 
 	await waitFor("document.querySelector('.editor')?.dataset.remaining === '0'", 'the build to load', 60_000);
+	// Export starts collapsed, so open it before looking for its buttons.
+	await evaluate(openSection('Export'));
 	await waitFor(
 		"[...document.querySelectorAll('button')].some(b => b.textContent.includes('Download schematic'))",
 		'the download button',

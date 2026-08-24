@@ -190,6 +190,22 @@ try {
 	await waitFor("!!document.querySelector('.editor')", 'the editor');
 	await meshed();
 
+	// The HUD collapses into sections now, several of them closed by default. Open the two this
+	// driver reads from, exactly as a person would before using them.
+	const openSection = (title) =>
+		evaluate(`
+			(() => {
+				const head = [...document.querySelectorAll('.section__head')]
+					.find((h) => h.textContent.includes(${JSON.stringify(title)}));
+				if (!head) return false;
+				if (head.getAttribute('aria-expanded') !== 'true') head.click();
+				return true;
+			})()
+		`);
+	await openSection('Details');
+	await openSection('Save');
+	await sleep(200);
+
 	const editorBlocks = await evaluate("Number([...document.querySelectorAll('.hud__stats dd')][2].textContent.replace(/[^0-9]/g, ''))");
 	check('the editor kept the session across the navigation', (await evaluate("document.querySelector('.account')?.dataset.state")) === 'signed-in');
 

@@ -29,10 +29,17 @@ import {
   isLibraryId,
   libraryRowId,
   paramsOf,
+  previewScale,
+  baseSize,
+  occupiedBounds,
+  NO_SCALE,
+  type ScalePercent,
   registerGeneratedBuild,
   registerLibraryBuild,
 } from './builds.js';
 import { ExportBar } from './ExportBar.js';
+import { ScalePanel } from './ScalePanel.js';
+import { Section } from './Section.js';
 import { ToolPalette, type ToolId } from './ToolPalette.js';
 import { useEditSession } from './useEditSession.js';
 import { place } from './tools/place.js';
@@ -57,9 +64,24 @@ import './editor.css';
 const DEFAULT_BUILD = BLANK_BUILD;
 /** Namespaced so a param can never collide with `build` or `layer`. */
 const PARAM_PREFIX = 'p.';
+/** Scale lives in the URL too, so a resized build is shareable and survives a reload. */
+const SCALE_PREFIX = 's.';
+
+/** Slider bounds, in percent. Below a quarter a small build loses its features entirely. */
+const SCALE_MIN = 25;
+const SCALE_MAX = 400;
 
 /** Common enough to be a sane starting block, and present in most sample palettes. */
 const DEFAULT_BLOCK = 'minecraft:oak_planks';
+
+/** Kept beside the palette's own labels; both are wrong the moment they disagree. */
+const TOOL_KEYS: Record<string, ToolId> = {
+  '1': 'place',
+  '2': 'erase',
+  '3': 'fill',
+  '4': 'select',
+  '5': 'swap',
+};
 
 const BUILD_LABELS: Record<string, string> = {
   blank: 'Empty',
@@ -72,7 +94,8 @@ const BUILD_LABELS: Record<string, string> = {
 /** A navigation that would re-expand the program, held back until the user confirms. */
 type PendingNav =
   | { kind: 'build'; build: string }
-  | { kind: 'param'; name: string; value: number };
+  | { kind: 'param'; name: string; value: number }
+  | { kind: 'scale'; scale: ScalePercent };
 
 export function EditorPage() {
   const [params, setParams] = useSearchParams();
@@ -135,10 +158,27 @@ export function EditorPage() {
     .map((spec) => `${spec.name}=${params.get(PARAM_PREFIX + spec.name) ?? ''}`)
     .join('&');
 
-  const build = useMemo(() => expandBuild(buildId, parseOverrides(overrideKey)), [buildId, overrideKey]);
+  // Scale keyed as a string for the same reason as params: the memo must not re-run because
+  // an object literal is a new object every render.
+  const scaleKey = [
+    params.get(SCALE_PREFIX + 'x') ?? '100',
+    params.get(SCALE_PREFIX + 'y') ?? '100',
+    params.get(SCALE_PREFIX + 'z') ?? '100',
+  ].join('/');
+  const scale = useMemo(() => parseScale(scaleKey), [scaleKey]);
+
+  const build = useMemo(
+    () => expandBuild(buildId, { params: parseOverrides(overrideKey), scale: parseScale(scaleKey) }),
+    [buildId, overrideKey, scaleKey],
+  );
   const session = useEditSession(build);
 
   const { grid, name } = build;
+
+  const scalePreview = useMemo(() => previewScale(buildId, scale), [buildId, scale]);
+  const scaleBase = useMemo(() => baseSize(buildId), [buildId]);
+  // One pass over the voxels per re-expansion — trivial next to the meshing that follows.
+  const occupied = useMemo(() => occupiedBounds(grid), [grid]);
 
   /**
    * The program a refine would edit, or null when refining makes no sense.
@@ -176,7 +216,12 @@ export function EditorPage() {
   }, [buildId, params]);
 
   const update = useCallback(
-    (next: { build?: string; layer?: number | null; param?: { name: string; value: number } }) => {
+    (next: {
+      build?: string;
+      layer?: number | null;
+      param?: { name: string; value: number };
+      scale?: ScalePercent | null;
+    }) => {
       setParams(
         (prev) => {
           const search = new URLSearchParams(prev);
@@ -185,10 +230,19 @@ export function EditorPage() {
             // Layers and params are per-build; carrying either across is meaningless.
             search.delete('layer');
             for (const key of [...search.keys()]) {
-              if (key.startsWith(PARAM_PREFIX)) search.delete(key);
+              if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX)) search.delete(key);
             }
           }
           if (next.param) search.set(PARAM_PREFIX + next.param.name, String(next.param.value));
+          if (next.scale !== undefined) {
+            // 100% is the program's own size, so it is the absence of a setting rather than a
+            // value to store — that keeps a shared link clean when nothing was resized.
+            for (const axis of ['x', 'y', 'z'] as const) {
+              const percent = next.scale?.[axis] ?? 100;
+              if (percent === 100) search.delete(SCALE_PREFIX + axis);
+              else search.set(SCALE_PREFIX + axis, String(percent));
+            }
+          }
           if (next.layer !== undefined) {
             if (next.layer === null) search.delete('layer');
             else search.set('layer', String(next.layer));
@@ -205,6 +259,29 @@ export function EditorPage() {
   // --- editing ------------------------------------------------------------
 
   const [tool, setTool] = useState<ToolId>('place');
+
+  /**
+   * Number keys pick a tool.
+   *
+   * Guarded against firing while someone is typing: the prompt box and the rename field are
+   * both on this page, and a shortcut that changes the tool mid-sentence is worse than no
+   * shortcut. Modifier combinations are left alone so Ctrl+Z still reaches undo.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (target?.isContentEditable) return;
+
+      const picked = TOOL_KEYS[event.key];
+      if (!picked) return;
+      event.preventDefault();
+      setTool(picked);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
   const [block, setBlock] = useState<string>(DEFAULT_BLOCK);
   const [boxMode, setBoxMode] = useState<BoxMode>('fill');
   const [familyMode, setFamilyMode] = useState(false);
@@ -439,6 +516,7 @@ export function EditorPage() {
           ))}
         </div>
 
+        <Section id="tools" title="Edit" summary={session.edits > 0 ? `${session.edits} edits` : undefined}>
         <ToolPalette
           tool={tool}
           onTool={onTool}
@@ -459,7 +537,16 @@ export function EditorPage() {
           onDiscard={session.discard}
           notice={notice}
         />
+        </Section>
 
+        <Section
+          id="stats"
+          title="Details"
+          // Size and block count in the header, because they are what changes while scaling —
+          // collapsing this section must not cost the two numbers people watch.
+          summary={`${grid.size.x}×${grid.size.y}×${grid.size.z} · ${session.blockCount.toLocaleString()}`}
+          defaultOpen={false}
+        >
         <dl className="hud__stats">
           <dt>Build</dt>
           <dd>{name}</dd>
@@ -476,11 +563,12 @@ export function EditorPage() {
           <dt>Layer</dt>
           <dd>{layer === null ? 'all' : `0–${layer}`}</dd>
         </dl>
+        </Section>
 
         {pending && (
           <div className="detach" role="alertdialog">
             <p className="detach__text">
-              {pending.kind === 'param' ? 'Resizing' : 'Switching build'} re-expands the program
+              {pending.kind === 'build' ? 'Switching build' : pending.kind === 'scale' ? 'Scaling' : 'Resizing'} re-expands the program
               and discards {session.edits} manual edit{session.edits === 1 ? '' : 's'}. The program
               itself is unchanged.
             </p>
@@ -502,9 +590,20 @@ export function EditorPage() {
           </div>
         )}
 
+        {build.program && (
+          <ScalePanel
+            scale={scale}
+            outcome={scalePreview}
+            base={scaleBase}
+            occupied={occupied}
+            hasShape={build.params.length > 0}
+            onChange={(next) => guard({ kind: 'scale', scale: next })}
+          />
+        )}
+
         {build.params.length > 0 && (
           <div className="params">
-            <p className="params__title">Resize — re-expands the program</p>
+            <p className="params__title">Shape — re-expands the program</p>
             {build.params.map((param) => (
               <label key={param.name} className="param">
                 <span className="param__label">{param.label}</span>
@@ -615,8 +714,16 @@ export function EditorPage() {
   );
 }
 
-function applyNav(nav: PendingNav, update: (next: { build?: string; param?: { name: string; value: number } }) => void): void {
+function applyNav(
+  nav: PendingNav,
+  update: (next: {
+    build?: string;
+    param?: { name: string; value: number };
+    scale?: ScalePercent | null;
+  }) => void,
+): void {
   if (nav.kind === 'build') update({ build: nav.build });
+  else if (nav.kind === 'scale') update({ scale: nav.scale });
   else update({ param: { name: nav.name, value: nav.value } });
 }
 
@@ -642,4 +749,21 @@ function readLayer(raw: string | null, topLayer: number): number | null {
 function blockAt(grid: { size: { x: number; y: number; z: number }; palette: string[]; voxels: Uint16Array }, at: VoxelHit): string {
   const index = grid.voxels[voxelIndex(grid.size, at.x, at.y, at.z)] ?? 0;
   return displayName(grid.palette[index] ?? AIR_BLOCK);
+}
+
+/**
+ * Scale percentages from the URL, clamped to the slider's own range.
+ *
+ * Clamped rather than trusted: `?s.x=100000` would otherwise ask the expander for a build
+ * larger than the engine allows, and a hand-edited or stale link should degrade to something
+ * sensible rather than to an error page.
+ */
+function parseScale(key: string): ScalePercent {
+  const [x, y, z] = key.split('/');
+  const axis = (raw: string | undefined) => {
+    const value = Number.parseInt(raw ?? '', 10);
+    if (!Number.isFinite(value)) return 100;
+    return Math.max(SCALE_MIN, Math.min(SCALE_MAX, value));
+  };
+  return { x: axis(x), y: axis(y), z: axis(z) };
 }

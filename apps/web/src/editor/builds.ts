@@ -12,6 +12,7 @@
 
 import {
   expand,
+  LIMITS,
   paletteColors,
   paletteFlags,
   samples,
@@ -278,14 +279,41 @@ export function paramsOf(id: string): BuildParam[] {
  * the geometry; this one keeps `params` in the result truthful, so a hand-edited URL shows
  * the slider at the value that was actually built rather than the one that was asked for.
  */
-export function expandBuild(id: string, overrides: Readonly<Record<string, number>> = {}): LoadedBuild {
+/**
+ * Per-axis scale, as a percentage of the program's own size. 100 means unchanged.
+ *
+ * This is the payoff of emitting a program rather than voxels: resizing re-runs the program at
+ * a new size, so a wall anchored at `max-1` stays against the far wall and a door at `center`
+ * stays centred. Scaling a voxel grid could only stretch or resample it.
+ */
+export interface ScalePercent {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export const NO_SCALE: ScalePercent = { x: 100, y: 100, z: 100 };
+
+export interface BuildOverrides {
+  params?: Readonly<Record<string, number>>;
+  scale?: ScalePercent;
+}
+
+/** What a scale actually produced, once clamped to what the expander will accept. */
+export interface ScaleOutcome {
+  size: { x: number; y: number; z: number };
+  /** True when an axis wanted to go past the engine's cap and was held back. */
+  clamped: boolean;
+}
+
+export function expandBuild(id: string, overrides: BuildOverrides = {}): LoadedBuild {
   const stored = library.get(id);
   if (stored?.kind === 'voxels') return fromVoxels(id, stored.name, stored.grid);
 
   const program = programOf(id);
   if (!program) throw new Error(`unknown build "${id}"`);
 
-  const applied = applyOverrides(program, overrides);
+  const applied = applyOverrides(program, overrides.params ?? {}, overrides.scale);
   const result = expand(applied);
 
   return {
@@ -340,18 +368,69 @@ function fromVoxels(id: string, name: string, source: VoxelGrid): LoadedBuild {
 function applyOverrides(
   program: BuildProgram,
   overrides: Readonly<Record<string, number>>,
+  scale: ScalePercent | undefined,
 ): BuildProgram {
-  if (!program.params) return program;
+  let next = program;
+
+  if (scale && (scale.x !== 100 || scale.y !== 100 || scale.z !== 100)) {
+    next = { ...next, size: scaledSize(program.size, scale) };
+  }
+
+  if (!next.params) return next;
 
   const params: Record<string, ProgramParam> = {};
-  for (const [name, param] of Object.entries(program.params)) {
+  for (const [name, param] of Object.entries(next.params)) {
     const override = overrides[name];
     params[name] =
       override === undefined
         ? param
         : { ...param, value: Math.min(param.max, Math.max(param.min, Math.round(override))) };
   }
-  return { ...program, params };
+  return { ...next, params };
+}
+
+/**
+ * The size a scale produces, clamped to what the expander accepts.
+ *
+ * Clamped rather than rejected: a slider that silently stops moving at the cap is far better
+ * than one that lets you drag into an error. The floor of 1 matters as much as the ceiling —
+ * a zero-thickness axis expands to nothing at all, and "my build vanished" is a worse outcome
+ * than "it stopped getting smaller".
+ */
+export function scaledSize(
+  size: { x: number; y: number; z: number },
+  scale: ScalePercent,
+): { x: number; y: number; z: number } {
+  const axis = (value: number, percent: number, max: number) =>
+    Math.max(1, Math.min(max, Math.round((value * percent) / 100)));
+
+  return {
+    x: axis(size.x, scale.x, LIMITS.maxSizeX),
+    y: axis(size.y, scale.y, LIMITS.maxSizeY),
+    z: axis(size.z, scale.z, LIMITS.maxSizeZ),
+  };
+}
+
+/** The size a scale would produce, and whether any axis hit the cap. Used to label the UI. */
+export function previewScale(id: string, scale: ScalePercent): ScaleOutcome | null {
+  const program = programOf(id);
+  if (!program) return null;
+
+  const size = scaledSize(program.size, scale);
+  const wanted = {
+    x: Math.round((program.size.x * scale.x) / 100),
+    y: Math.round((program.size.y * scale.y) / 100),
+    z: Math.round((program.size.z * scale.z) / 100),
+  };
+  return {
+    size,
+    clamped: wanted.x !== size.x || wanted.y !== size.y || wanted.z !== size.z,
+  };
+}
+
+/** The program's own size, so the UI can show what 100% means. */
+export function baseSize(id: string): { x: number; y: number; z: number } | null {
+  return programOf(id)?.size ?? null;
 }
 
 function toParams(params: BuildProgram['params']): BuildParam[] {
@@ -363,4 +442,44 @@ function toParams(params: BuildProgram['params']): BuildParam[] {
     min: param.min,
     max: param.max,
   }));
+}
+
+/**
+ * The box the build actually occupies, inside its declared volume.
+ *
+ * Needed because scaling an axis only does something if the program's coordinates depend on
+ * that axis. The cottage anchors width and depth with `min`/`max`, so those scale; its height
+ * comes from `$floors*5`, so growing the volume's Y adds empty headroom and nothing else. The
+ * slider moves, the number changes, and the building does not — which reads as a broken
+ * control unless the UI says what happened.
+ *
+ * Returns null for an empty build, where "occupied" means nothing.
+ */
+export function occupiedBounds(grid: VoxelGrid): { x: number; y: number; z: number } | null {
+  const { size, voxels } = grid;
+  let minX = size.x;
+  let minY = size.y;
+  let minZ = size.z;
+  let maxX = -1;
+  let maxY = -1;
+  let maxZ = -1;
+
+  // One pass in storage order (YZX), so this stays cache-friendly on a 300k-block build.
+  let index = 0;
+  for (let y = 0; y < size.y; y++) {
+    for (let z = 0; z < size.z; z++) {
+      for (let x = 0; x < size.x; x++, index++) {
+        if (voxels[index] === 0) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+      }
+    }
+  }
+
+  if (maxX < 0) return null;
+  return { x: maxX - minX + 1, y: maxY - minY + 1, z: maxZ - minZ + 1 };
 }

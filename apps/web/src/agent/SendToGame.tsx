@@ -62,7 +62,6 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
   if (!available) {
     return (
       <div className="agent">
-        <p className="params__title">Send to game</p>
         <p className="agent__note">
           Unavailable — this server has no database configured, so worlds cannot be paired.
         </p>
@@ -75,7 +74,6 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
   if (needsAccount) {
     return (
       <div className="agent">
-        <p className="params__title">Send to game</p>
         <p className="agent__note">
           Pairing a world attaches it to your account, so a stranger cannot build in it.{' '}
           <Link className="agent__link" to="/library">
@@ -91,7 +89,6 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
 
   return (
     <div className="agent">
-      <p className="params__title">Send to game</p>
 
       {loading && <p className="agent__note">Looking for paired worlds…</p>}
 

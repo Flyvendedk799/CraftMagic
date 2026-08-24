@@ -20,23 +20,27 @@ interface ToolSpec {
   hint: string;
   /** Erase needs no block; showing the picker for it would imply otherwise. */
   needsBlock: boolean;
+  /** Number key that selects it. Shown on the button, because an unadvertised shortcut is none. */
+  key: string;
 }
 
 const TOOLS: readonly ToolSpec[] = [
-  { id: 'place', label: 'Place', hint: 'Click a face to add a block against it.', needsBlock: true },
-  { id: 'erase', label: 'Erase', hint: 'Click a block to remove it.', needsBlock: false },
+  { id: 'place', label: 'Place', hint: 'Click a face to add a block against it.', needsBlock: true, key: '1' },
+  { id: 'erase', label: 'Erase', hint: 'Click a block to remove it.', needsBlock: false, key: '2' },
   {
     id: 'fill',
     label: 'Fill',
     hint: 'Click to repaint every connected block of the same kind.',
     needsBlock: true,
+    key: '3',
   },
-  { id: 'select', label: 'Box', hint: 'Click two opposite corners.', needsBlock: true },
+  { id: 'select', label: 'Box', hint: 'Click two opposite corners.', needsBlock: true, key: '4' },
   {
     id: 'swap',
     label: 'Swap',
     hint: 'Click a block to replace it everywhere in the build.',
     needsBlock: true,
+    key: '5',
   },
 ];
 
@@ -78,7 +82,6 @@ export function ToolPalette(props: ToolPaletteProps) {
 
   return (
     <div className="tools">
-      <p className="params__title">Edit</p>
 
       <div className="tools__row">
         {TOOLS.map((entry) => (
@@ -86,11 +89,17 @@ export function ToolPalette(props: ToolPaletteProps) {
             key={entry.id}
             type="button"
             className="tools__tool"
+            // A stable hook for the headless drivers. They used to match on the button's text,
+            // which broke the moment the shortcut digit was added inside it.
+            data-tool={entry.id}
             aria-pressed={props.tool === entry.id}
-            title={entry.hint}
+            title={`${entry.hint}  (${entry.key})`}
             onClick={() => props.onTool(entry.id)}
           >
             {entry.label}
+            <span className="tools__key" aria-hidden="true">
+              {entry.key}
+            </span>
           </button>
         ))}
       </div>

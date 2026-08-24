@@ -16,6 +16,7 @@ import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 import { SendToGame } from '../agent/SendToGame.js';
 import { SaveToLibrary } from '../library/SaveToLibrary.js';
 import { downloadProgram, downloadSchematic, formatBytes } from './download.js';
+import { Section } from './Section.js';
 
 export interface ExportBarProps {
   grid: VoxelGrid;
@@ -58,7 +59,7 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
 
   return (
     <div className="export">
-      <p className="params__title">Export</p>
+      <Section id="export" title="Export" defaultOpen={false}>
 
       <div className="export__actions">
         <button
@@ -100,14 +101,21 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
           {failed}
         </p>
       )}
+      </Section>
 
       {/* Both write a build somewhere permanent — the library, or somebody's world. Neither
           is worth offering until there is a build: an empty save is clutter, and an empty
           send is a bot that flies out and places nothing. */}
       {!empty && (
         <>
-          <SaveToLibrary name={name} grid={grid} program={program} detached={detached} />
-          <SendToGame name={name} grid={grid} program={program} />
+          <Section id="save" title="Save" defaultOpen={false}>
+            <SaveToLibrary name={name} grid={grid} program={program} detached={detached} />
+          </Section>
+          {/* Open by default: this is the headline feature and it used to sit below the fold,
+              where nobody found it. */}
+          <Section id="sendtogame" title="Send to game">
+            <SendToGame name={name} grid={grid} program={program} />
+          </Section>
         </>
       )}
     </div>

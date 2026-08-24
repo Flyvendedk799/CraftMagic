@@ -20,6 +20,8 @@ export interface Config {
   /** Hard ceiling on Anthropic spend per calendar month, in USD. */
   monthlyBudgetUsd: number;
   spendLedgerPath: string;
+  /** Force this account to be an admin at boot. See index.ts for why. */
+  adminEmail: string | undefined;
   sessionSecret: string;
   isProduction: boolean;
 }
@@ -60,6 +62,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Defaults low on purpose. A missing or unparseable value must not mean "unlimited".
     monthlyBudgetUsd: parsePositive(env.ANTHROPIC_MONTHLY_BUDGET_USD, 1),
     spendLedgerPath: resolveLedgerPath(env),
+    adminEmail: env.ADMIN_EMAIL?.trim().toLowerCase() || undefined,
     sessionSecret: requiredInProduction('SESSION_SECRET', env.SESSION_SECRET, isProduction),
     isProduction,
   };

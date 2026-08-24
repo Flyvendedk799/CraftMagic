@@ -144,6 +144,26 @@ export class AuthStore {
 		await this.db.query('DELETE FROM sessions WHERE token_hash = $1', [sha256(token)]);
 	}
 
+	/**
+	 * Make sure a named account is an admin.
+	 *
+	 * `ADMIN_EMAIL` exists because "the first account to register" is only reliable when the
+	 * first account really is the operator's. Here it was not: verification runs created
+	 * throwaway accounts against the live database minutes before the real one, so a test
+	 * account inherited the flag. Naming the address makes it deterministic regardless of the
+	 * order accounts appear in, and it grants rather than revokes — an admin promoted through
+	 * the database stays one.
+	 *
+	 * Returns true when it changed something, so boot can say so rather than acting silently.
+	 */
+	async ensureAdmin(email: string): Promise<boolean> {
+		const { rowCount } = await this.db.query(
+			'UPDATE users SET is_admin = true WHERE lower(email) = lower($1) AND NOT is_admin',
+			[email],
+		);
+		return (rowCount ?? 0) > 0;
+	}
+
 	/** Housekeeping only — expiry is already enforced by `userBySessionToken`. */
 	async sweepExpiredSessions(): Promise<number> {
 		const { rowCount } = await this.db.query('DELETE FROM sessions WHERE expires_at < now()');

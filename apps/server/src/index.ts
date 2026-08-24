@@ -136,6 +136,17 @@ if (store) {
   app.log.info('agent pairing, jobs and accounts enabled');
 }
 
+// Deterministic admin. "First account to register" is only right when the first account is
+// the operator's — it was not here, because verification runs created throwaway accounts
+// against the live database before the real one and a test account inherited the flag.
+if (authStore && config.adminEmail) {
+  const promoted = await authStore.ensureAdmin(config.adminEmail);
+  app.log.info(
+    { email: config.adminEmail, promoted },
+    promoted ? 'promoted ADMIN_EMAIL to admin' : 'ADMIN_EMAIL already an admin (or no such account yet)',
+  );
+}
+
 // Expiry is enforced in the session lookup, so this only keeps the table from growing without
 // bound. Unref'd: a pending timer must not be the reason the process refuses to exit.
 if (authStore) {

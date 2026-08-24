@@ -21,6 +21,7 @@ import { AIR_BLOCK, displayName, voxelIndex } from '@craftmagic/core';
 import { EditorCanvas } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
+  BLANK_BUILD,
   BUILD_IDS,
   expandBuild,
   generatedBuilds,
@@ -46,7 +47,14 @@ import { getBuild } from '../library/library.js';
 import type { VoxelHit } from './raycast.js';
 import './editor.css';
 
-const DEFAULT_BUILD = 'cottage';
+/**
+ * A first visit opens on an empty plot, not on somebody else's cottage.
+ *
+ * Landing on a finished sample made the product read as a gallery: the thing the visitor came
+ * to do — describe a build — was the least prominent element on screen, and every sample they
+ * saw was already made. The samples are still one click away in the picker.
+ */
+const DEFAULT_BUILD = BLANK_BUILD;
 /** Namespaced so a param can never collide with `build` or `layer`. */
 const PARAM_PREFIX = 'p.';
 
@@ -54,6 +62,7 @@ const PARAM_PREFIX = 'p.';
 const DEFAULT_BLOCK = 'minecraft:oak_planks';
 
 const BUILD_LABELS: Record<string, string> = {
+  blank: 'Empty',
   cottage: 'Cottage',
   tower: 'Tower',
   pavilion: 'Pavilion',
@@ -526,6 +535,7 @@ export function EditorPage() {
           name={name}
           detached={session.detached}
           guideHref={guideHref}
+          blockCount={session.blockCount}
         />
 
         {generated && buildId === generated.id && (

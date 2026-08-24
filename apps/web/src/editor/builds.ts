@@ -118,7 +118,28 @@ const towerField: BuildProgram = {
   ],
 };
 
+/**
+ * What a first-time visitor lands on: an empty plot.
+ *
+ * The editor used to open on the cottage sample, which reads as "here is a building someone
+ * else made" rather than "describe what you want". Nothing on screen was the user's, and the
+ * one thing they came to do was the least obvious.
+ *
+ * It is a real program with no components rather than a special case, so it flows through the
+ * same expander, mesher and editor tools as everything else — an empty grid is just a grid,
+ * and the place tool works on it immediately.
+ */
+const blank: BuildProgram = {
+  version: 1,
+  meta: { name: 'Empty plot', description: 'Describe a build, or start placing blocks.' },
+  size: { x: 32, y: 24, z: 32 },
+  // One role, so the palette swap and block picker have something sensible to start from.
+  palette: { wall_primary: 'minecraft:oak_planks' },
+  components: [],
+};
+
 const PROGRAMS: Record<string, BuildProgram> = {
+  blank,
   cottage: samples.cottage!,
   tower: samples.tower!,
   pavilion: samples.pavilion!,
@@ -127,6 +148,9 @@ const PROGRAMS: Record<string, BuildProgram> = {
 
 /** The built-in samples, in picker order. Generated builds are tracked separately. */
 export const BUILD_IDS = Object.keys(PROGRAMS);
+
+/** The empty starting point. Exported so the UI can tell "nothing yet" from "a real build". */
+export const BLANK_BUILD = 'blank';
 
 /**
  * Programs that arrived from the generator this session.

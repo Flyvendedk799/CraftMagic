@@ -26,11 +26,18 @@ export interface ExportBarProps {
   detached: boolean;
   /** Link to the printable guide, or null when this build cannot be reached by URL alone. */
   guideHref: string | null;
+  /** Non-air blocks. Zero on a fresh empty plot, where there is nothing to export yet. */
+  blockCount: number;
 }
 
-export function ExportBar({ grid, program, name, detached, guideHref }: ExportBarProps) {
+export function ExportBar({ grid, program, name, detached, guideHref, blockCount }: ExportBarProps) {
   const [written, setWritten] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+
+  // An empty plot can technically produce a `.schem` and a booklet; both would be empty. The
+  // controls stay visible rather than disappearing, so the export path is discoverable before
+  // there is anything to export — they just cannot promise a file that has nothing in it.
+  const empty = blockCount === 0;
 
   const run = useCallback((write: () => { filename: string; bytes: number }) => {
     setFailed(null);
@@ -54,27 +61,38 @@ export function ExportBar({ grid, program, name, detached, guideHref }: ExportBa
       <p className="params__title">Export</p>
 
       <div className="export__actions">
-        <button type="button" onClick={onDownload} title="WorldEdit-compatible .schem">
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={empty}
+          title={empty ? 'Nothing to export yet' : 'WorldEdit-compatible .schem'}
+        >
           Download schematic
         </button>
         <button
           type="button"
           onClick={onDownloadProgram}
-          disabled={!program}
+          disabled={!program || empty}
           title={
-            program
-              ? 'The parametric program — a few KB, and re-expandable at any size'
-              : 'This build was hand-edited, so no program describes it'
+            empty
+              ? 'Nothing to export yet'
+              : program
+                ? 'The parametric program — a few KB, and re-expandable at any size'
+                : 'This build was hand-edited, so no program describes it'
           }
         >
           Program JSON
         </button>
-        {guideHref && (
+        {guideHref && !empty && (
           <a className="export__link" href={guideHref} target="_blank" rel="noreferrer">
             Build guide →
           </a>
         )}
       </div>
+
+      {empty && (
+        <p className="export__note">Describe a build or place some blocks, then export it here.</p>
+      )}
 
       {written && <p className="export__note">Saved {written}</p>}
       {failed && (
@@ -83,9 +101,15 @@ export function ExportBar({ grid, program, name, detached, guideHref }: ExportBa
         </p>
       )}
 
-      <SaveToLibrary name={name} grid={grid} program={program} detached={detached} />
-
-      <SendToGame name={name} grid={grid} program={program} />
+      {/* Both write a build somewhere permanent — the library, or somebody's world. Neither
+          is worth offering until there is a build: an empty save is clutter, and an empty
+          send is a bot that flies out and places nothing. */}
+      {!empty && (
+        <>
+          <SaveToLibrary name={name} grid={grid} program={program} detached={detached} />
+          <SendToGame name={name} grid={grid} program={program} />
+        </>
+      )}
     </div>
   );
 }

@@ -13,7 +13,7 @@ loom {
 	splitEnvironmentSourceSets()
 
 	mods {
-		"imaginecraft" {
+		"craftmagic" {
 			sourceSet sourceSets.main
 			sourceSet sourceSets.client
 		}
@@ -24,7 +24,7 @@ loom {
 // (Jar-in-Jar). Users install one file instead of two, and if they already run the full
 // Fabric API the loader picks whichever version is higher.
 def fabricApiModules = [
-		'fabric-command-api-v2',      // /imaginecraft ...
+		'fabric-command-api-v2',      // /craftmagic ...
 		'fabric-lifecycle-events-v1', // server start/stop, per-tick block placement
 		'fabric-networking-api-v1',   // client <-> server payloads for the placement preview
 		'fabric-rendering-v1',        // hologram rendering (client only)
@@ -63,10 +63,10 @@ java {
 
 jar {
 	// Development-only verification harness; never ship it to players.
-	exclude 'dev/imaginecraft/agent/tools/**'
+	exclude 'dev/craftmagic/agent/tools/**'
 
 	from("../LICENSE") {
-		rename { "${it}_imaginecraft" }
+		rename { "${it}_craftmagic" }
 	}
 }
 
@@ -82,6 +82,6 @@ tasks.register('verifySchematic', JavaExec) {
 	description = 'Read a generated .schem with vanilla NBT and resolve its palette.'
 	dependsOn tasks.named('classes')
 	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'dev.imaginecraft.agent.tools.SchematicReadCheck'
+	mainClass = 'dev.craftmagic.agent.tools.SchematicReadCheck'
 	args = [project.findProperty('schem') ?: '../out/oak-cottage.schem']
 }

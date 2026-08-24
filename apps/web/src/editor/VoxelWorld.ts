@@ -12,7 +12,7 @@
  */
 
 import * as THREE from 'three';
-import { voxelIndex, type EditOp, type VoxelGrid } from '@imaginecraft/core';
+import { voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
 import {
   CHUNK_SIZE,
   chunkCounts,
@@ -303,7 +303,7 @@ export class VoxelWorld {
     try {
       const worker = new Worker(new URL('./mesher.worker.ts', import.meta.url), {
         type: 'module',
-        name: 'imaginecraft-mesher',
+        name: 'craftmagic-mesher',
       });
       worker.onmessage = (event: MessageEvent<MesherResponse>) => {
         const { batchId, meshes } = event.data;

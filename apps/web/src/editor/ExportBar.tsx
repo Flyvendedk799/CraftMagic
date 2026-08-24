@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { BuildProgram, VoxelGrid } from '@imaginecraft/core';
+import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 import { SendToGame } from '../agent/SendToGame.js';
 import { SaveToLibrary } from '../library/SaveToLibrary.js';
 import { downloadProgram, downloadSchematic, formatBytes } from './download.js';

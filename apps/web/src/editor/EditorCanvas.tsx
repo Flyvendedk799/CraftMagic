@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import type { VoxelGrid } from '@imaginecraft/core';
+import type { VoxelGrid } from '@craftmagic/core';
 import { VoxelWorld } from './VoxelWorld.js';
 import { raycastVoxel, type VoxelHit } from './raycast.js';
 

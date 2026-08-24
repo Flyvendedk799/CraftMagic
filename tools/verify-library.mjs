@@ -19,7 +19,7 @@ import path from 'node:path';
 import { PNG } from 'pngjs';
 
 const outFile = process.argv[2] ?? 'out/verify-library.png';
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 
 const EDGE = [
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',

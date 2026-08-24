@@ -1,5 +1,5 @@
 /**
- * Wire protocol between the ImagineCraft server and an in-game agent (the Fabric mod).
+ * Wire protocol between the CraftMagic server and an in-game agent (the Fabric mod).
  *
  * The socket is a thin *control* channel only. Bulk voxel data is fetched over HTTPS as
  * `.schem` bytes — the same format the website exports and WorldEdit reads — so there is

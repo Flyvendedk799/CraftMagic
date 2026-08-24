@@ -5,7 +5,7 @@
  * large triangle win — but AO is a *per-vertex* value, so two neighbouring faces can only
  * merge when all four of their AO corners agree. Enforcing that either kills most of the
  * merging or bleeds one voxel's occlusion across the merged quad. Culled meshing keeps AO
- * exact, and at ImagineCraft's scale (a 500k-block cap, so a few hundred thousand quads
+ * exact, and at CraftMagic's scale (a 500k-block cap, so a few hundred thousand quads
  * worst case) the triangle count is never the bottleneck — the per-frame draw call count
  * is, and chunking already bounds that.
  *

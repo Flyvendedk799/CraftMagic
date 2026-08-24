@@ -6,7 +6,7 @@
  * without a registry, a renderer or React.
  */
 
-import { AIR_INDEX, voxelIndex, type EditOp, type VoxelGrid } from '@imaginecraft/core';
+import { AIR_INDEX, voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
 import { FACE_NORMAL, type VoxelHit } from '../raycast.js';
 import { EditBuilder } from './op.js';
 

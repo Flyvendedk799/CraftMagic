@@ -19,7 +19,7 @@ import {
   type ExpandIssue,
   type ProgramParam,
   type VoxelGrid,
-} from '@imaginecraft/core';
+} from '@craftmagic/core';
 
 export interface BuildParam {
   name: string;
@@ -147,7 +147,7 @@ export const GENERATED_PREFIX = 'gen:';
  * the small complexity of persisting them. sessionStorage rather than localStorage: they are
  * scoped to this tab's session until builds are properly saved server-side (M5).
  */
-const STORAGE_KEY = 'imaginecraft.generated';
+const STORAGE_KEY = 'craftmagic.generated';
 
 function persist(): void {
   try {

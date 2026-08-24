@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { voxelIndex, type VoxelGrid } from '@imaginecraft/core';
+import { voxelIndex, type VoxelGrid } from '@craftmagic/core';
 import { boxBounds, boxEdit } from './boxSelect.js';
 
 function grid8(): VoxelGrid {

@@ -1,4 +1,4 @@
-package dev.imaginecraft.agent.net;
+package dev.craftmagic.agent.net;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;

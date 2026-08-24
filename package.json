@@ -1,5 +1,5 @@
 {
-  "name": "imaginecraft",
+  "name": "craftmagic",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,9 +11,9 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @imaginecraft/core && npm run build --workspace @imaginecraft/web && npm run build --workspace @imaginecraft/server",
-    "dev": "npm run dev --workspace @imaginecraft/server",
-    "dev:web": "npm run dev --workspace @imaginecraft/web",
+    "build": "npm run build --workspace @craftmagic/core && npm run build --workspace @craftmagic/web && npm run build --workspace @craftmagic/server",
+    "dev": "npm run dev --workspace @craftmagic/server",
+    "dev:web": "npm run dev --workspace @craftmagic/web",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "tsc -b packages/core apps/server apps/web --pretty"
   },

@@ -40,7 +40,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDist: env.WEB_DIST ?? path.join(repoRoot, 'apps/web/dist'),
     databaseUrl: env.DATABASE_URL,
     anthropicApiKey: env.ANTHROPIC_API_KEY,
-    anthropicModel: (env.IMAGINECRAFT_MODEL as Config['anthropicModel']) ?? 'claude-sonnet-5',
+    anthropicModel: (env.CRAFTMAGIC_MODEL as Config['anthropicModel']) ?? 'claude-sonnet-5',
     // Defaults low on purpose. A missing or unparseable value must not mean "unlimited".
     monthlyBudgetUsd: parsePositive(env.ANTHROPIC_MONTHLY_BUDGET_USD, 1),
     spendLedgerPath: path.resolve(repoRoot, env.ANTHROPIC_SPEND_LEDGER ?? '.spend/ledger.json'),

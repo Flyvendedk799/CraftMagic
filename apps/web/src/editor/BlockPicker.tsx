@@ -12,7 +12,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { allBlocks, colorOf, displayName, type BlockRef } from '@imaginecraft/core';
+import { allBlocks, colorOf, displayName, type BlockRef } from '@craftmagic/core';
 
 /** Enough to make a family visible at a glance, short enough to stay one screen. */
 const MAX_RESULTS = 40;

@@ -2,7 +2,7 @@ import {
 	AGENT_PROTOCOL_VERSION,
 	parseAgentMessage,
 	type ServerToAgent,
-} from '@imaginecraft/core';
+} from '@craftmagic/core';
 import type { FastifyPluginAsync } from 'fastify';
 import type { AgentHub } from './hub.js';
 import type { AgentStore } from './store.js';
@@ -105,7 +105,7 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 							send({
 								t: 'hello.error',
 								reason: 'bad_token',
-								message: 'this world is not paired — run /imaginecraft pair <code> again',
+								message: 'this world is not paired — run /craftmagic pair <code> again',
 							});
 							socket.close();
 							return;

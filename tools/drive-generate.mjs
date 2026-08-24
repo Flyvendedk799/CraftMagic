@@ -15,7 +15,7 @@ import path from 'node:path';
 
 const prompt = process.argv[2] ?? 'a small stone windmill with a wooden roof';
 const outFile = process.argv[3] ?? 'generated.png';
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 
 const EDGE = [
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',

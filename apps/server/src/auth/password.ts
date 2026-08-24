@@ -53,7 +53,7 @@ export function verifyPassword(hash: string, password: string): Promise<boolean>
 let dummy: Promise<string> | null = null;
 
 export async function burnVerifyTime(password: string): Promise<false> {
-	dummy ??= hashPassword('imaginecraft-timing-equaliser');
+	dummy ??= hashPassword('craftmagic-timing-equaliser');
 	await verifyPassword(await dummy, password);
 	return false;
 }

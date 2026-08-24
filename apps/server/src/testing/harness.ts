@@ -153,7 +153,7 @@ export async function buildTestApp(db: Db, options: BuildTestAppOptions = {}): P
 
 		const setCookie = response.headers['set-cookie'];
 		const headers = Array.isArray(setCookie) ? setCookie : setCookie ? [String(setCookie)] : [];
-		const session = headers.find((c) => c.startsWith('ic_session='))?.split(';')[0] ?? null;
+		const session = headers.find((c) => c.startsWith('cm_session='))?.split(';')[0] ?? null;
 
 		return { status: response.statusCode, body, cookie: session };
 	};

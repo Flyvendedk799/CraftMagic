@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Local PostgreSQL for ImagineCraft development.
+  Local PostgreSQL for CraftMagic development.
 
 .DESCRIPTION
   Runs a user-mode cluster from the portable binaries in C:\Users\tobia\tools\pgsql — no
@@ -32,9 +32,9 @@ $PgHome = 'C:\Users\tobia\tools\pgsql'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $RepoRoot '.pgdata'
 $Port = 55432
-$DbName = 'imaginecraft'
-$DbUser = 'imaginecraft'
-$DbPass = 'imaginecraft'
+$DbName = 'craftmagic'
+$DbUser = 'craftmagic'
+$DbPass = 'craftmagic'
 $LogFile = Join-Path $DataDir 'postgres.log'
 
 if (-not (Test-Path $PgHome)) {

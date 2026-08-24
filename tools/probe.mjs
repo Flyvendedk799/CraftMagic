@@ -4,7 +4,7 @@ import net from 'node:net';
 
 const HOST = '127.0.0.1';
 const PORT = 25575;
-const PASSWORD = 'imaginecraft';
+const PASSWORD = 'craftmagic';
 
 class Rcon {
 	#socket; #id = 0; #pending = new Map(); #buffer = Buffer.alloc(0);

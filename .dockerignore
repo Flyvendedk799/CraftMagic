@@ -1,0 +1,38 @@
+# Keep the build context small and the image reproducible.
+#
+# node_modules especially: copying a Windows-built tree in would shadow the Linux `npm ci`
+# and put a win32 argon2 binary into the image.
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+
+.git
+.gitignore
+.github
+
+# Secrets and local state — must never enter an image layer.
+.env
+.env.*
+!.env.example
+.spend
+.pgdata
+out
+
+# The mod's Gradle build. The jar that ships lives in apps/web/public/mod and is committed;
+# everything here is intermediate and there is no JVM in the image anyway.
+mod/build
+mod/.gradle
+mod/run
+mod/src
+mod/gradle
+mod/gradlew
+mod/gradlew.bat
+
+# Dev-only: downloads and unpacks large Minecraft jars.
+tools/registry-gen/work
+
+.vscode
+.idea
+*.log

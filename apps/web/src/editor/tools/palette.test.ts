@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonical, expand, samples } from '@imaginecraft/core';
+import { canonical, expand, samples } from '@craftmagic/core';
 import { resolvePaletteIndex } from './palette.js';
 
 describe('resolvePaletteIndex', () => {

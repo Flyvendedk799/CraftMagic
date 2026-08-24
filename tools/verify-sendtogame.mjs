@@ -14,10 +14,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { seedBrowserSession, signIn, throwawayCredentials } from './session.mjs';
 
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 const RCON_HOST = '127.0.0.1';
 const RCON_PORT = 25575;
-const RCON_PASSWORD = 'imaginecraft';
+const RCON_PASSWORD = 'craftmagic';
 const AT = { x: 100, y: -59, z: 100 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -119,7 +119,7 @@ try {
 	for (const agent of (await (await authed('/api/agent/agents')).json()).agents ?? []) {
 		await authed(`/api/agent/agents/${agent.id}`, { method: 'DELETE' });
 	}
-	await rcon.cmd('imaginecraft unpair');
+	await rcon.cmd('craftmagic unpair');
 	check('started from an unpaired world', true);
 
 	let wsUrl;
@@ -187,9 +187,9 @@ try {
 	const code = /pair\s+([A-Z0-9]{6})/i.exec(shown)?.[1];
 	check('the UI shows a pairing command', Boolean(code), shown);
 
-	await rcon.cmd(`imaginecraft server ${ORIGIN}`);
-	await rcon.cmd(`imaginecraft pair ${code}`);
-	check('typed that command in game', true, `/imaginecraft pair ${code}`);
+	await rcon.cmd(`craftmagic server ${ORIGIN}`);
+	await rcon.cmd(`craftmagic pair ${code}`);
+	check('typed that command in game', true, `/craftmagic pair ${code}`);
 
 	// The panel polls while a code is displayed, so the world should appear without a reload.
 	await waitFor("!!document.querySelector('.agent__dot--on')", 'the world to come online');
@@ -198,11 +198,11 @@ try {
 
 	check('clicked "Build here"', await clickText('.agent__send', 'Build here'));
 
-	await waitFor("(document.querySelector('.agent__status')?.textContent ?? '').includes('/imaginecraft build')", 'the ready prompt');
+	await waitFor("(document.querySelector('.agent__status')?.textContent ?? '').includes('/craftmagic build')", 'the ready prompt');
 	check('UI tells the player to place it', true);
 
-	await rcon.cmd('imaginecraft speed 0');
-	await rcon.cmd(`imaginecraft place ${AT.x} ${AT.y} ${AT.z}`);
+	await rcon.cmd('craftmagic speed 0');
+	await rcon.cmd(`craftmagic place ${AT.x} ${AT.y} ${AT.z}`);
 
 	await waitFor("(document.querySelector('.agent__status--ok')?.textContent ?? '').includes('Built')", 'the build to finish');
 	const doneText = await evaluate("document.querySelector('.agent__status--ok').textContent.trim()");

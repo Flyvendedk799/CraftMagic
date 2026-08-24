@@ -97,7 +97,7 @@ app.get('/api/health', async () => {
 
   return {
     ok: true,
-    service: 'imaginecraft',
+    service: 'craftmagic',
     version: process.env.npm_package_version ?? '0.1.0',
     database,
     time: new Date().toISOString(),
@@ -158,7 +158,7 @@ if (!config.anthropicApiKey) {
 }
 
 // The built frontend is served from this same process, so there is one service to deploy.
-// Missing in dev before the first `npm run build --workspace @imaginecraft/web`.
+// Missing in dev before the first `npm run build --workspace @craftmagic/web`.
 if (existsSync(config.webDist)) {
   await app.register(fastifyStatic, { root: config.webDist });
   app.setNotFoundHandler((request, reply) => {
@@ -174,7 +174,7 @@ if (existsSync(config.webDist)) {
 
 try {
   await app.listen({ port: config.port, host: config.host });
-  app.log.info({ publicOrigin: config.publicOrigin }, 'imaginecraft server listening');
+  app.log.info({ publicOrigin: config.publicOrigin }, 'craftmagic server listening');
 } catch (err) {
   app.log.error(err);
   process.exit(1);

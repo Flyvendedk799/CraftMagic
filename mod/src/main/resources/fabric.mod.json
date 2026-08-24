@@ -1,23 +1,23 @@
 {
 	"schemaVersion": 1,
-	"id": "imaginecraft",
+	"id": "craftmagic",
 	"version": "${version}",
-	"name": "ImagineCraft Agent",
-	"description": "Connects your world to ImagineCraft so a builder bot can construct AI-generated structures in game.",
+	"name": "CraftMagic Agent",
+	"description": "Connects your world to CraftMagic so a builder bot can construct AI-generated structures in game.",
 	"authors": [
-		"ImagineCraft"
+		"CraftMagic"
 	],
 	"contact": {
-		"homepage": "https://imaginecraft.dev/"
+		"homepage": "https://craftmagic.dev/"
 	},
 	"license": "MIT",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
-			"dev.imaginecraft.agent.ImagineCraftMod"
+			"dev.craftmagic.agent.CraftMagicMod"
 		],
 		"client": [
-			"dev.imaginecraft.agent.client.ImagineCraftClient"
+			"dev.craftmagic.agent.client.CraftMagicClient"
 		]
 	},
 	"depends": {

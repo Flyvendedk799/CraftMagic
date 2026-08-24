@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BuildProgram, ExpandIssue } from '@imaginecraft/core';
+import type { BuildProgram, ExpandIssue } from '@craftmagic/core';
 
 export interface SpendSummary {
   spentThisMonthUsd: number;

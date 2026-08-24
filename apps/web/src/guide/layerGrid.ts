@@ -15,7 +15,7 @@
  * blending of the ghost layers would land on a different background in each.
  */
 
-import type { BuildStep } from '@imaginecraft/core';
+import type { BuildStep } from '@craftmagic/core';
 import type { GridSize } from '../editor/mesher.js';
 
 export interface PlanCell {

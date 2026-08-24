@@ -11,7 +11,7 @@
  * `paletteColors`/`paletteFlags` afterwards; `grew` is the signal for that.
  */
 
-import { canonical, type BlockRef, type VoxelGrid } from '@imaginecraft/core';
+import { canonical, type BlockRef, type VoxelGrid } from '@craftmagic/core';
 
 /** Voxels are `Uint16Array`, so slot 65535 is the last addressable one. */
 export const MAX_PALETTE = 65536;

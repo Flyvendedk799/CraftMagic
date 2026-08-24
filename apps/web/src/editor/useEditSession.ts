@@ -21,7 +21,7 @@ import {
   type BlockRef,
   type EditOp,
   type VoxelGrid,
-} from '@imaginecraft/core';
+} from '@craftmagic/core';
 import type { LoadedBuild } from './builds.js';
 import type { VoxelWorld } from './VoxelWorld.js';
 import { EditHistory } from './history.js';

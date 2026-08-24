@@ -10,7 +10,7 @@
  * starts the game.
  */
 
-import type { ServerToAgent } from '@imaginecraft/core';
+import type { ServerToAgent } from '@craftmagic/core';
 import type { AgentStore, JobRow } from './store.js';
 
 export interface Connection {

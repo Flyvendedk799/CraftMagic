@@ -7,7 +7,7 @@
  * case for it.
  */
 
-import type { BuildProgram, VoxelGrid } from '@imaginecraft/core';
+import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 
 export interface LibraryBuild {
   id: string;

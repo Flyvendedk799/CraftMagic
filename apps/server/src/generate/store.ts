@@ -15,7 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { BuildProgram, ExpandIssue } from '@imaginecraft/core';
+import type { BuildProgram, ExpandIssue } from '@craftmagic/core';
 import type { ProgressEvent } from './pipeline.js';
 
 export type GenerationEvent =

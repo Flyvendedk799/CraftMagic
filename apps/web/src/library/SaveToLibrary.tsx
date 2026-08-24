@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { BuildProgram, VoxelGrid } from '@imaginecraft/core';
+import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 import { Link } from 'react-router-dom';
 import { useAuth } from './auth.js';
 import { LibraryError, saveToLibrary } from './library.js';

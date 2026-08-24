@@ -1,0 +1,138 @@
+/* The mod download and setup page.
+
+   An ordinary document page built from the same `.panel` the status and library pages use.
+   Every colour is a token from styles.css — nothing new is introduced here. */
+
+.modpage {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+}
+
+.modpage__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.modpage__title {
+  font-size: 2rem;
+  margin: 0;
+}
+
+.modpage__sub {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  max-width: 34rem;
+}
+
+.modpage__back {
+  font-size: 0.875rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* The download is the reason the page exists, so it is the one thing that reads as a button
+   rather than as text. */
+.modpage__download {
+  display: grid;
+  justify-items: center;
+  gap: 0.625rem;
+  text-align: center;
+}
+
+.modpage__button {
+  display: inline-block;
+  padding: 0.85rem 1.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: 10px;
+  text-decoration: none;
+}
+
+.modpage__button:hover {
+  filter: brightness(1.08);
+}
+
+.modpage__meta {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.modpage__error {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--fail);
+}
+
+.modpage__steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.modpage__steps strong {
+  color: var(--text);
+}
+
+.modpage__note {
+  margin: 1rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.modpage__commands {
+  margin: 0;
+  display: grid;
+  /* Definition on the left, meaning on the right, collapsing to stacked rows on a phone. */
+  grid-template-columns: minmax(12rem, auto) 1fr;
+  gap: 0.625rem 1.25rem;
+  align-items: baseline;
+  font-size: 0.9375rem;
+}
+
+.modpage__commands dt {
+  color: var(--text);
+}
+
+.modpage__commands dd {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.modpage code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.875em;
+  color: var(--accent);
+  background: #0d1014;
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  /* Paths and commands are long and must not widen the page on a narrow screen. */
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 40rem) {
+  .modpage {
+    padding: 2rem 1rem 3rem;
+  }
+
+  .modpage__commands {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+
+  .modpage__commands dd {
+    margin-bottom: 0.625rem;
+  }
+}

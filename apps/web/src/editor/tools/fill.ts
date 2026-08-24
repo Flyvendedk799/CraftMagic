@@ -11,7 +11,7 @@
  * where two walls meet a floor of the same block, which reads as a bug rather than a feature.
  */
 
-import { voxelIndex, type EditOp, type VoxelGrid } from '@imaginecraft/core';
+import { voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
 import type { VoxelHit } from '../raycast.js';
 import { EditBuilder } from './op.js';
 

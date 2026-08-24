@@ -1,0 +1,11 @@
+{
+  "file": "/mod/craftmagic-mod.jar",
+  "originalName": "craftmagic-0.1.0.jar",
+  "version": "0.1.0",
+  "minecraft": "26.2",
+  "loader": "fabric",
+  "loaderVersion": "0.19.3",
+  "java": 25,
+  "bytes": 517072,
+  "builtAt": "2026-08-24T16:47:10.568Z"
+}

@@ -5,7 +5,7 @@
  * two sides of the same pick, which is what makes clicking around a build feel predictable.
  */
 
-import { AIR_INDEX, type EditOp, type VoxelGrid } from '@imaginecraft/core';
+import { AIR_INDEX, type EditOp, type VoxelGrid } from '@craftmagic/core';
 import type { VoxelHit } from '../raycast.js';
 import { EditBuilder } from './op.js';
 

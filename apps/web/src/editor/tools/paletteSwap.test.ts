@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonical, expand, samples, voxelIndex, type VoxelGrid } from '@imaginecraft/core';
+import { canonical, expand, samples, voxelIndex, type VoxelGrid } from '@craftmagic/core';
 import { familyOf, swapFamily, swapPaletteIndex } from './paletteSwap.js';
 import { resolvePaletteIndex } from './palette.js';
 

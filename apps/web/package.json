@@ -1,5 +1,5 @@
 {
-  "name": "@imaginecraft/web",
+  "name": "@craftmagic/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@imaginecraft/core": "*",
+    "@craftmagic/core": "*",
     "@react-three/drei": "^9.120.4",
     "@react-three/fiber": "^8.17.10",
     "react": "^18.3.1",

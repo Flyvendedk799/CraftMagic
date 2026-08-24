@@ -53,7 +53,7 @@ export function decodeVoxels(bytes: Uint8Array): VoxelGrid {
 	const raw = gunzipSync(bytes);
 	const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
 
-	if (view.getUint32(0, false) !== MAGIC) throw new Error('not an ImagineCraft voxel blob');
+	if (view.getUint32(0, false) !== MAGIC) throw new Error('not an CraftMagic voxel blob');
 	const version = view.getUint8(4);
 	if (version !== VERSION) throw new Error(`unsupported voxel blob version ${version}`);
 

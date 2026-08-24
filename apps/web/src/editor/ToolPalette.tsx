@@ -7,7 +7,7 @@
  * any of them.
  */
 
-import type { BlockRef } from '@imaginecraft/core';
+import type { BlockRef } from '@craftmagic/core';
 import { BlockPicker } from './BlockPicker.js';
 import type { BoxCorner, BoxMode } from './tools/boxSelect.js';
 

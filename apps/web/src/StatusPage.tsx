@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AGENT_PROTOCOL_VERSION } from '@imaginecraft/core';
+import { AGENT_PROTOCOL_VERSION } from '@craftmagic/core';
 
 type Check = { status: 'pending' | 'ok' | 'fail'; detail: string };
 
@@ -63,7 +63,7 @@ export function StatusPage() {
   return (
     <main className="shell">
       <header>
-        <h1>ImagineCraft</h1>
+        <h1>CraftMagic</h1>
         <p className="tagline">
           Describe a build. Get a schematic, an instruction booklet, or a bot that builds it in
           your world.

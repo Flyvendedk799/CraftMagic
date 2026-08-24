@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install/refresh ImagineCraft on the VPS. Runs as root via sudo.
+# Install/refresh CraftMagic on the VPS. Runs as root via sudo.
 #
 # Everything here is idempotent: it is run on every deploy, not just the first. The one thing
 # it deliberately never overwrites is .env — secrets are generated once and then left alone,
@@ -16,11 +16,11 @@ set -euo pipefail
 TARBALL="$1"
 DB_PASSWORD=$(cat "$2")
 
-APP_DIR=/opt/imaginecraft
-SERVICE=imaginecraft
+APP_DIR=/opt/craftmagic
+SERVICE=craftmagic
 PORT=3016
 DB_PORT=54328
-RUN_USER=imaginecraft
+RUN_USER=craftmagic
 
 # --- user -------------------------------------------------------------------------------
 if ! id "$RUN_USER" >/dev/null 2>&1; then
@@ -51,7 +51,7 @@ NODE_ENV=production
 PORT=${PORT}
 HOST=0.0.0.0
 PUBLIC_ORIGIN=http://85.190.100.23:${PORT}
-DATABASE_URL=postgres://imaginecraft:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/imaginecraft
+DATABASE_URL=postgres://craftmagic:${DB_PASSWORD}@127.0.0.1:${DB_PORT}/craftmagic
 SESSION_SECRET=${SESSION_SECRET}
 ANTHROPIC_MONTHLY_BUDGET_USD=4
 LOG_LEVEL=info
@@ -72,7 +72,7 @@ chown -R "$RUN_USER:$RUN_USER" "$APP_DIR"
 # --- service ----------------------------------------------------------------------------
 cat > "/etc/systemd/system/${SERVICE}.service" <<EOF
 [Unit]
-Description=ImagineCraft — AI Minecraft structure builder
+Description=CraftMagic — AI Minecraft structure builder
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -105,9 +105,9 @@ systemctl restart "$SERVICE"
 # --- verify -----------------------------------------------------------------------------
 echo "waiting for /api/health…"
 for i in $(seq 1 45); do
-  if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" >/tmp/ic-health.json 2>/dev/null; then
+  if curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/api/health" >/tmp/cm-health.json 2>/dev/null; then
     echo "healthy after ${i}s:"
-    cat /tmp/ic-health.json
+    cat /tmp/cm-health.json
     echo
     exit 0
   fi

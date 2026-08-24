@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import Anthropic from '@anthropic-ai/sdk';
-import { writeSchematic, schematicFilename, buildGuide } from '@imaginecraft/core';
+import { writeSchematic, schematicFilename, buildGuide } from '@craftmagic/core';
 import { systemPrompt } from '../apps/server/dist/generate/prompt.js';
 import { generateBuild, TOOL_NAME } from '../apps/server/dist/generate/pipeline.js';
 import { SpendLedger } from '../apps/server/dist/generate/spend.js';
@@ -21,7 +21,7 @@ import { PRICING, costOf, formatUsd, worstCaseCost } from '../apps/server/dist/g
 
 process.loadEnvFile(path.join(import.meta.dirname, '../apps/server/.env'));
 
-const MODEL = process.env.IMAGINECRAFT_MODEL ?? 'claude-sonnet-5';
+const MODEL = process.env.CRAFTMAGIC_MODEL ?? 'claude-sonnet-5';
 const MAX_TOKENS = 16_000;
 const REPO_ROOT = path.join(import.meta.dirname, '..');
 

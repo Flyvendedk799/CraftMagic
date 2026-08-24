@@ -1,6 +1,6 @@
-package dev.imaginecraft.agent.tools;
+package dev.craftmagic.agent.tools;
 
-import dev.imaginecraft.agent.build.Schematic;
+import dev.craftmagic.agent.build.Schematic;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.block.state.BlockState;

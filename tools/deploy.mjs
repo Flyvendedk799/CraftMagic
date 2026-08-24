@@ -1,5 +1,5 @@
 /**
- * Deploy ImagineCraft to the VPS.
+ * Deploy CraftMagic to the VPS.
  *
  * Builds locally and ships `dist` output plus the lockfile, rather than building on the
  * server: tsc and vite emit platform-independent JavaScript, while `argon2` is a native
@@ -42,10 +42,10 @@ if (!skipBuild) {
   console.log('skipping build');
 }
 
-// After the web build, never before: vite empties `dist` on every run, so a jar copied in
-// earlier would silently vanish and the download link would 404 in production only.
-run('bundling mod jar', process.execPath, ['tools/bundle-mod.mjs'], { stdio: ['ignore', 'pipe', 'pipe'] });
-
+// The mod jar is NOT bundled here. It lives in `apps/web/public/mod` as a committed artifact
+// and vite copies it into `dist` during the build, because Gradle and a JDK 25 are not
+// available everywhere this deploys from. Rebuilding the mod is a separate, deliberate step:
+// `gradlew build` then `node tools/bundle-mod.mjs`, then commit.
 for (const required of ['packages/core/dist', 'apps/server/dist', 'apps/web/dist']) {
   if (!fs.existsSync(path.join(root, required))) {
     console.error(`missing ${required} — build first`);
@@ -68,12 +68,12 @@ console.log(`bundling ${sqlCount} migration(s)`);
 // --- package ----------------------------------------------------------------------------
 const staging = path.join(root, 'out');
 fs.mkdirSync(staging, { recursive: true });
-const tarball = path.join(staging, 'imaginecraft.tgz');
+const tarball = path.join(staging, 'craftmagic.tgz');
 
 // GNU tar reads a leading `C:` as a remote host:path spec, so an absolute Windows path makes
 // it try to reach a machine called "C". Everything runs with cwd at the repo root, so the
 // archive is addressed relatively and never contains a drive letter.
-const tarballRelative = 'out/imaginecraft.tgz';
+const tarballRelative = 'out/craftmagic.tgz';
 
 run('packaging', 'tar', [
   'czf', tarballRelative,
@@ -94,9 +94,9 @@ if (!fs.existsSync(passwordFile)) {
 }
 
 const stamp = crypto.randomBytes(6).toString('hex');
-const remoteTar = `/tmp/ic-${stamp}.tgz`;
-const remotePw = `/tmp/ic-${stamp}.pw`;
-const remoteScript = `/tmp/ic-${stamp}-setup.sh`;
+const remoteTar = `/tmp/cm-${stamp}.tgz`;
+const remotePw = `/tmp/cm-${stamp}.pw`;
+const remoteScript = `/tmp/cm-${stamp}-setup.sh`;
 
 // Relative for the same reason as tar: scp splits on `:` to find a host, so a drive letter
 // makes it look for a machine named "C".

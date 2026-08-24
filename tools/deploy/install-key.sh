@@ -10,7 +10,7 @@
 set -euo pipefail
 
 KEY_FILE="$1"
-APP_DIR=/opt/imaginecraft
+APP_DIR=/opt/craftmagic
 ENV_FILE="$APP_DIR/.env"
 
 if [ ! -s "$KEY_FILE" ]; then
@@ -34,7 +34,7 @@ grep -v '^ANTHROPIC_API_KEY=' "$ENV_FILE" \
 
 printf '%s\n' "$KEY_LINE" >> "$ENV_FILE.new"
 mv "$ENV_FILE.new" "$ENV_FILE"
-chown imaginecraft:imaginecraft "$ENV_FILE"
+chown craftmagic:craftmagic "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 # Confirm the shape without ever printing the value.
@@ -47,7 +47,7 @@ else
 fi
 rm -f "$ENV_FILE.bak"
 
-systemctl restart imaginecraft
+systemctl restart craftmagic
 
 for i in $(seq 1 45); do
   if curl -fsS --max-time 3 http://127.0.0.1:3016/api/health >/dev/null 2>&1; then
@@ -58,5 +58,5 @@ for i in $(seq 1 45); do
 done
 
 echo "did not become healthy:" >&2
-journalctl -u imaginecraft -n 30 --no-pager >&2
+journalctl -u craftmagic -n 30 --no-pager >&2
 exit 1

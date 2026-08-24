@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expand, buildGuide, samples } from '@imaginecraft/core';
+import { expand, buildGuide, samples } from '@craftmagic/core';
 import { cellSizeFor, columnLabel, earlierInLayer, footprint } from './layerGrid.js';
 
 /**

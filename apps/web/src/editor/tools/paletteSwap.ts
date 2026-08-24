@@ -22,7 +22,7 @@ import {
   type BlockRef,
   type EditOp,
   type VoxelGrid,
-} from '@imaginecraft/core';
+} from '@craftmagic/core';
 import { EditBuilder } from './op.js';
 
 /** Resolves a block ref to a palette slot, growing the palette if needed. -1 if it cannot. */

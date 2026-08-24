@@ -1,12 +1,12 @@
-package dev.imaginecraft.agent;
+package dev.craftmagic.agent;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.imaginecraft.agent.command.ImagineCraftCommand;
-import dev.imaginecraft.agent.config.ModConfig;
-import dev.imaginecraft.agent.job.JobManager;
-import dev.imaginecraft.agent.net.AgentSocket;
-import dev.imaginecraft.agent.net.Protocol;
+import dev.craftmagic.agent.command.CraftMagicCommand;
+import dev.craftmagic.agent.config.ModConfig;
+import dev.craftmagic.agent.job.JobManager;
+import dev.craftmagic.agent.net.AgentSocket;
+import dev.craftmagic.agent.net.Protocol;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -30,8 +30,8 @@ import java.util.function.Consumer;
  * state machine, and block placement. That holds for singleplayer too, where the
  * integrated server is still a server. The client half only draws the placement preview.
  */
-public class ImagineCraftMod implements ModInitializer {
-	public static final String MOD_ID = "imaginecraft";
+public class CraftMagicMod implements ModInitializer {
+	public static final String MOD_ID = "craftmagic";
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
 	private static AgentSocket socket;
@@ -47,7 +47,7 @@ public class ImagineCraftMod implements ModInitializer {
 				.map(c -> c.getMetadata().getVersion().getFriendlyString())
 				.orElse("unknown");
 
-		ImagineCraftCommand.register();
+		CraftMagicCommand.register();
 		ServerLifecycleEvents.SERVER_STARTED.register(this::onServerStarted);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> shutdown());
 		// The job pipeline advances on the server thread, which is the only place block
@@ -56,7 +56,7 @@ public class ImagineCraftMod implements ModInitializer {
 			if (jobs != null) jobs.tick();
 		});
 
-		LOGGER.info("ImagineCraft agent {} initialised", modVersion);
+		LOGGER.info("CraftMagic agent {} initialised", modVersion);
 	}
 
 	/**
@@ -144,7 +144,7 @@ public class ImagineCraftMod implements ModInitializer {
 		if (ModConfig.get().isPaired()) {
 			socket.start();
 		} else {
-			LOGGER.info("No agent token stored. Run /imaginecraft pair <code> to link this world.");
+			LOGGER.info("No agent token stored. Run /craftmagic pair <code> to link this world.");
 		}
 	}
 

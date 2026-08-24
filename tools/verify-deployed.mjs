@@ -1,5 +1,5 @@
 /**
- * Check a deployed ImagineCraft instance over the public internet.
+ * Check a deployed CraftMagic instance over the public internet.
  *
  * Everything here is free — no Anthropic call is made, because the point is to prove the
  * deployment is wired up, not to spend the month's budget confirming it. The generation
@@ -8,7 +8,7 @@
  *   node tools/verify-deployed.mjs [origin]
  */
 
-const ORIGIN = (process.argv[2] ?? process.env.IC_ORIGIN ?? 'http://85.190.100.23:3016').replace(/\/+$/, '');
+const ORIGIN = (process.argv[2] ?? process.env.CM_ORIGIN ?? 'http://85.190.100.23:3016').replace(/\/+$/, '');
 
 let failures = 0;
 let warnings = 0;

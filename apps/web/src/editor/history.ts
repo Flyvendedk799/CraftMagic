@@ -16,7 +16,7 @@
  * own.
  */
 
-import type { EditOp } from '@imaginecraft/core';
+import type { EditOp } from '@craftmagic/core';
 
 /** Depth ceiling. Deep enough that undo feels unlimited in practice. */
 export const MAX_OPS = 100;

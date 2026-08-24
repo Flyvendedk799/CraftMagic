@@ -20,7 +20,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { buildGuide, colorOf, type BuildGuide, type BuildStep, type MaterialCount } from '@imaginecraft/core';
+import { buildGuide, colorOf, type BuildGuide, type BuildStep, type MaterialCount } from '@craftmagic/core';
 import { expandBuild, isBuildId, type LoadedBuild } from '../editor/builds.js';
 import { IsoFilmstrip } from './isoRender.js';
 import { drawLayerPlan, earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
@@ -156,7 +156,7 @@ export function GuidePage() {
 function Cover({ build, guide, art }: { build: LoadedBuild; guide: BuildGuide; art: string | null }) {
   return (
     <article className="sheet cover">
-      <p className="cover__eyebrow">ImagineCraft · Build guide</p>
+      <p className="cover__eyebrow">CraftMagic · Build guide</p>
       <h1 className="cover__title">{guide.name}</h1>
       {build.description && <p className="cover__lede">{build.description}</p>}
 

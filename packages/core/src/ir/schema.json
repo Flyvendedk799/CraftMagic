@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://imaginecraft.dev/schema/build-program-v1.json",
+	"$id": "https://craftmagic.dev/schema/build-program-v1.json",
 	"title": "BuildProgram",
 	"description": "A parametric description of a Minecraft structure. Coordinates are expressions rather than fixed numbers so the same program can be re-expanded at a different size.",
 	"type": "object",

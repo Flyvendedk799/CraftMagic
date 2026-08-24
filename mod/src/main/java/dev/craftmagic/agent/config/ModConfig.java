@@ -1,4 +1,4 @@
-package dev.imaginecraft.agent.config;
+package dev.craftmagic.agent.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -13,27 +13,29 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Persisted mod settings, stored at {@code config/imaginecraft.json}.
+ * Persisted mod settings, stored at {@code config/craftmagic.json}.
  *
  * <p>Holds the agent token obtained during pairing. The token is a bearer credential for
  * this world's connection, so the file is written with no extra copies and never logged.
  */
 public final class ModConfig {
-	private static final Logger LOGGER = LoggerFactory.getLogger("imaginecraft-config");
+	private static final Logger LOGGER = LoggerFactory.getLogger("craftmagic-config");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final String FILE_NAME = "imaginecraft.json";
+	private static final String FILE_NAME = "craftmagic.json";
 
 	/**
-	 * Where the site lives. Overridable via {@code /imaginecraft server <url>} so a local dev
+	 * Where the site lives. Overridable via {@code /craftmagic server <url>} so a local dev
 	 * server can be used instead.
 	 *
-	 * <p>This is the deployment's address rather than a domain because no domain is registered
-	 * yet. It must stay in step with {@code PUBLIC_ORIGIN} on the server: pairing sends the
-	 * token here, and the schematic is fetched from whatever this resolves to.
+	 * <p>Must stay in step with {@code PUBLIC_ORIGIN} on the server: pairing posts the code
+	 * here, and the schematic is fetched from whatever this resolves to. Because it is https,
+	 * {@link #websocketUrl()} derives {@code wss://} — which is also why the site has to be
+	 * reachable over TLS before a shipped jar can pair. Point it somewhere else for local work:
+	 * {@code /craftmagic server http://localhost:3016}.
 	 */
-	public String serverUrl = "http://85.190.100.23:3016";
+	public String serverUrl = "https://craftmagic.online";
 
-	/** Null until {@code /imaginecraft pair <code>} succeeds. */
+	/** Null until {@code /craftmagic pair <code>} succeeds. */
 	public String agentToken = null;
 
 	/** Blocks placed per second while building. {@code 0} means place everything at once. */

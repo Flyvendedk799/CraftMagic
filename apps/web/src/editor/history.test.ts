@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { EditOp, VoxelGrid } from '@imaginecraft/core';
+import type { EditOp, VoxelGrid } from '@craftmagic/core';
 import { EditHistory } from './history.js';
 
 /**

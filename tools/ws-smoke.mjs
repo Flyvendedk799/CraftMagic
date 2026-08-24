@@ -3,7 +3,7 @@
  *
  * Run against localhost during development, or against the deployed origin to prove the
  * upgrade survives the reverse proxy / tunnel:
- *   node tools/ws-smoke.mjs wss://imaginecraft.example.com
+ *   node tools/ws-smoke.mjs wss://craftmagic.example.com
  */
 
 const origin = process.argv[2] ?? 'ws://localhost:3016';
@@ -29,11 +29,11 @@ async function testEcho() {
   return withTimeout('echo', 8000, (done, fail) => {
     const socket = new WebSocket(`${base}/agent/ws-echo`);
     const started = performance.now();
-    socket.onopen = () => socket.send('hello-imaginecraft');
+    socket.onopen = () => socket.send('hello-craftmagic');
     socket.onmessage = (event) => {
       const ms = Math.round(performance.now() - started);
       socket.close();
-      if (event.data === 'hello-imaginecraft') done(`round-trip ${ms}ms`);
+      if (event.data === 'hello-craftmagic') done(`round-trip ${ms}ms`);
       else fail(new Error(`unexpected echo payload: ${event.data}`));
     };
     socket.onerror = () => fail(new Error('connection failed'));

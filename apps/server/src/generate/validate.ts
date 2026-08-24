@@ -14,8 +14,8 @@
  */
 
 import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
-import schema from '@imaginecraft/core/schema' with { type: 'json' };
-import { COMPONENT_TYPES, type ExpandIssue } from '@imaginecraft/core';
+import schema from '@craftmagic/core/schema' with { type: 'json' };
+import { COMPONENT_TYPES, type ExpandIssue } from '@craftmagic/core';
 
 interface Compiled {
 	program: ValidateFunction;

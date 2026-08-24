@@ -1,12 +1,12 @@
-package dev.imaginecraft.agent.job;
+package dev.craftmagic.agent.job;
 
 import com.google.gson.JsonObject;
-import dev.imaginecraft.agent.build.BuildTask;
-import dev.imaginecraft.agent.build.BuilderBot;
-import dev.imaginecraft.agent.build.Schematic;
-import dev.imaginecraft.agent.config.ModConfig;
-import dev.imaginecraft.agent.net.AgentSocket;
-import dev.imaginecraft.agent.net.Protocol;
+import dev.craftmagic.agent.build.BuildTask;
+import dev.craftmagic.agent.build.BuilderBot;
+import dev.craftmagic.agent.build.Schematic;
+import dev.craftmagic.agent.config.ModConfig;
+import dev.craftmagic.agent.net.AgentSocket;
+import dev.craftmagic.agent.net.Protocol;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * would make this feature unshippable.
  */
 public final class JobManager {
-	private static final Logger LOGGER = LoggerFactory.getLogger("imaginecraft-jobs");
+	private static final Logger LOGGER = LoggerFactory.getLogger("craftmagic-jobs");
 	private static final int PROGRESS_REPORT_TICKS = 20;
 
 	private final MinecraftServer server;
@@ -100,13 +100,13 @@ public final class JobManager {
 
 		if (active != null) {
 			socket.send(Protocol.jobState(jobId, "failed", 0, 0));
-			broadcast(Component.literal("ImagineCraft: already building something — try again when it finishes.")
+			broadcast(Component.literal("CraftMagic: already building something — try again when it finishes.")
 					.withStyle(ChatFormatting.RED));
 			return;
 		}
 
 		socket.send(Protocol.jobAck(jobId));
-		broadcast(Component.literal("ImagineCraft: fetching \"" + name + "\"…").withStyle(ChatFormatting.GRAY));
+		broadcast(Component.literal("CraftMagic: fetching \"" + name + "\"…").withStyle(ChatFormatting.GRAY));
 
 		ModConfig config = ModConfig.get();
 		String url = config.serverUrl.replaceFirst("/+$", "") + dataUrl;
@@ -123,7 +123,7 @@ public final class JobManager {
 						String reason = error != null ? error.getMessage() : "HTTP " + response.statusCode();
 						LOGGER.warn("could not fetch {}: {}", url, reason);
 						socket.send(Protocol.jobState(jobId, "failed", 0, 0));
-						broadcast(Component.literal("ImagineCraft: could not download the build (" + reason + ")")
+						broadcast(Component.literal("CraftMagic: could not download the build (" + reason + ")")
 								.withStyle(ChatFormatting.RED));
 						return;
 					}
@@ -134,7 +134,7 @@ public final class JobManager {
 					} catch (Exception e) {
 						LOGGER.warn("could not parse the schematic for job {}", jobId, e);
 						socket.send(Protocol.jobState(jobId, "failed", 0, 0));
-						broadcast(Component.literal("ImagineCraft: that build could not be read (" + e.getMessage() + ")")
+						broadcast(Component.literal("CraftMagic: that build could not be read (" + e.getMessage() + ")")
 								.withStyle(ChatFormatting.RED));
 					}
 				});
@@ -147,7 +147,7 @@ public final class JobManager {
 		}
 		if (awaitingPlacement != null && awaitingPlacement.jobId().equals(jobId)) {
 			awaitingPlacement = null;
-			broadcast(Component.literal("ImagineCraft: that build was cancelled from the website.")
+			broadcast(Component.literal("CraftMagic: that build was cancelled from the website.")
 					.withStyle(ChatFormatting.GRAY));
 		}
 	}
@@ -160,12 +160,12 @@ public final class JobManager {
 			awaitingPlacement = arrived;
 			socket.send(Protocol.jobState(arrived.jobId(), "previewing", 0, arrived.blockCount()));
 			broadcast(
-					Component.literal("ImagineCraft: \"" + arrived.name() + "\" is ready — ")
+					Component.literal("CraftMagic: \"" + arrived.name() + "\" is ready — ")
 							.withStyle(ChatFormatting.GREEN)
 							.append(Component.literal(arrived.schematic().width() + "×" + arrived.schematic().height()
 									+ "×" + arrived.schematic().length() + ", " + arrived.blockCount() + " blocks. ")
 									.withStyle(ChatFormatting.GRAY))
-							.append(Component.literal("Stand where you want it and run /imaginecraft build")
+							.append(Component.literal("Stand where you want it and run /craftmagic build")
 									.withStyle(ChatFormatting.YELLOW)));
 		}
 
@@ -196,7 +196,7 @@ public final class JobManager {
 		socket.send(Protocol.jobState(finished.jobId, "done", finished.task.placed(), finished.task.total()));
 
 		BlockPos at = finished.task.origin();
-		broadcast(Component.literal("ImagineCraft: done — " + finished.task.placed() + " blocks placed at "
+		broadcast(Component.literal("CraftMagic: done — " + finished.task.placed() + " blocks placed at "
 				+ at.getX() + ", " + at.getY() + ", " + at.getZ()).withStyle(ChatFormatting.GREEN));
 	}
 
@@ -253,7 +253,7 @@ public final class JobManager {
 		ticksSinceReport = 0;
 
 		socket.send(Protocol.jobState(job.jobId(), "building", 0, task.total()));
-		broadcast(Component.literal("ImagineCraft: building \"" + job.name() + "\" — " + task.total() + " blocks.")
+		broadcast(Component.literal("CraftMagic: building \"" + job.name() + "\" — " + task.total() + " blocks.")
 				.withStyle(ChatFormatting.GREEN));
 		return null;
 	}

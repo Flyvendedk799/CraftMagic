@@ -12,7 +12,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { AuthStore, UserRow } from './store.js';
 import { SESSION_TTL_DAYS } from './store.js';
 
-export const SESSION_COOKIE = 'ic_session';
+export const SESSION_COOKIE = 'cm_session';
 
 /**
  * The owner a query is scoped to.

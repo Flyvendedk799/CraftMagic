@@ -3,16 +3,16 @@
  *
  * Exists because the verification drivers each pair the world to their own throwaway account,
  * and a mod left holding a socket from a previous run makes the next run fail in a way that
- * looks like a protocol bug. `node tools/rcon.mjs "imaginecraft unpair"` is the reset.
+ * looks like a protocol bug. `node tools/rcon.mjs "craftmagic unpair"` is the reset.
  *
  *   node tools/rcon.mjs "<command>" [more commands...]
  */
 
 import net from 'node:net';
 
-const HOST = process.env.IC_RCON_HOST ?? '127.0.0.1';
-const PORT = Number(process.env.IC_RCON_PORT ?? 25575);
-const PASSWORD = process.env.IC_RCON_PASSWORD ?? 'imaginecraft';
+const HOST = process.env.CM_RCON_HOST ?? '127.0.0.1';
+const PORT = Number(process.env.CM_RCON_PORT ?? 25575);
+const PASSWORD = process.env.CM_RCON_PASSWORD ?? 'craftmagic';
 
 const commands = process.argv.slice(2);
 if (commands.length === 0) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { voxelIndex, type VoxelGrid } from '@imaginecraft/core';
+import { voxelIndex, type VoxelGrid } from '@craftmagic/core';
 import { FILL_CAP, floodFill } from './fill.js';
 
 function emptyGrid(x: number, y: number, z: number): VoxelGrid {

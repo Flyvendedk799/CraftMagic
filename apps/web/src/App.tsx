@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { EditorPage } from './editor/EditorPage.js';
 import { GuidePage } from './guide/GuidePage.js';
 import { LibraryPage } from './library/LibraryPage.js';
+import { ModPage } from './mod/ModPage.js';
 import { StatusPage } from './StatusPage.js';
 
 /**
@@ -15,6 +16,9 @@ import { StatusPage } from './StatusPage.js';
  *
  * `/library` opens a saved build the same way, with `?build=lib:<id>` — a library build is
  * not a separate kind of thing in the editor, only one that has to be fetched first.
+ *
+ * `/mod` is where "Send to game" sends anyone who does not have the mod yet. Without it the
+ * pairing instructions name a command that cannot exist on their machine.
  */
 export function App() {
   return (
@@ -23,6 +27,7 @@ export function App() {
         <Route path="/" element={<EditorPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />
+        <Route path="/mod" element={<ModPage />} />
         <Route path="/status" element={<StatusPage />} />
       </Routes>
     </BrowserRouter>

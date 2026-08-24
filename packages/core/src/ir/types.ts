@@ -1,5 +1,5 @@
 /**
- * ImagineCraft intermediate representation.
+ * CraftMagic intermediate representation.
  *
  * A `BuildProgram` is what the AI emits: a parametric description of a structure.
  * The expander bakes it into a `VoxelGrid`. Both are persisted, which is what makes

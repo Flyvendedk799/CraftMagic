@@ -1,4 +1,4 @@
-# ImagineCraft
+# CraftMagic
 
 Describe a Minecraft build in words. Get it back as a 3D model you can edit, then export it
 three ways: a WorldEdit schematic, a LEGO-style instruction booklet, or a builder bot that
@@ -41,7 +41,7 @@ npm test               # core unit tests
 deployed origin to prove upgrades survive the reverse proxy:
 
 ```bash
-node tools/ws-smoke.mjs wss://imaginecraft.example.com
+node tools/ws-smoke.mjs wss://craftmagic.example.com
 ```
 
 ## Database
@@ -60,7 +60,7 @@ collide with any other Postgres on the machine. Data lives in `.pgdata/` (gitign
 ```
 
 ```
-DATABASE_URL=postgres://imaginecraft:imaginecraft@localhost:55432/imaginecraft
+DATABASE_URL=postgres://craftmagic:craftmagic@localhost:55432/craftmagic
 ```
 
 Two Windows-specific traps are worked around in that script, and both will bite again if
@@ -80,7 +80,7 @@ on the command line too:
 
 ```bash
 cd mod
-JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew build      # -> build/libs/imaginecraft-0.1.0.jar
+JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew build      # -> build/libs/craftmagic-0.1.0.jar
 JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew runServer  # headless dev server
 JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew runClient  # dev client
 ```
@@ -358,10 +358,10 @@ What is on the server:
 
 | Piece | Where | Notes |
 |---|---|---|
-| App | `/opt/imaginecraft`, service `imaginecraft` | runs as the `imaginecraft` system user |
-| Database | Docker `imaginecraft-db`, `127.0.0.1:54328` | Postgres 17, bound to loopback |
-| Secrets | `/opt/imaginecraft/.env`, mode 600 | written once, never overwritten by a redeploy |
-| Logs | `journalctl -u imaginecraft -f` | |
+| App | `/opt/craftmagic`, service `craftmagic` | runs as the `craftmagic` system user |
+| Database | Docker `craftmagic-db`, `127.0.0.1:54328` | Postgres 17, bound to loopback |
+| Secrets | `/opt/craftmagic/.env`, mode 600 | written once, never overwritten by a redeploy |
+| Logs | `journalctl -u craftmagic -f` | |
 
 The database listens on loopback rather than `0.0.0.0` because the host's firewall script only
 covers ports someone remembered to add to its `PORTS=` list, and a port that never faces the
@@ -398,7 +398,7 @@ Anthropic via `count_tokens`, which is free:
 
 ```bash
 curl -s -X POST http://85.190.100.23:3016/api/generations/estimate \
-  -H 'Content-Type: application/json' -b "ic_session=$TOKEN" \
+  -H 'Content-Type: application/json' -b "cm_session=$TOKEN" \
   -d '{"prompt":"a small stone cottage"}'
 ```
 
@@ -409,15 +409,15 @@ place to lose a write. That path is verified inside the real sandbox, not just c
 file permissions:
 
 ```bash
-sudo systemd-run --pipe --uid=imaginecraft --property=ProtectSystem=strict \
-  --property=ReadWritePaths=/opt/imaginecraft/.spend \
-  /bin/sh -c 'echo probe > /opt/imaginecraft/.spend/_probe && rm -f /opt/imaginecraft/.spend/_probe'
+sudo systemd-run --pipe --uid=craftmagic --property=ProtectSystem=strict \
+  --property=ReadWritePaths=/opt/craftmagic/.spend \
+  /bin/sh -c 'echo probe > /opt/craftmagic/.spend/_probe && rm -f /opt/craftmagic/.spend/_probe'
 ```
 
 ### The mod
 
 `tools/bundle-mod.mjs` copies `mod/build/libs/*.jar` into `apps/web/dist/mod/` so the site can
-serve it at `/mod/imaginecraft-mod.jar`. It runs *after* the web build, because vite empties
+serve it at `/mod/craftmagic-mod.jar`. It runs *after* the web build, because vite empties
 `dist` on every run. The jar's default `serverUrl` is the deployment address and has to stay in
 step with `PUBLIC_ORIGIN`; when a domain is registered, both change together.
 

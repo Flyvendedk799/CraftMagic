@@ -34,7 +34,7 @@ export async function signIn(origin, credentials) {
 
 		if (response.ok) {
 			const cookie = (response.headers.getSetCookie() ?? [])
-				.find((c) => c.startsWith('ic_session='))
+				.find((c) => c.startsWith('cm_session='))
 				?.split(';')[0];
 			if (!cookie) throw new Error(`${path} succeeded but issued no session cookie`);
 			const body = await response.json();

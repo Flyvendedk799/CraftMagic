@@ -61,8 +61,8 @@ export function writeSchematic(grid: VoxelGrid, options: SchemOptions = {}): Uin
 	writer.namedByteArray('BlockData', varIntBytes(grid.voxels));
 
 	writer.beginCompound('Metadata');
-	writer.namedString('Name', options.name ?? 'ImagineCraft build');
-	writer.namedString('Author', options.author ?? 'ImagineCraft');
+	writer.namedString('Name', options.name ?? 'CraftMagic build');
+	writer.namedString('Author', options.author ?? 'CraftMagic');
 	writer.endCompound();
 
 	writer.endCompound(); // Schematic

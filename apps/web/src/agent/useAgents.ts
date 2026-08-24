@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BuildProgram, VoxelGrid } from '@imaginecraft/core';
+import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 
 export interface PairedAgent {
   id: string;

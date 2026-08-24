@@ -14,7 +14,7 @@
  * list a block the expander would reject.
  */
 
-import { allBlocks, LIMITS } from '@imaginecraft/core';
+import { allBlocks, LIMITS } from '@craftmagic/core';
 
 /**
  * A compact view of the palette: families and shapes, not 499 ids.
@@ -218,7 +218,7 @@ wall head:
 
 export function systemPrompt(): string {
 	return [
-		`You design Minecraft structures for ImagineCraft.`,
+		`You design Minecraft structures for CraftMagic.`,
 		``,
 		`You do not place blocks one at a time. You write a **build program**: a compact,`,
 		`parametric description that a deterministic expander turns into voxels. Think like an`,

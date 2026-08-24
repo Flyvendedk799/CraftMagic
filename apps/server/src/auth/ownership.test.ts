@@ -12,7 +12,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { expand, samples } from '@imaginecraft/core';
+import { expand, samples } from '@craftmagic/core';
 import { buildTestApp, closeTestDb, openTestDb, TEST_ORIGIN, type TestApp } from '../testing/harness.js';
 
 const db = await openTestDb();

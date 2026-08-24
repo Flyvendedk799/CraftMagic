@@ -20,7 +20,7 @@ import path from 'node:path';
 
 const buildId = process.argv[2] ?? 'cottage';
 const outFile = process.argv[3] ?? 'out/verify-edit.png';
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 
 const EDGE = [
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',

@@ -7,20 +7,20 @@
  *
  *   node tools/verify-ingame.mjs
  *
- * Needs a `runServer` dev server with RCON enabled, and the ImagineCraft server on :3016.
- * Uses `/imaginecraft place <pos>` rather than `/imaginecraft build`, because the latter
+ * Needs a `runServer` dev server with RCON enabled, and the CraftMagic server on :3016.
+ * Uses `/craftmagic place <pos>` rather than `/craftmagic build`, because the latter
  * needs a human standing in the world — the console path is also what a vanilla client or a
  * command block would use, so it is worth covering either way.
  */
 
 import net from 'node:net';
-import { expand, samples } from '@imaginecraft/core';
+import { expand, samples } from '@craftmagic/core';
 import { signIn, throwawayCredentials } from './session.mjs';
 
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
-const RCON_HOST = process.env.IC_RCON_HOST ?? '127.0.0.1';
-const RCON_PORT = Number.parseInt(process.env.IC_RCON_PORT ?? '25575', 10);
-const RCON_PASSWORD = process.env.IC_RCON_PASSWORD ?? 'imaginecraft';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
+const RCON_HOST = process.env.CM_RCON_HOST ?? '127.0.0.1';
+const RCON_PORT = Number.parseInt(process.env.CM_RCON_PORT ?? '25575', 10);
+const RCON_PASSWORD = process.env.CM_RCON_PASSWORD ?? 'craftmagic';
 
 /** Flat dev world: bedrock at y=-64, surface at y=-60, so a build starts at y=-59. */
 const AT = { x: 40, y: -59, z: 40 };
@@ -183,9 +183,9 @@ check('cleared previously paired worlds', true, `${existing.length} revoked`);
 const code = (await json(`${ORIGIN}/api/agent/pair-codes`, { method: 'POST' })).body.code;
 check('site minted a pairing code', typeof code === 'string', code);
 
-await rcon.command(`imaginecraft server ${ORIGIN}`);
-const pairOutput = await rcon.command(`imaginecraft pair ${code}`);
-check('ran /imaginecraft pair in game', true, pairOutput.trim().slice(0, 60));
+await rcon.command(`craftmagic server ${ORIGIN}`);
+const pairOutput = await rcon.command(`craftmagic pair ${code}`);
+check('ran /craftmagic pair in game', true, pairOutput.trim().slice(0, 60));
 await sleep(4000);
 
 const agents = (await json(`${ORIGIN}/api/agent/agents`)).body.agents ?? [];
@@ -227,9 +227,9 @@ for (let i = 0; i < 30; i++) {
 check('the mod fetched and parsed the build', state?.status === 'previewing', `status=${state?.status}`);
 
 // 4. Place it.
-await rcon.command('imaginecraft speed 0');
-const placeOutput = await rcon.command(`imaginecraft place ${AT.x} ${AT.y} ${AT.z}`);
-check('ran /imaginecraft place', !placeOutput.toLowerCase().includes('no build'), placeOutput.trim().slice(0, 70));
+await rcon.command('craftmagic speed 0');
+const placeOutput = await rcon.command(`craftmagic place ${AT.x} ${AT.y} ${AT.z}`);
+check('ran /craftmagic place', !placeOutput.toLowerCase().includes('no build'), placeOutput.trim().slice(0, 70));
 
 let finished = null;
 for (let i = 0; i < 90; i++) {

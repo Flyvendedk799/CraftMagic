@@ -8,7 +8,7 @@
 
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { BuildProgram, VoxelGrid } from '@imaginecraft/core';
+import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 import { useAgents, type PairedAgent } from './useAgents.js';
 import './agent.css';
 
@@ -51,7 +51,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
   const copyCommand = useCallback(async () => {
     if (!pairCode) return;
     try {
-      await navigator.clipboard.writeText(`/imaginecraft pair ${pairCode.code}`);
+      await navigator.clipboard.writeText(`/craftmagic pair ${pairCode.code}`);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -96,7 +96,15 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
       {loading && <p className="agent__note">Looking for paired worlds…</p>}
 
       {!loading && agents.length === 0 && !pairCode && (
-        <p className="agent__note">No worlds paired yet.</p>
+        <p className="agent__note">
+          No worlds paired yet. You’ll need the{' '}
+          {/* The pairing command below does not exist until the mod is installed, so the
+              first-run state has to say where to get it rather than assuming they know. */}
+          <Link className="agent__link" to="/mod" target="_blank">
+            CraftMagic mod
+          </Link>{' '}
+          in Minecraft first.
+        </p>
       )}
 
       {agents.length > 0 && (
@@ -133,7 +141,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
       {pairCode ? (
         <div className="agent__pairing">
           <p className="agent__note">In Minecraft, run:</p>
-          <code className="agent__code">/imaginecraft pair {pairCode.code}</code>
+          <code className="agent__code">/craftmagic pair {pairCode.code}</code>
           <div className="agent__pairing-actions">
             <button type="button" onClick={() => void copyCommand()}>
               {copied ? 'Copied' : 'Copy'}
@@ -143,7 +151,12 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
             </button>
           </div>
           <p className="agent__note agent__note--dim">
-            Expires in 10 minutes. The world appears above once it connects.
+            Expires in 10 minutes. The world appears above once it connects. Command not
+            recognised?{' '}
+            <Link className="agent__link" to="/mod" target="_blank">
+              Install the mod
+            </Link>
+            .
           </p>
         </div>
       ) : (
@@ -158,7 +171,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
       {send.kind === 'progress' && (
         <div className="agent__status">
           {send.status === 'previewing' ? (
-            <>Ready in game — run <code>/imaginecraft build</code> where you want it.</>
+            <>Ready in game — run <code>/craftmagic build</code> where you want it.</>
           ) : (
             <>
               Building… {send.placed.toLocaleString()} / {send.total.toLocaleString()}

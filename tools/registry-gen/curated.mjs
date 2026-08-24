@@ -1,5 +1,5 @@
 /**
- * Which blocks ImagineCraft is allowed to build with.
+ * Which blocks CraftMagic is allowed to build with.
  *
  * Expressed as families and suffix patterns rather than a flat id list: the generator
  * expands every combination and then *drops the ones Minecraft does not actually have*,

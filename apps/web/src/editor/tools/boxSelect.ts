@@ -8,7 +8,7 @@
  * time the intent is "this region, but in spruce", not "this region, solid".
  */
 
-import { AIR_INDEX, voxelIndex, type EditOp, type VoxelGrid } from '@imaginecraft/core';
+import { AIR_INDEX, voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
 import { EditBuilder } from './op.js';
 
 export type BoxMode = 'fill' | 'replace' | 'clear';

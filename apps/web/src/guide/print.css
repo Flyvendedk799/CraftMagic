@@ -109,9 +109,14 @@
   color: var(--muted);
 }
 
-/* Paper-white in both themes, matching the plan canvases — see the file header. */
+/* Paper-white in both themes, matching the plan canvases — see the file header.
+
+   Scoped under `.step__panels` rather than styling a bare `.panel`. Vite bundles every
+   route's CSS into one stylesheet, so this file's rules reach the whole app the moment any
+   route imports it — and `.panel` is also the app-wide card used by the status, library and
+   mod pages. An unscoped `.panel { display: flex }` here silently relaid out those pages. */
 .cover__art,
-.panel {
+.step__panels .panel {
   background: #f6f7f9;
   border: 1px solid rgba(20, 26, 33, 0.18);
   border-radius: 10px;
@@ -298,7 +303,7 @@
   align-items: start;
 }
 
-.panel {
+.step__panels .panel {
   margin: 0;
   padding: 0.6rem;
   display: flex;
@@ -317,7 +322,7 @@
   height: auto;
 }
 
-.panel figcaption {
+.step__panels .panel figcaption {
   font-size: 0.6875rem;
   line-height: 1.35;
   text-align: center;

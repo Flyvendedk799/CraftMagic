@@ -12,7 +12,7 @@
  * but it does mean a builder is single-use against a grid it does not mutate.
  */
 
-import { voxelIndex, type EditOp, type VoxelGrid } from '@imaginecraft/core';
+import { voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
 
 export class EditBuilder {
   private indices: Uint32Array;

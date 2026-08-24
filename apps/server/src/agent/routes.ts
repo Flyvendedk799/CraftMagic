@@ -28,7 +28,7 @@
  * worlds" mean anything at all.
  */
 
-import { decodeVoxels, schematicFilename, writeSchematic, type VoxelGrid } from '@imaginecraft/core';
+import { decodeVoxels, schematicFilename, writeSchematic, type VoxelGrid } from '@craftmagic/core';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import type { AgentHub } from './hub.js';
@@ -104,7 +104,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 			let blockCount = 0;
 			for (const v of voxelGrid.voxels) if (v !== 0) blockCount++;
 
-			const { encodeVoxels } = await import('@imaginecraft/core');
+			const { encodeVoxels } = await import('@craftmagic/core');
 			const id = await store!.saveBuild({
 				name,
 				description: typeof body?.description === 'string' ? body.description : null,

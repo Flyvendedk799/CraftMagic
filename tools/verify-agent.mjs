@@ -17,10 +17,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { expand, samples, writeSchematic } from '@imaginecraft/core';
+import { expand, samples, writeSchematic } from '@craftmagic/core';
 import { signIn, throwawayCredentials } from './session.mjs';
 
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 const WS_ORIGIN = ORIGIN.replace(/^http/, 'ws');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

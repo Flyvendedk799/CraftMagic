@@ -13,7 +13,7 @@ import path from 'node:path';
 
 const programFile = process.argv[2] ?? 'out/stone-watchtower.program.json';
 const outFile = process.argv[3] ?? 'ui-restored.png';
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 
 const EDGE = [
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -97,7 +97,7 @@ try {
 
 	// Seed a generated build, then reload — the restore path is what we are testing.
 	await evaluate(
-		`sessionStorage.setItem('imaginecraft.generated', ${JSON.stringify(
+		`sessionStorage.setItem('craftmagic.generated', ${JSON.stringify(
 			JSON.stringify([['gen:1', program]]),
 		)}), true`,
 	);

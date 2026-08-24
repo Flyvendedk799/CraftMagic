@@ -16,7 +16,7 @@ import path from 'node:path';
 
 const buildId = process.argv[2] ?? 'cottage';
 const outDir = path.resolve(process.argv[3] ?? 'out/from-browser');
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 
 const EDGE = [
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',

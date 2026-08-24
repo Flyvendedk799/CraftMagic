@@ -106,7 +106,7 @@ export function validateBlockRef(ref: BlockRef): BlockRefProblem | null {
 	if (!block) {
 		return {
 			code: 'UNKNOWN_BLOCK',
-			message: `"${parsed.id}" is not in the ImagineCraft block palette${suggest(parsed.id)}`,
+			message: `"${parsed.id}" is not in the CraftMagic block palette${suggest(parsed.id)}`,
 		};
 	}
 

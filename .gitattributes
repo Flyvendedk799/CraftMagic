@@ -1,0 +1,22 @@
+# Line endings are normalised to LF in the repository.
+#
+# This is not cosmetic. The repo is developed on Windows but built and run on Linux — both by
+# the Docker build and on the VPS — and several files here are executed rather than read:
+# `mod/gradlew` and the deploy scripts fail with a confusing "bad interpreter" error if their
+# shebang line ends with CRLF. Pinning them avoids a class of bug that only appears after a
+# checkout on the other platform.
+* text=auto eol=lf
+
+# Executed on Linux. Never CRLF, regardless of local git config.
+*.sh text eol=lf
+mod/gradlew text eol=lf
+
+# Windows-only, and PowerShell is happiest with CRLF.
+*.ps1 text eol=crlf
+mod/gradlew.bat text eol=crlf
+
+# Binary — never touched, never diffed as text.
+*.jar binary
+*.png binary
+*.schem binary
+*.pdf binary

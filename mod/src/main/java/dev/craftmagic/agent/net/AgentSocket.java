@@ -1,7 +1,7 @@
-package dev.imaginecraft.agent.net;
+package dev.craftmagic.agent.net;
 
 import com.google.gson.JsonObject;
-import dev.imaginecraft.agent.config.ModConfig;
+import dev.craftmagic.agent.config.ModConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * Outbound control connection to the ImagineCraft server.
+ * Outbound control connection to the CraftMagic server.
  *
  * <p>Built on {@link java.net.http.WebSocket} from the JDK: TLS works out of the box, there
  * is nothing to shade into the jar, and no third-party library to re-verify on every
@@ -28,7 +28,7 @@ import java.util.function.Consumer;
  * because a laptop that sleeps or a server that briefly loses DNS should recover silently.
  */
 public final class AgentSocket implements WebSocket.Listener {
-	private static final Logger LOGGER = LoggerFactory.getLogger("imaginecraft-socket");
+	private static final Logger LOGGER = LoggerFactory.getLogger("craftmagic-socket");
 	private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
 	private static final long BACKOFF_MIN_MS = 1_000L;
 	private static final long BACKOFF_MAX_MS = 60_000L;
@@ -46,7 +46,7 @@ public final class AgentSocket implements WebSocket.Listener {
 			.build();
 	private final ScheduledExecutorService scheduler =
 			Executors.newSingleThreadScheduledExecutor(r -> {
-				Thread t = new Thread(r, "imaginecraft-agent-socket");
+				Thread t = new Thread(r, "craftmagic-agent-socket");
 				t.setDaemon(true);
 				return t;
 			});
@@ -129,7 +129,7 @@ public final class AgentSocket implements WebSocket.Listener {
 		if (!config.isPaired()) {
 			// Nothing to authenticate with. Stay idle rather than hammering the server;
 			// the pair command restarts us once a token exists.
-			LOGGER.info("Not paired yet — run /imaginecraft pair <code> to connect this world.");
+			LOGGER.info("Not paired yet — run /craftmagic pair <code> to connect this world.");
 			running.set(false);
 			return;
 		}

@@ -6,7 +6,7 @@
  * never spends CPU on it, and a build can be exported while offline.
  */
 
-import { schematicFilename, writeSchematic, type VoxelGrid } from '@imaginecraft/core';
+import { schematicFilename, writeSchematic, type VoxelGrid } from '@craftmagic/core';
 
 export interface DownloadResult {
   filename: string;

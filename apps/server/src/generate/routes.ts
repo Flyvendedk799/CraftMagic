@@ -32,7 +32,7 @@ import { costOf, worstCaseCost, type ModelId } from './pricing.js';
 import type { GenerationQuota } from './quota.js';
 import { BudgetExceededError, type SpendLedger } from './spend.js';
 import { GenerationStore } from './store.js';
-import schema from '@imaginecraft/core/schema' with { type: 'json' };
+import schema from '@craftmagic/core/schema' with { type: 'json' };
 
 export interface GenerateRoutesOptions {
 	ledger: SpendLedger;

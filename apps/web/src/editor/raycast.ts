@@ -7,7 +7,7 @@
  * chunk re-mesh. Walking the grid is exact, allocation-free, and O(blocks crossed).
  */
 
-import { voxelIndex, type VoxelGrid } from '@imaginecraft/core';
+import { voxelIndex, type VoxelGrid } from '@craftmagic/core';
 
 /** The face of the hit block the ray entered through — where a placed block would go. */
 export type VoxelFace = 'up' | 'down' | 'north' | 'south' | 'east' | 'west';

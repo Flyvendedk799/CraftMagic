@@ -19,11 +19,11 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expand, samples } from '@imaginecraft/core';
+import { expand, samples } from '@craftmagic/core';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
-const ORIGIN = process.env.IC_ORIGIN ?? 'http://localhost:3016';
+const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 
 const envFile = path.join(repoRoot, 'apps/server/.env');
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
@@ -64,9 +64,9 @@ async function call(method, url, { body, cookie, headers } = {}) {
 	};
 }
 
-/** The `ic_session=...` pair out of a Set-Cookie, ready to send back. */
+/** The `cm_session=...` pair out of a Set-Cookie, ready to send back. */
 function sessionCookie(setCookie) {
-	const header = setCookie.find((c) => c.startsWith('ic_session='));
+	const header = setCookie.find((c) => c.startsWith('cm_session='));
 	return header ? header.split(';')[0] : null;
 }
 
@@ -97,7 +97,7 @@ const registered = await call('POST', '/api/auth/register', { body: alice });
 check('register creates an account', registered.status === 201, registered.body.user?.email);
 check('the reply carries the quota', registered.body.user?.dailyGenQuota === 30, String(registered.body.user?.dailyGenQuota));
 
-const cookieHeader = registered.setCookie.find((c) => c.startsWith('ic_session='));
+const cookieHeader = registered.setCookie.find((c) => c.startsWith('cm_session='));
 check('the session cookie is HttpOnly', /HttpOnly/i.test(cookieHeader ?? ''));
 check('the session cookie is SameSite=Lax', /SameSite=Lax/i.test(cookieHeader ?? ''));
 check('the session cookie is Path=/', /Path=\//i.test(cookieHeader ?? ''));
@@ -144,7 +144,7 @@ check('/api/me reports the remaining quota', typeof me.body.user?.generationsLef
 const anonymousMe = await call('GET', '/api/me');
 check('/api/me 401s without a cookie', anonymousMe.status === 401, anonymousMe.body.error);
 
-const garbageMe = await call('GET', '/api/me', { cookie: `ic_session=${randomBytes(32).toString('base64url')}` });
+const garbageMe = await call('GET', '/api/me', { cookie: `cm_session=${randomBytes(32).toString('base64url')}` });
 check('/api/me 401s on an invented token', garbageMe.status === 401);
 
 // --- the origin guard -----------------------------------------------------
@@ -323,8 +323,8 @@ console.log('\nlogout');
 
 const loggedOut = await call('POST', '/api/auth/logout', { cookie: aliceCookie });
 check('logout succeeds', loggedOut.status === 200);
-const cleared = loggedOut.setCookie.find((c) => c.startsWith('ic_session='));
-check('the cookie is cleared', /ic_session=;/.test(cleared ?? '') || /Expires=Thu, 01 Jan 1970/i.test(cleared ?? ''), cleared);
+const cleared = loggedOut.setCookie.find((c) => c.startsWith('cm_session='));
+check('the cookie is cleared', /cm_session=;/.test(cleared ?? '') || /Expires=Thu, 01 Jan 1970/i.test(cleared ?? ''), cleared);
 
 const afterLogout = await call('GET', '/api/me', { cookie: aliceCookie });
 check('the old cookie no longer authenticates', afterLogout.status === 401, afterLogout.body.error);
@@ -344,7 +344,7 @@ try {
 		`INSERT INTO sessions (user_id, token_hash, expires_at) ` +
 			`VALUES ('${aliceId}', decode('${digest}', 'hex'), now() - interval '1 hour')`,
 	);
-	const expired = await call('GET', '/api/me', { cookie: `ic_session=${expiredToken}` });
+	const expired = await call('GET', '/api/me', { cookie: `cm_session=${expiredToken}` });
 	check('an expired session does not authenticate', expired.status === 401, expired.body.error);
 
 	// Proving it was really there rules out the check passing because the insert silently

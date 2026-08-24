@@ -1,4 +1,4 @@
-package dev.imaginecraft.agent.build;
+package dev.craftmagic.agent.build;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;

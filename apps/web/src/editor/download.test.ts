@@ -1,6 +1,6 @@
 import { gunzipSync } from 'fflate';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { expand, samples } from '@imaginecraft/core';
+import { expand, samples } from '@craftmagic/core';
 import { downloadProgram, downloadSchematic, formatBytes } from './download.js';
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { voxelIndex, voxelPosition, type VoxelGrid } from '@imaginecraft/core';
+import { voxelIndex, voxelPosition, type VoxelGrid } from '@craftmagic/core';
 import { place, placementCell } from './place.js';
 import { erase } from './erase.js';
 import { FACE_NORMAL, type VoxelFace } from '../raycast.js';

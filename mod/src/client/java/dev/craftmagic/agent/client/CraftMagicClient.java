@@ -1,4 +1,4 @@
-package dev.imaginecraft.agent.client;
+package dev.craftmagic.agent.client;
 
 import net.fabricmc.api.ClientModInitializer;
 import org.slf4j.Logger;
@@ -14,12 +14,12 @@ import org.slf4j.LoggerFactory;
  * <p>Lives in {@code src/client}, which Loom's split source sets keep off the dedicated
  * server's classpath entirely.
  */
-public class ImagineCraftClient implements ClientModInitializer {
-	public static final Logger LOGGER = LoggerFactory.getLogger("imaginecraft-client");
+public class CraftMagicClient implements ClientModInitializer {
+	public static final Logger LOGGER = LoggerFactory.getLogger("craftmagic-client");
 
 	@Override
 	public void onInitializeClient() {
 		// TODO(M4): register keybinds (place/rotate/confirm/cancel) and the preview renderer.
-		LOGGER.info("ImagineCraft client ready");
+		LOGGER.info("CraftMagic client ready");
 	}
 }

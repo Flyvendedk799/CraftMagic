@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AIR_BLOCK, displayName, voxelIndex } from '@imaginecraft/core';
+import { AIR_BLOCK, displayName, voxelIndex } from '@craftmagic/core';
 import { EditorCanvas } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
@@ -392,7 +392,7 @@ export function EditorPage() {
       </div>
 
       <section className="hud hud--top">
-        <h1 className="hud__title">ImagineCraft</h1>
+        <h1 className="hud__title">CraftMagic</h1>
         <p className="hud__sub">Voxel editor</p>
 
         <div className="hud__actions">
@@ -542,6 +542,10 @@ export function EditorPage() {
         </div>
 
         <p className="hud__sub" style={{ marginTop: '0.875rem' }}>
+          <Link className="hud__link" to="/mod">
+            Get the Minecraft mod →
+          </Link>
+          <br />
           <Link className="hud__link" to="/status">
             Deployment checks →
           </Link>

@@ -1,4 +1,4 @@
-package dev.imaginecraft.agent.build;
+package dev.craftmagic.agent.build;
 
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.registries.BuiltInRegistries;

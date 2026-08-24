@@ -18,8 +18,8 @@ import {
 	type BuildProgram,
 	type ExpandIssue,
 	type ExpandResult,
-} from '@imaginecraft/core';
-import schema from '@imaginecraft/core/schema' with { type: 'json' };
+} from '@craftmagic/core';
+import schema from '@craftmagic/core/schema' with { type: 'json' };
 import { repairPrompt, systemPrompt } from './prompt.js';
 import { schemaIssues } from './validate.js';
 import type { ModelId } from './pricing.js';

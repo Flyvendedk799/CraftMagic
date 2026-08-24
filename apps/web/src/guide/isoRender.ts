@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { voxelIndex } from '@imaginecraft/core';
+import { voxelIndex } from '@craftmagic/core';
 import { CHUNK_SIZE, chunkCounts, meshChunk, type GridSize, type MeshSource } from '../editor/mesher.js';
 
 /** 45° around Y and 35.264° above the horizon: the true isometric axonometry. */

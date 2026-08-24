@@ -110,35 +110,47 @@ minecraft-common-deobf/26.2/minecraft-common-deobf-26.2.jar net.minecraft.server
 
 ### One-jar install
 
-**Players do not need to install Fabric API separately.** The mod bundles the six modules it
-uses (`fabric-api-base`, `fabric-command-api-v2`, `fabric-lifecycle-events-v1`,
-`fabric-networking-api-v1`, `fabric-rendering-v1`, `fabric-key-mapping-api-v1`) via Gradle
+**Players do not need to install Fabric API separately.** The mod bundles the three modules it
+uses — `fabric-api-base`, `fabric-command-api-v2`, `fabric-lifecycle-events-v1` — via Gradle
 `include` / Jar-in-Jar, so `fabric.mod.json` declares no `fabric-api` dependency. Anyone
 already running the full Fabric API keeps whichever version is higher.
 
-**`include` is not transitive.** It bundles exactly the artifact named and nothing that
-artifact depends on. Every module above except `fabric-key-mapping-api-v1` declares
-`"fabric-api-base": "*"` as a hard dependency, and shipping without it made the jar refuse to
-load for anyone who did not already have the full Fabric API — while `runClient` and
-`runServer` worked perfectly, because the dev runtime puts all of Fabric API on the classpath.
-No test in this repo could see it.
+Two rules, each learned from a shipped bug:
 
-When adding a module, read its `depends` block out of the built jar and bundle every Fabric
-module it names:
+**Bundle only what the bytecode uses.** The list once carried `fabric-networking-api-v1`,
+`fabric-rendering-v1` and `fabric-key-mapping-api-v1` for the hologram preview and its
+keybinds — features the roadmap intends but that were never built. Bundling is not free: every
+module injects its mixins into the game whether the mod calls it or not, and on 26.2
+`fabric-rendering-v1`'s model-pipeline mixin died with an `IllegalAccessError` during the
+initial resource reload. The client crashed on startup because of a renderer nothing used.
+Check before adding:
 
 ```bash
-unzip -p mod/build/libs/craftmagic-0.1.0.jar 'META-INF/jars/*.jar' > /dev/null   # list them
+javap -p -c <extracted classes> | grep -oE 'net/fabricmc/fabric/api/[a-zA-Z0-9/]+' | sort -u
+```
+
+**`include` is not transitive.** It bundles exactly the artifact named and nothing that
+artifact depends on. Both modules above declare `"fabric-api-base": "*"` as a hard dependency,
+and shipping without it made the jar refuse to load for anyone who did not already have the
+full Fabric API. Read a module's `depends` block before adding it:
+
+```bash
 unzip -p <module>.jar fabric.mod.json | grep depends
 ```
 
-The only verification that actually proves this is a **real Fabric server with nothing else in
-`mods/`** — the dev runtime cannot show the failure:
+Neither bug was visible from this repo. `runClient` and `runServer` put all of Fabric API on
+the dev classpath, so every in-game verification passed against a runtime the shipped jar never
+sees. The only verification that means anything is a **real Fabric install with nothing else in
+`mods/`**:
 
 ```bash
 curl -L -o server.jar https://meta.fabricmc.net/v2/versions/loader/26.2/0.19.3/1.1.2/server/jar
 mkdir mods && cp <the built jar> mods/ && echo "eula=true" > eula.txt
-java -jar server.jar nogui      # expect every module nested under "craftmagic" in the mod list
+java -jar server.jar nogui      # every module should appear nested under "craftmagic"
 ```
+
+That server is also the best target for `tools/verify-ingame.mjs`: point it at the clean
+server's RCON and the whole loop runs against the artifact players actually download.
 
 ## Block registry
 

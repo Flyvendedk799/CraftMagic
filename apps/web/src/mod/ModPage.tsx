@@ -107,9 +107,9 @@ export function ModPage() {
             support question and a wasted download. */}
         <p className="modpage__note">
           <strong>You do not need the Fabric API jar.</strong> Most mods ask you to install it
-          separately; this one bundles the six modules it uses, so the file above is the only one
-          that goes in your mods folder. If you already run the full Fabric API, that keeps
-          working — Fabric just uses whichever version is newer.
+          separately; this one bundles the parts it uses, so the file above is the only one that
+          goes in your mods folder. If you already run the full Fabric API, that keeps working —
+          Fabric just uses whichever version is newer.
         </p>
       </section>
 

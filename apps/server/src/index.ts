@@ -85,8 +85,17 @@ app.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => {
 app.get('/api/health', async () => {
   // Asked rather than remembered — a pool that connected at boot and died since is not
   // "connected", and that is exactly the state worth catching.
-  let database: 'connected' | 'unavailable' | 'not_configured' = 'not_configured';
-  if (db) {
+  //
+  // `not_configured` and `unavailable` are kept apart deliberately. `initDb` returns null
+  // both when there is no DATABASE_URL and when there is one that failed to connect, so
+  // reporting on `db` alone told a deployment with a wrong password that it had no database
+  // configured — which sent the search in exactly the wrong direction.
+  let database: 'connected' | 'unavailable' | 'not_configured';
+  if (!config.databaseUrl) {
+    database = 'not_configured';
+  } else if (!db) {
+    database = 'unavailable';
+  } else {
     try {
       await db.query('SELECT 1');
       database = 'connected';

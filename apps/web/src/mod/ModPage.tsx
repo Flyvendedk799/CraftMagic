@@ -169,8 +169,10 @@ export function ModPage() {
           <dd>Forget the pairing and disconnect.</dd>
         </dl>
         <p className="modpage__note">
-          On a dedicated server these need operator permission. On your own single-player world
-          you already have it.
+          In your own world these all work as-is — you do <strong>not</strong> need to enable
+          cheats. On a dedicated server, pairing and settings need operator permission, since a
+          paired world can have blocks placed anywhere in it. Same on a world opened to LAN:
+          the host can pair it, and guests need <code>/op</code> first.
         </p>
       </section>
 
@@ -181,6 +183,19 @@ export function ModPage() {
           <dd>
             Minecraft is running without the mod — check you launched the Fabric profile and that
             the jar is in <code>mods</code>.
+          </dd>
+
+          {/* Brigadier hides subcommands you lack permission for, and the resulting parse error
+              points at the word rather than saying "you are not an operator" — so this reads as
+              a broken command unless someone tells you otherwise. */}
+          <dt>
+            “Incorrect argument for command” on <code>pair</code>
+          </dt>
+          <dd>
+            On a dedicated server you need operator permission — Minecraft hides subcommands you
+            can’t use, and the error points at the word instead of explaining why. Ask an admin
+            for <code>/op</code>. In your own world this should just work; if it doesn’t, you’re
+            on an old build of the mod, so download it again.
           </dd>
 
           <dt>Pairing says the code is invalid</dt>

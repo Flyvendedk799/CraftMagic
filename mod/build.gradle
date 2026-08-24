@@ -102,3 +102,18 @@ tasks.register('verifySchematic', JavaExec) {
 	mainClass = 'dev.craftmagic.agent.tools.SchematicReadCheck'
 	args = [project.findProperty('schem') ?: '../out/oak-cottage.schem']
 }
+
+/**
+ * Check who may pair a world. A singleplayer player without "Allow Cheats" is permission
+ * level 0, so an OP-only gate made the headline feature unreachable for most people — and
+ * every automated test ran through RCON, the one source that is always level 4.
+ *
+ *   gradlew verifyPermissions
+ */
+tasks.register('verifyPermissions', JavaExec) {
+	group = 'verification'
+	description = 'Assert the pairing permission policy across singleplayer, LAN and dedicated.'
+	dependsOn tasks.named('classes')
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'dev.craftmagic.agent.tools.PermissionPolicyCheck'
+}

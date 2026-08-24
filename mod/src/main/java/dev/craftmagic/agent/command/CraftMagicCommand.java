@@ -11,6 +11,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Rotation;
 import dev.craftmagic.agent.job.JobManager;
@@ -19,9 +20,11 @@ import dev.craftmagic.agent.job.JobManager;
  * {@code /craftmagic} — the player's side of pairing a world to the website.
  *
  * <p>Pairing is deliberately player-initiated and code-based: the site never reaches into a
- * world, the world dials out. Requiring OP level 2 on a dedicated server matters because a
- * paired agent can place blocks anywhere in it — this is the permission gate for that.
- * Singleplayer is exempt, where the player is already the operator.
+ * world, the world dials out. A paired agent can place blocks anywhere in the world, so on a
+ * dedicated server that is gated behind OP level 2.
+ *
+ * <p>See {@link #mayConfigure} for why "singleplayer is exempt" cannot be spelled as a
+ * permission level.
  */
 public final class CraftMagicCommand {
 	/** 0-3 quarter turns, so the player can type a number rather than a compass direction. */
@@ -32,6 +35,60 @@ public final class CraftMagicCommand {
 	private CraftMagicCommand() {
 	}
 
+	/**
+	 * Who may pair this world and change its settings.
+	 *
+	 * <p>This used to be {@code hasPermission(LEVEL_GAMEMASTERS)} alone, on the assumption that
+	 * a singleplayer player is already an operator. They are not: <b>without "Allow Cheats" a
+	 * singleplayer player has permission level 0</b>, so Brigadier removed {@code pair} from the
+	 * tree entirely and typing it produced "Incorrect argument for command" pointing at the word
+	 * itself — a message that gives no hint the cause is permissions. That is the ordinary way
+	 * to play singleplayer, so the headline feature was unreachable for most people.
+	 *
+	 * <p>Ownership, not permission level, is the real question. The host of an integrated server
+	 * owns the world whether or not cheats are on. A LAN guest does not, and still needs OP —
+	 * they can be granted it with {@code /op}. On a dedicated server nobody is the owner, so it
+	 * always falls through to the OP check.
+	 */
+	private static boolean mayConfigure(CommandSourceStack source) {
+		MinecraftServer server = source.getServer();
+		ServerPlayer player = source.getPlayer();
+
+		return mayConfigure(
+				server.isDedicatedServer(),
+				player != null,
+				player != null && server.isSingleplayerOwner(player.nameAndId()),
+				Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source));
+	}
+
+	/**
+	 * The policy itself, as a pure function of four facts.
+	 *
+	 * <p>Split out from the {@code CommandSourceStack} lookup above so it can be checked without
+	 * a running Minecraft server — see {@code gradlew verifyPermissions}. What was wrong here was
+	 * the *policy*, not the API calls, and a policy that only a human can evaluate is one that
+	 * gets a case wrong quietly.
+	 *
+	 * @param dedicatedServer   a real multiplayer server, where nobody owns the world
+	 * @param hasPlayer         false for the console or a command block
+	 * @param singleplayerOwner this player opened this world; false for a LAN guest
+	 * @param operator          passes the vanilla OP level 2 check
+	 */
+	public static boolean mayConfigure(
+			boolean dedicatedServer, boolean hasPlayer, boolean singleplayerOwner, boolean operator) {
+		if (!dedicatedServer) {
+			// The host, cheats or not. On a LAN-published world this is still only the host:
+			// guests are not the singleplayer owner and fall through to the OP check below.
+			if (hasPlayer && singleplayerOwner) return true;
+
+			// No player means the integrated server's own console or a command block, which
+			// only exist on the host's machine.
+			if (!hasPlayer) return true;
+		}
+
+		return operator;
+	}
+
 	public static void register() {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registry, environment) -> {
 			dispatcher.register(
@@ -39,17 +96,17 @@ public final class CraftMagicCommand {
 							.then(Commands.literal("status").executes(CraftMagicCommand::status))
 							.then(
 									Commands.literal("pair")
-											.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+											.requires(CraftMagicCommand::mayConfigure)
 											.then(
 													Commands.argument("code", StringArgumentType.word())
 															.executes(CraftMagicCommand::pair)))
 							.then(
 									Commands.literal("unpair")
-											.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+											.requires(CraftMagicCommand::mayConfigure)
 											.executes(CraftMagicCommand::unpair))
 							.then(
 									Commands.literal("server")
-											.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+											.requires(CraftMagicCommand::mayConfigure)
 											.then(
 													Commands.argument("url", StringArgumentType.greedyString())
 															.executes(CraftMagicCommand::setServer)))
@@ -78,7 +135,7 @@ public final class CraftMagicCommand {
 							.then(Commands.literal("cancel").executes(CraftMagicCommand::cancel))
 							.then(
 									Commands.literal("speed")
-											.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+											.requires(CraftMagicCommand::mayConfigure)
 											.then(
 													Commands.argument("blocksPerSecond", IntegerArgumentType.integer(0, 4000))
 															.executes(CraftMagicCommand::setSpeed)))

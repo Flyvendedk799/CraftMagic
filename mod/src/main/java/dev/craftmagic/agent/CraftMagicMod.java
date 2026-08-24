@@ -40,6 +40,22 @@ public class CraftMagicMod implements ModInitializer {
 	private static String mcVersion = "unknown";
 	private static Protocol.EnvType envType;
 
+	/**
+	 * The running server, or null outside a world.
+	 *
+	 * <p>Kept because a Brigadier {@code requires} predicate cannot rely on
+	 * {@code CommandSourceStack.getServer()}: Minecraft builds the command-tree packet with a
+	 * synthetic source whose server is null, and dereferencing it there threw inside
+	 * {@code PlayerList.placeNewPlayer}, which the client reports as "Invalid player data" —
+	 * an error that names neither the mod nor the real cause.
+	 */
+	private static volatile MinecraftServer server;
+
+	/** The running server, or null before SERVER_STARTED and after shutdown. */
+	public static MinecraftServer server() {
+		return server;
+	}
+
 	@Override
 	public void onInitialize() {
 		modVersion = FabricLoader.getInstance()
@@ -131,6 +147,7 @@ public class CraftMagicMod implements ModInitializer {
 	}
 
 	private void onServerStarted(MinecraftServer server) {
+		CraftMagicMod.server = server;
 		envType = server.isDedicatedServer()
 				? Protocol.EnvType.DEDICATED
 				: Protocol.EnvType.INTEGRATED;
@@ -149,6 +166,9 @@ public class CraftMagicMod implements ModInitializer {
 	}
 
 	private void shutdown() {
+		// Cleared first: leaving a stale reference behind would keep a whole finished world
+		// alive, and in singleplayer a player leaves and rejoins worlds all session.
+		server = null;
 		if (jobs != null) {
 			jobs.shutdown();
 			jobs = null;

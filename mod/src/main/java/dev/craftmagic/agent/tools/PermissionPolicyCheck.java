@@ -1,6 +1,14 @@
 package dev.craftmagic.agent.tools;
 
 import dev.craftmagic.agent.command.CraftMagicCommand;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.commands.CommandSource;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.permissions.PermissionSet;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Check who is allowed to pair a world, without needing a running Minecraft server.
@@ -35,12 +43,56 @@ public final class PermissionPolicyCheck {
 		check(true, false, false, true, true, "dedicated server console (RCON)");
 		check(true, false, false, false, false, "dedicated server, unprivileged non-player source");
 
+		nullServerSourceDoesNotThrow();
+
 		System.out.println();
 		if (failures > 0) {
 			System.out.println(failures + " permission case(s) wrong");
 			System.exit(1);
 		}
 		System.out.println("permission policy verified");
+	}
+
+	/**
+	 * The regression that broke joining a world.
+	 *
+	 * <p>Minecraft builds the command-tree packet for a joining player by evaluating every
+	 * {@code requires} against a source whose server is null ({@code Commands$1.isRestricted},
+	 * reached from {@code PlayerList.placeNewPlayer}). The predicate called
+	 * {@code source.getServer().isDedicatedServer()} and threw, and because it threw *while
+	 * placing the player*, the client was disconnected with "Invalid player data" — which names
+	 * neither this mod nor the real cause, and reads as a corrupted save.
+	 *
+	 * <p>Constructing that source directly is the whole test: no world, no client, no server.
+	 */
+	private static void nullServerSourceDoesNotThrow() {
+		// Touching CommandSourceStack outside a running game needs the registries, exactly as
+		// SchematicReadCheck does. Without it the failure is an unhelpful
+		// ExceptionInInitializerError from a static block rather than the behaviour under test.
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
+
+		CommandSourceStack source = new CommandSourceStack(
+				CommandSource.NULL,
+				Vec3.ZERO,
+				Vec2.ZERO,
+				null, // level
+				PermissionSet.NO_PERMISSIONS,
+				"command-tree-build",
+				Component.literal("command-tree-build"),
+				null, // server — exactly what Minecraft passes here
+				null); // entity
+
+		try {
+			CraftMagicCommand.mayConfigure(source);
+			System.out.printf("  PASS  %-46s  may pair = no%n", "null-server source (the join crash)");
+		} catch (Throwable err) {
+			failures++;
+			System.out.printf(
+					"  FAIL  %-46s  threw %s%n",
+					"null-server source (the join crash)",
+					err.getClass().getSimpleName());
+		}
 	}
 
 	private static void check(

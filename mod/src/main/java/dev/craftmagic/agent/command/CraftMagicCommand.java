@@ -50,15 +50,27 @@ public final class CraftMagicCommand {
 	 * they can be granted it with {@code /op}. On a dedicated server nobody is the owner, so it
 	 * always falls through to the OP check.
 	 */
-	private static boolean mayConfigure(CommandSourceStack source) {
-		MinecraftServer server = source.getServer();
-		ServerPlayer player = source.getPlayer();
+	public static boolean mayConfigure(CommandSourceStack source) {
+		boolean operator = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source);
 
+		// NOT source.getServer(). Minecraft builds the command-tree packet it sends to a
+		// joining client by evaluating every `requires` against a synthetic source whose
+		// server is null (Commands$1.isRestricted, via PlayerList.placeNewPlayer). Touching
+		// it there threw, and because it threw *while placing the player*, the client was
+		// kicked with "Invalid player data" — an error naming neither the mod nor the cause,
+		// and one that looks exactly like a corrupted save.
+		//
+		// The mod's own reference is captured at SERVER_STARTED and is null only outside a
+		// world, where nothing can be configured anyway.
+		MinecraftServer server = CraftMagicMod.server();
+		if (server == null) return operator;
+
+		ServerPlayer player = source.getPlayer();
 		return mayConfigure(
 				server.isDedicatedServer(),
 				player != null,
 				player != null && server.isSingleplayerOwner(player.nameAndId()),
-				Commands.hasPermission(Commands.LEVEL_GAMEMASTERS).test(source));
+				operator);
 	}
 
 	/**

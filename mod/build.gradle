@@ -18,6 +18,23 @@ loom {
 			sourceSet sourceSets.client
 		}
 	}
+
+	runs {
+		client {
+			// Boot straight into a world instead of the main menu:
+			//
+			//   gradlew runClient -PjoinWorld=JoinTest       (a folder in mod/run/saves)
+			//
+			// Worth having as a first-class step. Joining a world is its own code path —
+			// PlayerList.placeNewPlayer builds the command tree with a synthetic source — and
+			// a mod can load, register commands and pass every RCON test while still throwing
+			// there, which the client reports as "Invalid player data" and looks like a
+			// corrupted save. Only an actual join exercises it.
+			if (project.hasProperty('joinWorld')) {
+				programArgs '--quickPlaySingleplayer', project.property('joinWorld').toString()
+			}
+		}
+	}
 }
 
 // Only the Fabric API modules we actually use, bundled into our jar with `include`

@@ -91,7 +91,7 @@ export function authRoutes(options: AuthRoutesOptions): FastifyPluginAsync {
 			return { email, password };
 		}
 
-		async function me(userId: string, email: string, dailyGenQuota: number) {
+		async function me(userId: string, email: string, dailyGenQuota: number, isAdmin: boolean) {
 			const used = quota ? await quota.usedToday(userId) : 0;
 			return {
 				user: {
@@ -100,6 +100,9 @@ export function authRoutes(options: AuthRoutesOptions): FastifyPluginAsync {
 					dailyGenQuota,
 					generationsUsedToday: used,
 					generationsLeftToday: Math.max(0, dailyGenQuota - used),
+					// Drives whether the UI offers the settings link at all. Not a security
+					// boundary — every admin route checks the flag server-side.
+					isAdmin,
 				},
 			};
 		}
@@ -124,7 +127,7 @@ export function authRoutes(options: AuthRoutesOptions): FastifyPluginAsync {
 			auth.setSessionCookie(request, reply, session.token);
 
 			app.log.info({ userId: user.id }, 'account created');
-			return reply.code(201).send(await me(user.id, user.email, user.dailyGenQuota));
+			return reply.code(201).send(await me(user.id, user.email, user.dailyGenQuota, user.isAdmin));
 		});
 
 		app.post('/api/auth/login', async (request, reply) => {
@@ -150,7 +153,7 @@ export function authRoutes(options: AuthRoutesOptions): FastifyPluginAsync {
 			const session = await store!.createSession(found.id, request.headers['user-agent'] ?? null);
 			auth.setSessionCookie(request, reply, session.token);
 
-			return me(found.id, found.email, found.dailyGenQuota);
+			return me(found.id, found.email, found.dailyGenQuota, found.isAdmin);
 		});
 
 		app.post('/api/auth/logout', async (request, reply) => {
@@ -165,7 +168,7 @@ export function authRoutes(options: AuthRoutesOptions): FastifyPluginAsync {
 		app.get('/api/me', async (request, reply) => {
 			const user = await auth.requireUser(request, reply);
 			if (!user) return;
-			return me(user.id, user.email, user.dailyGenQuota);
+			return me(user.id, user.email, user.dailyGenQuota, user.isAdmin);
 		});
 	};
 }

@@ -29,6 +29,7 @@ import { closeDb, initDb, type Db } from '../db/pool.js';
 import { generateRoutes } from '../generate/routes.js';
 import { GenerationQuota } from '../generate/quota.js';
 import { SpendLedger } from '../generate/spend.js';
+import { maskKey } from '../settings/store.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../../..');
@@ -123,8 +124,16 @@ export async function buildTestApp(db: Db, options: BuildTestAppOptions = {}): P
 				path.join(fs.mkdtempSync(path.join(repoRoot, 'node_modules/.cache-ic-test-')), 'ledger.json'),
 				100,
 			),
-			model: 'claude-sonnet-5',
-			apiKey: options.apiKey,
+			// Resolved the same way as production, minus the settings table: tests care
+			// whether a key is present, not where it came from.
+			resolveAi: async () => ({
+				provider: 'anthropic',
+				model: 'claude-sonnet-5',
+				apiKey: options.apiKey ?? null,
+				keySource: options.apiKey ? 'environment' : 'none',
+				anthropicKeyHint: options.apiKey ? maskKey(options.apiKey) : null,
+				openaiKeyHint: null,
+			}),
 			auth,
 			quota,
 		}),

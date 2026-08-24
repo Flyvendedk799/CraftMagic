@@ -51,7 +51,13 @@ export interface UseGeneration {
   /** Free — uses the token-counting endpoint, which is not billed. */
   requestEstimate: (prompt: string) => Promise<void>;
   clearEstimate: () => void;
-  generate: (prompt: string) => Promise<void>;
+  /**
+   * Generate a build, or refine one.
+   *
+   * Passing `refineOf` sends the whole existing program so the model edits it rather than
+   * inventing something new that merely matches a description.
+   */
+  generate: (prompt: string, refineOf?: unknown) => Promise<void>;
   cancel: () => void;
 }
 
@@ -112,7 +118,7 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
 
   const clearEstimate = useCallback(() => setEstimate(null), []);
 
-  const generate = useCallback(async (prompt: string) => {
+  const generate = useCallback(async (prompt: string, refineOf?: unknown) => {
     const trimmed = prompt.trim();
     if (!trimmed) return;
 
@@ -124,7 +130,7 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
       const response = await fetch('/api/generations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: trimmed }),
+        body: JSON.stringify({ prompt: trimmed, ...(refineOf ? { refineOf } : {}) }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {

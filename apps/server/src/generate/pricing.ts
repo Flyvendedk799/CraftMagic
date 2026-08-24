@@ -7,7 +7,13 @@
  * bites slightly early, which is the safe failure.
  */
 
-export type ModelId = 'claude-sonnet-5' | 'claude-opus-5' | 'claude-haiku-4-5';
+/**
+ * A model name. A plain string rather than a union because the provider and model are now
+ * chosen at runtime on the admin page, so the set is not known at compile time.
+ */
+export type ModelId = string;
+
+export type ProviderId = 'anthropic' | 'openai';
 
 export interface ModelPricing {
 	/** USD per million input tokens. */
@@ -16,13 +22,43 @@ export interface ModelPricing {
 	output: number;
 }
 
-/** USD per million tokens. Verify against https://anthropic.com/pricing before changing. */
-export const PRICING: Record<ModelId, ModelPricing> = {
+/** USD per million tokens. Verify against the provider's pricing page before changing. */
+export const PRICING: Record<string, ModelPricing> = {
 	// Sonnet 5 had promotional $2/$10 rates into 2026; budgeting uses the standard rates.
 	'claude-sonnet-5': { input: 3.0, output: 15.0 },
 	'claude-opus-5': { input: 5.0, output: 25.0 },
 	'claude-haiku-4-5': { input: 1.0, output: 5.0 },
+
+	'gpt-5': { input: 1.25, output: 10.0 },
+	'gpt-5-mini': { input: 0.25, output: 2.0 },
+	'gpt-4.1': { input: 2.0, output: 8.0 },
+	'gpt-4.1-mini': { input: 0.4, output: 1.6 },
+	'o4-mini': { input: 1.1, output: 4.4 },
 };
+
+/**
+ * What an unlisted model is assumed to cost.
+ *
+ * Deliberately expensive. A model can now be typed into a settings field, so the table will
+ * fall behind, and the budget guard must never be the thing that discovers it — guessing low
+ * would wave through a call costing several times the estimate. Guessing high only makes the
+ * ceiling bite early, which is recoverable. This is priced above every model listed above.
+ */
+export const UNKNOWN_MODEL_PRICING: ModelPricing = { input: 15.0, output: 75.0 };
+
+export function pricingFor(model: ModelId): ModelPricing {
+	return PRICING[model] ?? UNKNOWN_MODEL_PRICING;
+}
+
+/** True when the model is priced from the table rather than the pessimistic fallback. */
+export function isPricingKnown(model: ModelId): boolean {
+	return PRICING[model] !== undefined;
+}
+
+/** Which provider a model belongs to, inferred from its name. */
+export function providerOf(model: ModelId): ProviderId {
+	return model.startsWith('claude') ? 'anthropic' : 'openai';
+}
 
 /** Cache writes cost more than fresh input; cache reads cost a fraction of it. */
 const CACHE_WRITE_MULTIPLIER = 1.25;
@@ -44,7 +80,7 @@ export interface CostBreakdown {
 }
 
 export function costOf(model: ModelId, usage: TokenUsage): CostBreakdown {
-	const rates = PRICING[model];
+	const rates = pricingFor(model);
 	const perToken = (perMillion: number) => perMillion / 1_000_000;
 
 	const inputUsd = usage.input_tokens * perToken(rates.input);
@@ -70,7 +106,7 @@ export function costOf(model: ModelId, usage: TokenUsage): CostBreakdown {
  * *could* cost, not what a typical one does.
  */
 export function worstCaseCost(model: ModelId, estimatedInputTokens: number, maxTokens: number): number {
-	const rates = PRICING[model];
+	const rates = pricingFor(model);
 	return (estimatedInputTokens * rates.input + maxTokens * rates.output) / 1_000_000;
 }
 

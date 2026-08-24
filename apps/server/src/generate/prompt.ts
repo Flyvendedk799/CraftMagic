@@ -263,3 +263,39 @@ export function repairPrompt(issues: { path: string; code: string; message: stri
 		`program. Do not send a partial program or a diff.`,
 	].join('\n');
 }
+
+/**
+ * Ask for a change to an existing build rather than a new one.
+ *
+ * The whole program is sent back, not a description of it. It is a few KB — cheap next to a
+ * cached system prompt — and it is the only way the model can keep the parts nobody asked to
+ * change: the same palette roles, the same anchoring expressions, the same component order.
+ * Describing a build in prose and asking for it again produces a *different* building that
+ * happens to match the description, which is not what "make the roof steeper" means.
+ *
+ * The emphasis on returning everything is deliberate. Asked to modify a structure, a model
+ * will happily reply with only the components it touched, which expands to a house with
+ * nothing but a roof.
+ */
+export function refinePrompt(program: unknown, instruction: string): string {
+	return [
+		`Here is an existing build program:`,
+		``,
+		'```json',
+		JSON.stringify(program, null, 1),
+		'```',
+		``,
+		`Change it as follows:`,
+		``,
+		instruction,
+		``,
+		`Rules for this edit:`,
+		`- Call \`emit_build_program\` with the COMPLETE updated program, not a diff and not`,
+		`  only the parts you changed. Everything you omit disappears from the build.`,
+		`- Keep anything the instruction does not mention exactly as it is — the same palette`,
+		`  roles, the same coordinate expressions, the same component order.`,
+		`- Keep \`meta.name\` unless the change makes it wrong.`,
+		`- Preserve the resize-safe anchoring already in the program. If a wall is anchored`,
+		`  with \`max-1\`, it stays \`max-1\`; do not replace expressions with fixed numbers.`,
+	].join('\n');
+}

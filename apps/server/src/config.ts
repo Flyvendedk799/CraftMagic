@@ -14,6 +14,7 @@ export interface Config {
   webDist: string;
   databaseUrl: string | undefined;
   anthropicApiKey: string | undefined;
+  openaiApiKey: string | undefined;
   /** Model used for build generation. */
   anthropicModel: 'claude-sonnet-5' | 'claude-opus-5' | 'claude-haiku-4-5';
   /** Hard ceiling on Anthropic spend per calendar month, in USD. */
@@ -54,6 +55,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDist: env.WEB_DIST ?? path.join(repoRoot, 'apps/web/dist'),
     databaseUrl: env.DATABASE_URL,
     anthropicApiKey: env.ANTHROPIC_API_KEY,
+    openaiApiKey: env.OPENAI_API_KEY,
     anthropicModel: (env.CRAFTMAGIC_MODEL as Config['anthropicModel']) ?? 'claude-sonnet-5',
     // Defaults low on purpose. A missing or unparseable value must not mean "unlimited".
     monthlyBudgetUsd: parsePositive(env.ANTHROPIC_MONTHLY_BUDGET_USD, 1),

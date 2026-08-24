@@ -66,6 +66,9 @@ export async function initDb(
 	return pool;
 }
 
+/** Arbitrary but fixed: every CraftMagic server must pick the same number to serialise on. */
+const MIGRATION_LOCK_ID = 0x63_6d_61_67;
+
 async function migrate(db: pg.Pool, log: { info: (o: unknown, m?: string) => void }): Promise<void> {
 	await db.query(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -90,6 +93,24 @@ async function migrate(db: pg.Pool, log: { info: (o: unknown, m?: string) => voi
 		try {
 			// Each migration is one transaction, so a failure half-way leaves nothing behind.
 			await client.query('BEGIN');
+
+			// Serialise across processes. Two servers starting together — or, in this repo,
+			// parallel test workers — otherwise run `CREATE TABLE` for the same table at the
+			// same moment and one dies on a duplicate key in pg_type, which reads like a
+			// corrupt migration rather than a race. The lock is transaction-scoped, so it is
+			// released by the COMMIT or ROLLBACK below whatever happens.
+			await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID]);
+
+			// Re-checked inside the lock: the process that held it first may have applied this
+			// very migration while this one was waiting, and the list above is now stale.
+			const { rowCount } = await client.query('SELECT 1 FROM schema_migrations WHERE name = $1', [
+				file,
+			]);
+			if (rowCount) {
+				await client.query('COMMIT');
+				continue;
+			}
+
 			await client.query(sql);
 			await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
 			await client.query('COMMIT');

@@ -12,7 +12,6 @@
  *  - exactly one repair round is allowed, ever
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import {
 	expand,
 	type BuildProgram,
@@ -20,16 +19,25 @@ import {
 	type ExpandResult,
 } from '@craftmagic/core';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
-import { repairPrompt, systemPrompt } from './prompt.js';
+import { refinePrompt, repairPrompt, systemPrompt } from './prompt.js';
 import { schemaIssues } from './validate.js';
 import type { ModelId } from './pricing.js';
-import { costOf } from './pricing.js';
+import type { Provider, ProviderSession } from './providers.js';
+import { TOOL_NAME } from './providers.js';
 import type { SpendLedger } from './spend.js';
 
-export const TOOL_NAME = 'emit_build_program';
+export { TOOL_NAME } from './providers.js';
 
 export interface GenerateOptions {
 	prompt: string;
+	/**
+	 * Refine this program instead of inventing one.
+	 *
+	 * The whole program goes back to the model, which is what lets "make the roof steeper"
+	 * keep the same palette, anchoring and component order rather than producing a different
+	 * building that merely matches a description.
+	 */
+	refineOf?: BuildProgram;
 	model?: ModelId;
 	/** Lower effort means less thinking and fewer tokens. Meaningful on cost. */
 	effort?: 'low' | 'medium' | 'high';
@@ -87,7 +95,7 @@ const DEFAULT_MODEL: ModelId = 'claude-sonnet-5';
 const DEFAULT_MAX_TOKENS = 16_000;
 
 export interface PipelineDeps {
-	client: Anthropic;
+	provider: Provider;
 	ledger: SpendLedger;
 }
 
@@ -99,85 +107,52 @@ export async function generateBuild(
 	const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 	const system = systemPrompt();
 
+	// A refine sends the existing program back as well, which is a few thousand tokens the
+	// guard must not overlook — otherwise the ceiling is computed against the wrong call.
+	const userContent = options.refineOf
+		? refinePrompt(options.refineOf, options.prompt)
+		: options.prompt;
+
 	// Rough token estimate for the guard: ~3.8 chars per token is close enough, and the
 	// guard's job is to be conservative rather than exact.
-	const estimatedInput = Math.ceil((system.length + options.prompt.length) / 3.8) + 500;
+	const estimatedInput = Math.ceil((system.length + userContent.length) / 3.8) + 500;
 	deps.ledger.assertCanAfford(model, estimatedInput, maxTokens);
 
-	const tools: Anthropic.Tool[] = [
-		{
-			name: TOOL_NAME,
-			description:
-				'Emit the complete build program for the requested structure. This is the only way to respond. ' +
-				'The tool input IS the program object itself — its top-level keys are version, meta, size, ' +
-				'palette and components. Do not nest it inside any wrapper object.',
-			input_schema: schema as unknown as Anthropic.Tool.InputSchema,
-			// NOT strict: true. Strict tool use rejects this schema outright — group children
-			// are components, which is a circular `$ref` that strict mode does not support.
-			// The schema is still enforced, just on our side: ajv below checks structure and
-			// the expander checks semantics, and both feed the single repair round.
-		},
-	];
-
-	const messages: Anthropic.MessageParam[] = [
-		{ role: 'user', content: options.prompt },
-	];
+	const session = deps.provider.session({
+		model,
+		system,
+		schema,
+		maxTokens,
+		...(options.effort ? { effort: options.effort } : {}),
+		...(options.signal ? { signal: options.signal } : {}),
+		onComponents: (components) => options.onProgress?.({ stage: 'emitting', components }),
+	});
 
 	let totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 
-	const callModel = async (purpose: string): Promise<Anthropic.Message> => {
-		options.onProgress?.({ stage: 'thinking' });
-
-		const stream = deps.client.messages.stream(
-			{
-				model,
-				max_tokens: maxTokens,
-				// Marking the system prompt cacheable is the single biggest cost lever here:
-				// it is identical on every generation, so after the first call this prefix
-				// bills at a tenth of its normal rate.
-				system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-				output_config: { effort: options.effort ?? 'medium' },
-				tools,
-				tool_choice: { type: 'tool', name: TOOL_NAME },
-				messages,
-			},
-			options.signal ? { signal: options.signal } : undefined,
-		);
-
-		// Coarse progress: count components as their JSON streams in, so the UI can show
-		// the build assembling rather than a spinner.
-		let seen = 0;
-		stream.on('inputJson', (partial: string) => {
-			const count = (partial.match(/"type"\s*:/g) ?? []).length;
-			if (count > seen) {
-				seen = count;
-				options.onProgress?.({ stage: 'emitting', components: count });
-			}
-		});
-
-		const message = await stream.finalMessage();
-
-		const entry = deps.ledger.record(model, purpose, message.usage);
+	const record = (reply: ProviderReplyLike, purpose: string) => {
+		const entry = deps.ledger.record(model, purpose, reply.usage);
 		totals = {
-			input: totals.input + message.usage.input_tokens,
-			output: totals.output + message.usage.output_tokens,
-			cacheRead: totals.cacheRead + (message.usage.cache_read_input_tokens ?? 0),
-			cacheWrite: totals.cacheWrite + (message.usage.cache_creation_input_tokens ?? 0),
+			input: totals.input + reply.usage.input_tokens,
+			output: totals.output + reply.usage.output_tokens,
+			cacheRead: totals.cacheRead + (reply.usage.cache_read_input_tokens ?? 0),
+			cacheWrite: totals.cacheWrite + (reply.usage.cache_creation_input_tokens ?? 0),
 			cost: totals.cost + entry.costUsd,
 		};
-		return message;
 	};
 
-	const first = await callModel('generate');
-	let toolUse = findToolUse(first);
-	if (!toolUse) {
+	options.onProgress?.({ stage: 'thinking' });
+	const first = await session.emit(userContent);
+	record(first, options.refineOf ? 'refine' : 'generate');
+
+	if (first.input === undefined) {
 		throw new GenerationError(
-			`the model did not call ${TOOL_NAME} (stop_reason: ${first.stop_reason})`,
+			`the model did not call ${TOOL_NAME} (${first.noToolCallReason ?? 'no tool call'})`,
 		);
 	}
 
 	options.onProgress?.({ stage: 'validating' });
-	let program = unwrapProgram(toolUse.input) as BuildProgram;
+	let program = unwrapProgram(first.input) as BuildProgram;
 	options.onProgram?.(program, 'generate');
 	let structural = schemaIssues(program);
 	let expansion = expand(program);
@@ -189,24 +164,13 @@ export async function generateBuild(
 	if (problems.length > 0) {
 		options.onProgress?.({ stage: 'repairing', issues: problems.length });
 
-		messages.push({ role: 'assistant', content: first.content });
-		messages.push({
-			role: 'user',
-			content: [
-				{
-					type: 'tool_result',
-					tool_use_id: toolUse.id,
-					content: repairPrompt(problems),
-					is_error: true,
-				},
-			],
-		});
-
 		deps.ledger.assertCanAfford(model, estimatedInput * 2, maxTokens);
-		const second = await callModel('repair');
-		const repairedUse = findToolUse(second);
-		if (repairedUse) {
-			const candidate = unwrapProgram(repairedUse.input) as BuildProgram;
+		options.onProgress?.({ stage: 'thinking' });
+		const second = await session.repair(repairPrompt(problems));
+		record(second, 'repair');
+
+		if (second.input !== undefined) {
+			const candidate = unwrapProgram(second.input) as BuildProgram;
 			options.onProgram?.(candidate, 'repair');
 			const candidateStructural = schemaIssues(candidate);
 			const candidateExpansion = expand(candidate);
@@ -218,7 +182,6 @@ export async function generateBuild(
 				structural = candidateStructural;
 				expansion = candidateExpansion;
 				problems = candidateProblems;
-				toolUse = repairedUse;
 			}
 			repaired = true;
 		}
@@ -248,12 +211,6 @@ export async function generateBuild(
 			costUsd: totals.cost,
 		},
 	};
-}
-
-function findToolUse(message: Anthropic.Message): Anthropic.ToolUseBlock | undefined {
-	return message.content.find(
-		(block): block is Anthropic.ToolUseBlock => block.type === 'tool_use' && block.name === TOOL_NAME,
-	);
 }
 
 function looksLikeProgram(value: unknown): value is BuildProgram {
@@ -304,4 +261,14 @@ export function unwrapProgram(input: unknown): unknown {
 }
 
 /** Re-export so callers can price a hypothetical call without importing pricing directly. */
-export { costOf };
+export { costOf } from './pricing.js';
+
+/** Just the parts of a provider reply the ledger needs. */
+interface ProviderReplyLike {
+	usage: {
+		input_tokens: number;
+		output_tokens: number;
+		cache_creation_input_tokens?: number | null;
+		cache_read_input_tokens?: number | null;
+	};
+}

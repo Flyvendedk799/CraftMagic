@@ -19,6 +19,8 @@ export interface UserRow {
 	id: string;
 	email: string;
 	dailyGenQuota: number;
+	/** May change the AI provider and its key. The first account to register gets it. */
+	isAdmin: boolean;
 }
 
 export interface CreatedSession {
@@ -52,14 +54,28 @@ export class AuthStore {
 	 */
 	async createUser(email: string, passwordHash: string): Promise<UserRow | null> {
 		try {
-			const { rows } = await this.db.query<{ id: string; email: string; daily_gen_quota: number }>(
-				`INSERT INTO users (email, password_hash)
-				 VALUES ($1, $2)
-				 RETURNING id, email, daily_gen_quota`,
+			// The first account to register becomes the admin. On a fresh install there is
+			// nobody to grant it, and a bootstrap password in the environment is one more
+			// secret that tends to stay at its default. Evaluated inside the INSERT so it
+			// cannot disagree with the row being written.
+			const { rows } = await this.db.query<{
+				id: string;
+				email: string;
+				daily_gen_quota: number;
+				is_admin: boolean;
+			}>(
+				`INSERT INTO users (email, password_hash, is_admin)
+				 VALUES ($1, $2, NOT EXISTS (SELECT 1 FROM users))
+				 RETURNING id, email, daily_gen_quota, is_admin`,
 				[email, passwordHash],
 			);
 			const row = rows[0]!;
-			return { id: row.id, email: row.email, dailyGenQuota: row.daily_gen_quota };
+			return {
+				id: row.id,
+				email: row.email,
+				dailyGenQuota: row.daily_gen_quota,
+				isAdmin: row.is_admin,
+			};
 		} catch (err) {
 			if ((err as { code?: string }).code === UNIQUE_VIOLATION) return null;
 			throw err;
@@ -73,13 +89,17 @@ export class AuthStore {
 			email: string;
 			password_hash: string;
 			daily_gen_quota: number;
-		}>(`SELECT id, email, password_hash, daily_gen_quota FROM users WHERE email = $1`, [email]);
+			is_admin: boolean;
+		}>(`SELECT id, email, password_hash, daily_gen_quota, is_admin FROM users WHERE email = $1`, [
+			email,
+		]);
 		const row = rows[0];
 		if (!row) return null;
 		return {
 			id: row.id,
 			email: row.email,
 			dailyGenQuota: row.daily_gen_quota,
+			isAdmin: row.is_admin,
 			passwordHash: row.password_hash,
 		};
 	}
@@ -98,8 +118,13 @@ export class AuthStore {
 	}
 
 	async userBySessionToken(token: string): Promise<UserRow | null> {
-		const { rows } = await this.db.query<{ id: string; email: string; daily_gen_quota: number }>(
-			`SELECT u.id, u.email, u.daily_gen_quota
+		const { rows } = await this.db.query<{
+			id: string;
+			email: string;
+			daily_gen_quota: number;
+			is_admin: boolean;
+		}>(
+			`SELECT u.id, u.email, u.daily_gen_quota, u.is_admin
 			 FROM sessions s
 			 JOIN users u ON u.id = s.user_id
 			 WHERE s.token_hash = $1 AND s.expires_at > now()`,
@@ -107,7 +132,12 @@ export class AuthStore {
 		);
 		const row = rows[0];
 		if (!row) return null;
-		return { id: row.id, email: row.email, dailyGenQuota: row.daily_gen_quota };
+		return {
+			id: row.id,
+			email: row.email,
+			dailyGenQuota: row.daily_gen_quota,
+			isAdmin: row.is_admin,
+		};
 	}
 
 	async deleteSession(token: string): Promise<void> {

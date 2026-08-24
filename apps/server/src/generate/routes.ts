@@ -28,16 +28,25 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import { generateBuild, GenerationError, TOOL_NAME } from './pipeline.js';
 import { systemPrompt } from './prompt.js';
-import { costOf, worstCaseCost, type ModelId } from './pricing.js';
+import { costOf, isPricingKnown, worstCaseCost } from './pricing.js';
+import { providerFor, type Provider } from './providers.js';
 import type { GenerationQuota } from './quota.js';
+import type { AiSettings } from '../settings/store.js';
 import { BudgetExceededError, type SpendLedger } from './spend.js';
 import { GenerationStore } from './store.js';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
+import type { BuildProgram } from '@craftmagic/core';
 
 export interface GenerateRoutesOptions {
 	ledger: SpendLedger;
-	model: ModelId;
-	apiKey: string | undefined;
+	/**
+	 * The provider, model and key in force right now.
+	 *
+	 * Resolved per request rather than captured at boot, because an admin can change all three
+	 * from the settings page and a value read once at startup would keep the old key alive
+	 * until someone redeployed — which is most of the reason the settings page exists.
+	 */
+	resolveAi: () => Promise<AiSettings>;
 	maxTokens?: number;
 	auth: Auth;
 	/** Null when there is no database: the quota is off, the ledger is not. */
@@ -52,9 +61,19 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 	return async (app) => {
 		const store = new GenerationStore();
 		const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
-		// Constructed once: the client pools connections, and re-creating it per request
-		// would throw away keep-alive and the retry configuration.
-		const client = options.apiKey ? new Anthropic({ apiKey: options.apiKey }) : undefined;
+		// Cached by provider+key rather than rebuilt per request: an SDK client pools
+		// connections, and constructing one per request throws away keep-alive. Keying on the
+		// credential means a settings change swaps the client on the next request instead of
+		// needing a restart.
+		let cachedClient: { key: string; provider: Provider } | null = null;
+		const providerFor_ = (ai: AiSettings): Provider | null => {
+			if (!ai.apiKey) return null;
+			const key = `${ai.provider}:${ai.apiKey}`;
+			if (cachedClient?.key !== key) {
+				cachedClient = { key, provider: providerFor(ai.provider, ai.apiKey) };
+			}
+			return cachedClient.provider;
+		};
 
 		const spendSummary = () => {
 			const s = options.ledger.summary();
@@ -72,6 +91,31 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			const trimmed = prompt.trim();
 			if (trimmed.length === 0 || trimmed.length > MAX_PROMPT_LENGTH) return null;
 			return trimmed;
+		}
+
+		/**
+		 * The program a refine is editing.
+		 *
+		 * Three outcomes, kept distinct on purpose: absent (a normal generation), a usable
+		 * program, or `'invalid'`. Treating a malformed one as absent would quietly turn
+		 * "change this build" into "make a different build", losing the user's work with no
+		 * error to explain it.
+		 *
+		 * Only shape is checked here; the expander is the real validator, and it runs on the
+		 * result anyway.
+		 */
+		function readRefineOf(body: unknown): BuildProgram | 'invalid' | null {
+			const value = (body as { refineOf?: unknown } | null)?.refineOf;
+			if (value === undefined || value === null) return null;
+			if (
+				typeof value !== 'object' ||
+				!('components' in value) ||
+				!Array.isArray((value as { components: unknown }).components) ||
+				!('size' in value)
+			) {
+				return 'invalid';
+			}
+			return value as BuildProgram;
 		}
 
 		app.get('/api/spend', async () => spendSummary());
@@ -96,9 +140,10 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 		}
 
 		app.post('/api/generations/estimate', async (request, reply) => {
-			if (!client) return reply.code(503).send({ error: 'no_api_key' });
-			// Free to the caller, but it still reaches Anthropic and still consumes a rate
-			// limit shared with the paid path.
+			const ai = await options.resolveAi();
+			if (!ai.apiKey) return reply.code(503).send({ error: 'no_api_key' });
+			// Free to the caller, but it still reaches the provider and consumes a rate limit
+			// shared with the paid path.
 			if (!(await payingUser(request, reply))) return;
 
 			const prompt = readPrompt(request.body);
@@ -106,40 +151,60 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 				return reply.code(400).send({ error: 'bad_prompt', maxLength: MAX_PROMPT_LENGTH });
 			}
 
-			// count_tokens is not billed, so the UI can price every keystroke-completed prompt.
-			const counted = await client.messages.countTokens({
-				model: options.model,
-				system: [{ type: 'text', text: systemPrompt() }],
-				tools: [
-					{
-						name: TOOL_NAME,
-						description: 'Emit the complete build program for the requested structure.',
-						input_schema: schema as unknown as Anthropic.Tool.InputSchema,
-					},
-				],
-				messages: [{ role: 'user', content: prompt }],
-			});
+			const system = systemPrompt();
+			let inputTokens: number;
+			let exact: boolean;
+
+			if (ai.provider === 'anthropic') {
+				// count_tokens is not billed, so the UI can price every prompt for free.
+				const counted = await new Anthropic({ apiKey: ai.apiKey }).messages.countTokens({
+					model: ai.model,
+					system: [{ type: 'text', text: system }],
+					tools: [
+						{
+							name: TOOL_NAME,
+							description: 'Emit the complete build program for the requested structure.',
+							input_schema: schema as unknown as Anthropic.Tool.InputSchema,
+						},
+					],
+					messages: [{ role: 'user', content: prompt }],
+				});
+				inputTokens = counted.input_tokens;
+				exact = true;
+			} else {
+				// OpenAI has no free token-counting endpoint, and calling the model to find out
+				// what a call costs would defeat the point. ~3.8 chars per token, rounded up,
+				// plus the schema — an estimate that errs high, which is the safe direction.
+				inputTokens = Math.ceil((system.length + prompt.length + JSON.stringify(schema).length) / 3.8);
+				exact = false;
+			}
 
 			const typicalOutput = 5000;
 			return {
-				model: options.model,
-				inputTokens: counted.input_tokens,
-				firstCallUsd: costOf(options.model, {
-					input_tokens: counted.input_tokens,
+				provider: ai.provider,
+				model: ai.model,
+				inputTokens,
+				/** False when the count is a local approximation rather than the provider's own. */
+				exact,
+				pricingKnown: isPricingKnown(ai.model),
+				firstCallUsd: costOf(ai.model, {
+					input_tokens: inputTokens,
 					output_tokens: typicalOutput,
 				}).totalUsd,
-				cachedCallUsd: costOf(options.model, {
+				cachedCallUsd: costOf(ai.model, {
 					input_tokens: 120,
 					output_tokens: typicalOutput,
-					cache_read_input_tokens: counted.input_tokens,
+					cache_read_input_tokens: inputTokens,
 				}).totalUsd,
-				worstCaseUsd: worstCaseCost(options.model, counted.input_tokens, maxTokens),
+				worstCaseUsd: worstCaseCost(ai.model, inputTokens, maxTokens),
 				spend: spendSummary(),
 			};
 		});
 
 		app.post('/api/generations', async (request, reply) => {
-			if (!client) return reply.code(503).send({ error: 'no_api_key' });
+			const ai = await options.resolveAi();
+			const provider = providerFor_(ai);
+			if (!provider) return reply.code(503).send({ error: 'no_api_key' });
 
 			const user = await payingUser(request, reply);
 			if (!user) return;
@@ -149,10 +214,21 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 				return reply.code(400).send({ error: 'bad_prompt', maxLength: MAX_PROMPT_LENGTH });
 			}
 
+			// A refine carries the program being changed. Rejected rather than ignored if it is
+			// not a program: silently generating something new would throw away the build the
+			// user was working on, which is the one outcome a refine must never produce.
+			const refineOf = readRefineOf(request.body);
+			if (refineOf === 'invalid') {
+				return reply.code(400).send({
+					error: 'bad_refine',
+					message: 'refineOf must be a build program object',
+				});
+			}
+
 			// Refuse before creating a generation, so an over-budget request fails loudly
 			// here rather than as an error event moments later.
 			try {
-				options.ledger.assertCanAfford(options.model, 12_000, maxTokens);
+				options.ledger.assertCanAfford(ai.model, refineOf ? 20_000 : 12_000, maxTokens);
 			} catch (err) {
 				if (err instanceof BudgetExceededError) {
 					return reply.code(402).send({ error: 'budget_exceeded', message: err.message, spend: spendSummary() });
@@ -177,13 +253,15 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			// Recorded before the model is called, and counted whatever happens to it. A
 			// generation that fails still cost money and still has to count against the quota,
 			// or a prompt that reliably fails validation becomes free and unlimited.
-			const recordId = await quota.start(user.id, prompt, options.model);
+			const recordId = await quota.start(user.id, prompt, ai.model);
 
 			const generation = store.create(prompt);
 			// Bound after the guard above: TypeScript will not carry the null-check narrowing
 			// into a hoisted function declaration, since one could be called from anywhere.
 			const brief: string = prompt;
-			const anthropic = client;
+			const chosen = provider;
+			const model = ai.model;
+			const refining = refineOf;
 
 			// Deliberately not awaited: the response returns an id immediately and progress
 			// arrives over SSE.
@@ -193,10 +271,11 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			async function runGeneration(): Promise<void> {
 				try {
 					const result = await generateBuild(
-						{ client: anthropic, ledger: options.ledger },
+						{ provider: chosen, ledger: options.ledger },
 						{
 							prompt: brief,
-							model: options.model,
+							...(refining ? { refineOf: refining } : {}),
+							model,
 							effort: 'medium',
 							maxTokens,
 							onProgress: (event) => {

@@ -19,12 +19,26 @@ export interface PromptPanelProps {
   onEstimate: (prompt: string) => void;
   onGenerate: (prompt: string) => void;
   onCancel: () => void;
+  /**
+   * Offer refining the build on screen instead of replacing it.
+   *
+   * Null when there is nothing to refine — an empty plot, or a hand-edited build with no
+   * program behind it to send.
+   */
+  onRefine: ((instruction: string) => void) | null;
 }
 
 const EXAMPLES = [
   'a small stone windmill with a wooden roof',
   'a fishing hut on stilts with a jetty',
   'a round watchtower with battlements',
+];
+
+/** Edits rather than subjects: a refine box wants a change, not another description. */
+const REFINEMENTS = [
+  'make it twice as tall',
+  'add a balcony on the south side',
+  'swap the walls for dark oak',
 ];
 
 function usd(amount: number): string {
@@ -56,6 +70,7 @@ export function PromptPanel({
   onEstimate,
   onGenerate,
   onCancel,
+  onRefine,
 }: PromptPanelProps) {
   const auth = useAuth();
   const [prompt, setPrompt] = useState('');
@@ -68,7 +83,7 @@ export function PromptPanel({
 
   return (
     <section className="hud prompt" data-signed-in={signedIn}>
-      <h2 className="hud__section">Generate a build</h2>
+      <h2 className="hud__section">{onRefine ? 'Change this build' : 'Generate a build'}</h2>
 
       {auth.status === 'anonymous' && (
         <p className="prompt__notice">
@@ -85,18 +100,23 @@ export function PromptPanel({
         onChange={(event) => setPrompt(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && canSubmit) {
-            onGenerate(prompt);
+            if (onRefine) onRefine(prompt);
+            else onGenerate(prompt);
           }
         }}
-        placeholder="a small stone windmill with a wooden roof"
+        placeholder={
+          onRefine
+            ? 'make the roof steeper and add a chimney'
+            : 'a small stone windmill with a wooden roof'
+        }
         rows={3}
         maxLength={600}
         disabled={running}
-        aria-label="Describe the structure to build"
+        aria-label={onRefine ? 'Describe the change to make' : 'Describe the structure to build'}
       />
 
       <div className="prompt__examples">
-        {EXAMPLES.map((example) => (
+        {(onRefine ? REFINEMENTS : EXAMPLES).map((example) => (
           <button
             key={example}
             type="button"
@@ -117,6 +137,26 @@ export function PromptPanel({
           <button type="button" className="prompt__primary" onClick={onCancel}>
             Stop watching
           </button>
+        ) : onRefine ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onGenerate(prompt)}
+              disabled={!canSubmit || outOfBudget}
+              title="Start over from this description"
+            >
+              New build
+            </button>
+            <button
+              type="button"
+              className="prompt__primary"
+              onClick={() => onRefine(prompt)}
+              disabled={!canSubmit || outOfBudget}
+              title={outOfBudget ? 'Monthly budget reached' : 'Ctrl/Cmd + Enter'}
+            >
+              Refine this
+            </button>
+          </>
         ) : (
           <button
             type="button"

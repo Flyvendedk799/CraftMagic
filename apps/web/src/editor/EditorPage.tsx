@@ -139,6 +139,17 @@ export function EditorPage() {
   const session = useEditSession(build);
 
   const { grid, name } = build;
+
+  /**
+   * The program a refine would edit, or null when refining makes no sense.
+   *
+   * Null in two cases, both of which would otherwise silently become "generate something
+   * new": the empty plot has nothing to change, and a hand-edited build has no program behind
+   * it any more, so the model would be handed the pre-edit version and quietly discard the
+   * user's edits.
+   */
+  const refineTarget =
+    buildId !== BLANK_BUILD && !session.detached ? build.program : null;
   const topLayer = grid.size.y - 1;
   const layer = readLayer(params.get('layer'), topLayer);
 
@@ -570,6 +581,7 @@ export function EditorPage() {
         onEstimate={generation.requestEstimate}
         onGenerate={generation.generate}
         onCancel={generation.cancel}
+        onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
       />
 
       <aside className="hover-readout">

@@ -15,6 +15,8 @@ import { createAuth } from './auth/session.js';
 import { AuthStore } from './auth/store.js';
 import { initDb } from './db/pool.js';
 import { generateRoutes } from './generate/routes.js';
+import { adminRoutes } from './admin/routes.js';
+import { SettingsStore, maskKey, type AiSettings } from './settings/store.js';
 import { GenerationQuota } from './generate/quota.js';
 import { SpendLedger } from './generate/spend.js';
 
@@ -147,25 +149,54 @@ if (authStore) {
 }
 
 const ledger = new SpendLedger(config.spendLedgerPath, config.monthlyBudgetUsd);
-await app.register(
-  generateRoutes({
-    ledger,
+const settings = db ? new SettingsStore(db, config.sessionSecret) : null;
+
+/**
+ * The provider, model and key in force right now.
+ *
+ * Read per request rather than captured here, so a change on the admin page takes effect
+ * immediately. Without a database there are no settings, so the environment is the whole
+ * answer — which is also what a fresh install has before anyone has registered.
+ */
+const resolveAi = async (): Promise<AiSettings> => {
+  const env = {
+    ...(config.anthropicApiKey ? { anthropicKey: config.anthropicApiKey } : {}),
+    ...(config.openaiApiKey ? { openaiKey: config.openaiApiKey } : {}),
     model: config.anthropicModel,
-    apiKey: config.anthropicApiKey,
-    auth,
-    quota,
-  }),
+  };
+  if (!settings) {
+    const apiKey = env.anthropicKey ?? null;
+    return {
+      provider: 'anthropic',
+      model: env.model,
+      apiKey,
+      keySource: apiKey ? 'environment' : 'none',
+      anthropicKeyHint: apiKey ? maskKey(apiKey) : null,
+      openaiKeyHint: env.openaiKey ? maskKey(env.openaiKey) : null,
+    };
+  }
+  return settings.effective(env);
+};
+
+await app.register(generateRoutes({ ledger, resolveAi, auth, quota }));
+await app.register(
+  adminRoutes({ auth, authStore, settings, ledger, resolveAi }),
 );
 
-if (!config.anthropicApiKey) {
-  app.log.warn('ANTHROPIC_API_KEY not set — generation endpoints will return 503');
+const startupAi = await resolveAi();
+if (!startupAi.apiKey) {
+  app.log.warn(
+    'no AI key configured — generation returns 503 until one is set in /admin or the environment',
+  );
 } else {
   // Only checked when a key is present: without one nothing can be spent, so an unwritable
   // ledger is harmless and must not stop the editor, exports and guide from being served.
   ledger.assertWritable();
   app.log.info(
     {
-      model: config.anthropicModel,
+      provider: startupAi.provider,
+      model: startupAi.model,
+      keySource: startupAi.keySource,
       budgetUsd: config.monthlyBudgetUsd,
       spentUsd: ledger.spentThisMonth(),
       ledger: ledger.path,

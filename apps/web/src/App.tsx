@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { AdminPage } from './admin/AdminPage.js';
 import { EditorPage } from './editor/EditorPage.js';
 import { GuidePage } from './guide/GuidePage.js';
 import { LibraryPage } from './library/LibraryPage.js';
@@ -28,6 +29,7 @@ export function App() {
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/mod" element={<ModPage />} />
+        <Route path="/admin" element={<AdminPage />} />
         <Route path="/status" element={<StatusPage />} />
       </Routes>
     </BrowserRouter>

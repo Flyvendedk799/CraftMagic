@@ -20,6 +20,8 @@ export interface Account {
   dailyGenQuota: number;
   generationsUsedToday: number;
   generationsLeftToday: number;
+  /** Shows the settings link. The server checks this again on every admin route. */
+  isAdmin: boolean;
 }
 
 export type AuthState =

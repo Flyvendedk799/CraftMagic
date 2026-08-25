@@ -1,15 +1,57 @@
+/* The brand pack, as tokens. `public/brand/README.md` is the written spec; these are the
+   values it describes. Two layers on purpose:
+
+   `--brand-*` is the palette — the colours themselves, named after what they *are*. `--bg`,
+   `--accent`, `--ok` and the rest are roles — named after what they are *for*, and defined as
+   aliases of the palette. UI code asks for the role, so a brand revision changes one line here
+   instead of every rule that happened to hardcode mint. */
+
 :root {
+  --brand-void: #0b0e12;
+  --brand-mint: #6ee7b7;
+  --brand-grass: #4ade80;
+  --brand-amber: #fbbf24;
+  --brand-coral: #f87171;
+  /* The two darker faces of the mark, so anything built around the logo can reach for them. */
+  --brand-teal: #2f8f6f;
+  --brand-pine: #227a5c;
+  --brand-spark: #bff7e2;
+
+  --font-display: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+
+  /* The shell sits one step above Void: the landing page is the darkest surface in the
+     product, and the editor chrome reads as raised against it rather than merged with it. */
   --bg: #0f1216;
   --panel: #171b21;
   --border: #262c35;
   --text: #e6e9ee;
   --muted: #8b949e;
-  --ok: #4ade80;
-  --fail: #f87171;
-  --pending: #fbbf24;
-  --accent: #6ee7b7;
+  --ok: var(--brand-grass);
+  --fail: var(--brand-coral);
+  --pending: var(--brand-amber);
+  --accent: var(--brand-mint);
 
   color-scheme: dark;
+}
+
+/* The landing page is the one surface painted on Void rather than the shell. Set on the root
+   element so overscroll past the top or bottom of the page stays the same colour as the page —
+   a strip of a different dark grey at the edge of a rubber-band scroll reads as a rendering
+   bug. `LandingPage` adds and removes the class. */
+.is-landing {
+  background: var(--brand-void);
+  scroll-behavior: smooth;
+}
+
+.is-landing body {
+  background: var(--brand-void);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-landing {
+    scroll-behavior: auto;
+  }
 }
 
 * {

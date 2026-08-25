@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AccountPanel } from './AccountPanel.js';
 import { useAuth } from './auth.js';
 import { deleteBuild, listBuilds, renameBuild, type LibraryBuild } from './library.js';
@@ -27,6 +27,10 @@ type Listing =
 export function LibraryPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  // `?signup=1` is what the landing page's buttons carry. This page is where the account form
+  // lives, so it is also the sign-up destination — the flag only chooses which tab is open.
+  const [search] = useSearchParams();
+  const signingUp = search.get('signup') === '1';
   const [listing, setListing] = useState<Listing>({ status: 'loading' });
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -97,7 +101,7 @@ export function LibraryPage() {
           <h1 className="library__title">Library</h1>
           <p className="library__sub">Builds you have saved. They stay here across devices.</p>
         </div>
-        <Link className="library__back" to="/">
+        <Link className="library__back" to="/editor">
           ← Editor
         </Link>
       </header>
@@ -107,7 +111,15 @@ export function LibraryPage() {
             in `useState` on its first render, and on that render the session has not been
             fetched yet — so a computed value here would always resolve to false and the form
             would never appear. Signed in, the panel ignores it. */}
-        <AccountPanel initiallyOpen invitation="Sign in to keep your builds." />
+        <AccountPanel
+          initiallyOpen
+          initialMode={signingUp ? 'register' : 'login'}
+          invitation={
+            signingUp
+              ? 'Create an account to save builds, generate from a prompt, and send a bot into your world.'
+              : 'Sign in to keep your builds.'
+          }
+        />
       </section>
 
       {listing.status === 'error' && (
@@ -124,7 +136,7 @@ export function LibraryPage() {
 
           {ready && builds.length === 0 && (
             <p className="library__empty">
-              Nothing saved yet. Open a build in the <Link to="/">editor</Link> and press
+              Nothing saved yet. Open a build in the <Link to="/editor">editor</Link> and press
               “Save to library”.
             </p>
           )}
@@ -162,7 +174,7 @@ export function LibraryPage() {
                         type="button"
                         className="library__name"
                         title="Open in the editor"
-                        onClick={() => navigate(`/?build=${libraryBuildId(build.id)}`)}
+                        onClick={() => navigate(`/editor?build=${libraryBuildId(build.id)}`)}
                       >
                         {build.name}
                       </button>
@@ -183,7 +195,7 @@ export function LibraryPage() {
                       <div className="library__actions">
                         <button
                           type="button"
-                          onClick={() => navigate(`/?build=${libraryBuildId(build.id)}`)}
+                          onClick={() => navigate(`/editor?build=${libraryBuildId(build.id)}`)}
                         >
                           Open
                         </button>

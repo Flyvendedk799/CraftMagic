@@ -8,6 +8,31 @@
       name="description"
       content="Describe a Minecraft build and get it as a schematic, a step-by-step guide, or built in your world by an in-game bot."
     />
+    <meta name="theme-color" content="#0b0e12" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/brand/mark.svg" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CraftMagic" />
+    <meta property="og:title" content="CraftMagic — type it, watch it build" />
+    <meta
+      property="og:description"
+      content="Describe any structure and get it back as an editable 3D model — then export a schematic, a printable guide, or a bot that builds it in your world."
+    />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- Space Grotesk carries the headings, JetBrains Mono the prompts and counts. Preconnect
+         to both Google hosts, not just the first: the stylesheet and the font files it asks for
+         live on different origins, so without the second the fonts wait for a fresh handshake
+         after the CSS has already parsed. `display=swap` and a system fallback in both stacks
+         mean a blocked or slow font shows the wrong face, never no text. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <div id="root"></div>

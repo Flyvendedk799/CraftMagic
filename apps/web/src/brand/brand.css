@@ -1,0 +1,25 @@
+/* The logo lockup.
+
+   Just enough to set the mark and the wordmark on one baseline. Colour comes from the
+   surrounding text colour so the lockup inherits whatever surface it is dropped onto — the
+   *mark* is the fixed part of the brand, the wordmark is type. */
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.58em;
+  /* The gap and the wordmark scale together, so the lockup keeps its proportions at any size. */
+  font-size: 19px;
+}
+
+.logo__word {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1em;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.logo__word-accent {
+  color: var(--brand-mint);
+}

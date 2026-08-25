@@ -54,7 +54,7 @@ export function ModPage() {
             Installs once. After that, any build on this site can be sent straight into your world.
           </p>
         </div>
-        <Link className="modpage__back" to="/">
+        <Link className="modpage__back" to="/editor">
           ← Back to the editor
         </Link>
       </header>

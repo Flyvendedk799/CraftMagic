@@ -7,6 +7,7 @@ import dev.craftmagic.agent.config.ModConfig;
 import dev.craftmagic.agent.job.JobManager;
 import dev.craftmagic.agent.net.AgentSocket;
 import dev.craftmagic.agent.net.Protocol;
+import dev.craftmagic.agent.wand.WandHandler;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -64,6 +65,10 @@ public class CraftMagicMod implements ModInitializer {
 				.orElse("unknown");
 
 		CraftMagicCommand.register();
+		// Registered here rather than per-server because Fabric's interaction events and the
+		// payload registry are global and accept exactly one registration for the process.
+		// The wand's own state is torn down in shutdown().
+		WandHandler.register();
 		ServerLifecycleEvents.SERVER_STARTED.register(this::onServerStarted);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> shutdown());
 		// The job pipeline advances on the server thread, which is the only place block
@@ -169,6 +174,9 @@ public class CraftMagicMod implements ModInitializer {
 		// Cleared first: leaving a stale reference behind would keep a whole finished world
 		// alive, and in singleplayer a player leaves and rejoins worlds all session.
 		server = null;
+		// Marked spots name a world that is going away; keeping them would hold its players
+		// alive, and in singleplayer a session moves between worlds all evening.
+		WandHandler.clear();
 		if (jobs != null) {
 			jobs.shutdown();
 			jobs = null;

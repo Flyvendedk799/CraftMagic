@@ -60,9 +60,11 @@ loom {
 // the client crashed on startup because of a renderer we were not using. Bundling a module is
 // not free: every one injects its mixins into the game whether the mod calls it or not.
 def fabricApiModules = [
-		'fabric-api-base',            // Event — required by both modules below
-		'fabric-command-api-v2',      // /craftmagic ...
+		'fabric-api-base',            // Event — required by every module below
+		'fabric-command-api-v2',      // /craftmagic ..., /wand
 		'fabric-lifecycle-events-v1', // server start/stop, per-tick block placement
+		'fabric-events-interaction-v0', // the wand: right-click marks, punch builds
+		'fabric-networking-api-v1',   // the wand: "I punched air", which vanilla does not send
 ]
 
 dependencies {
@@ -118,6 +120,21 @@ tasks.register('verifySchematic', JavaExec) {
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'dev.craftmagic.agent.tools.SchematicReadCheck'
 	args = [project.findProperty('schem') ?: '../out/oak-cottage.schem']
+}
+
+/**
+ * Check that a build lands under the block the wand marked. Rotation is the trap: a quarter
+ * turn swaps a schematic's width and length, so centring on the unrotated size slides the
+ * build sideways — silently, since nothing errors and the build still appears.
+ *
+ *   gradlew verifyPlacement
+ */
+tasks.register('verifyPlacement', JavaExec) {
+	group = 'verification'
+	description = 'Assert a build lands under the block the wand marked, at every rotation.'
+	dependsOn tasks.named('classes')
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'dev.craftmagic.agent.tools.PlacementCheck'
 }
 
 /**

@@ -3,6 +3,7 @@ package dev.craftmagic.agent.job;
 import com.google.gson.JsonObject;
 import dev.craftmagic.agent.build.BuildTask;
 import dev.craftmagic.agent.build.BuilderBot;
+import dev.craftmagic.agent.build.Footprint;
 import dev.craftmagic.agent.build.Schematic;
 import dev.craftmagic.agent.config.ModConfig;
 import dev.craftmagic.agent.net.AgentSocket;
@@ -165,7 +166,9 @@ public final class JobManager {
 							.append(Component.literal(arrived.schematic().width() + "×" + arrived.schematic().height()
 									+ "×" + arrived.schematic().length() + ", " + arrived.blockCount() + " blocks. ")
 									.withStyle(ChatFormatting.GRAY))
-							.append(Component.literal("Stand where you want it and run /craftmagic build")
+							.append(Component.literal(
+											"Right-click it into place with the wand, then punch the air. "
+													+ "(/craftmagic wand for one, or /craftmagic build to drop it where you stand.)")
 									.withStyle(ChatFormatting.YELLOW)));
 		}
 
@@ -210,6 +213,16 @@ public final class JobManager {
 		return awaitingPlacement == null ? null : awaitingPlacement.name();
 	}
 
+	/**
+	 * The build waiting to be placed, or null.
+	 *
+	 * <p>Exposed so the wand can outline the footprint before anything is committed — the
+	 * preview needs the schematic's size, and only this class knows it.
+	 */
+	public Schematic pendingSchematic() {
+		return awaitingPlacement == null ? null : awaitingPlacement.schematic();
+	}
+
 	public boolean isBuilding() {
 		return active != null;
 	}
@@ -224,11 +237,12 @@ public final class JobManager {
 		if (awaitingPlacement == null) return "no build is waiting — send one from the website first";
 
 		// Centred on the player and rising from the block they stand on, which is what
-		// "put it here" means to someone looking at the ground.
+		// "put it here" means to someone looking at the ground. Centring is rotation-aware:
+		// a quarter turn swaps the footprint's width and length, and centring on the
+		// unrotated size slid a long building out from under the player who aimed it.
 		Schematic schematic = awaitingPlacement.schematic();
-		BlockPos origin = player
-				.blockPosition()
-				.offset(-schematic.width() / 2, 0, -schematic.length() / 2);
+		BlockPos origin =
+				Footprint.origin(schematic.width(), schematic.length(), rotation, player.blockPosition());
 		return startBuildAt(player.level(), origin, rotation);
 	}
 

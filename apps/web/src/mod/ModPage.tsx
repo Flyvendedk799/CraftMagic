@@ -125,8 +125,9 @@ export function ModPage() {
             appears on the site within a second or two.
           </li>
           <li>
-            Click <strong>Build here</strong>, then in game run <code>/craftmagic build</code>{' '}
-            where you want it. A builder bot appears and places the blocks.
+            Click <strong>Build here</strong>, then in game type <code>/wand</code>. Right-click
+            the ground where you want it — a glowing outline shows the footprint — and punch the
+            air to build. A builder bot appears and places the blocks.
           </li>
         </ol>
         <p className="modpage__note">
@@ -144,9 +145,19 @@ export function ModPage() {
           <dd>Link this world to your account.</dd>
 
           <dt>
+            <code>/wand</code>
+          </dt>
+          <dd>
+            Get the magic wand. <strong>Right-click</strong> marks the spot,{' '}
+            <strong>sneak + right-click</strong> turns the build 90°, and{' '}
+            <strong>punching the air</strong> builds it. Nothing is placed until you punch, so
+            you can re-aim as many times as you like.
+          </dd>
+
+          <dt>
             <code>/craftmagic build</code>
           </dt>
-          <dd>Place the pending build at where you are standing.</dd>
+          <dd>Place the pending build where you are standing, without the wand.</dd>
 
           <dt>
             <code>/craftmagic place &lt;x&gt; &lt;y&gt; &lt;z&gt;</code>

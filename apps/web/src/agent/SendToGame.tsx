@@ -168,7 +168,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
       {send.kind === 'progress' && (
         <div className="agent__status">
           {send.status === 'previewing' ? (
-            <>Ready in game — run <code>/craftmagic build</code> where you want it.</>
+            <>Ready in game — right-click with your wand where you want it, then punch the air.</>
           ) : (
             <>
               Building… {send.placed.toLocaleString()} / {send.total.toLocaleString()}

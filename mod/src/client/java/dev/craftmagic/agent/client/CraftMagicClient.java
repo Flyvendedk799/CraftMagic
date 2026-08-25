@@ -3,7 +3,7 @@ package dev.craftmagic.agent.client;
 import dev.craftmagic.agent.net.WandPunchPayload;
 import dev.craftmagic.agent.wand.WandItem;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.player.ClientPreAttackCallback;
+import net.fabricmc.fabric.api.event.client.player.ClientPreAttackCallback;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.world.InteractionHand;
 import org.slf4j.Logger;

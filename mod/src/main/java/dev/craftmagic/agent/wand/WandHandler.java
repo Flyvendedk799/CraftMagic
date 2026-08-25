@@ -69,7 +69,7 @@ public final class WandHandler {
 	public static void register() {
 		// Common, not client-only: both sides must know the payload's shape, and the client
 		// runs the main entrypoint too.
-		PayloadTypeRegistry.playC2S().register(WandPunchPayload.TYPE, WandPunchPayload.CODEC);
+		PayloadTypeRegistry.serverboundPlay().register(WandPunchPayload.TYPE, WandPunchPayload.CODEC);
 
 		ServerPlayNetworking.registerGlobalReceiver(
 				WandPunchPayload.TYPE,
@@ -81,7 +81,7 @@ public final class WandHandler {
 			if (!holdingWand(player, hand)) return InteractionResult.PASS;
 			// SUCCESS on the client too, or the client runs the vanilla interaction locally and
 			// opens the chest you were aiming at while the server quietly marks the spot.
-			if (level.isClientSide) return InteractionResult.SUCCESS;
+			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			// The face you clicked, not the block itself: a build should sit on the ground, not
 			// inside it.
 			mark((ServerPlayer) player, hit.getBlockPos().relative(hit.getDirection()));
@@ -90,7 +90,7 @@ public final class WandHandler {
 
 		UseItemCallback.EVENT.register((player, level, hand) -> {
 			if (!holdingWand(player, hand)) return InteractionResult.PASS;
-			if (level.isClientSide) return InteractionResult.SUCCESS;
+			if (level.isClientSide()) return InteractionResult.SUCCESS;
 			// Right-clicking nothing — aimed at the sky, or out of reach. Fall back to the
 			// player's own feet, which is what /craftmagic build has always meant.
 			mark((ServerPlayer) player, player.blockPosition());
@@ -101,14 +101,14 @@ public final class WandHandler {
 		// anyone, including in creative where a left-click destroys a block instantly.
 		AttackBlockCallback.EVENT.register((player, level, hand, pos, direction) -> {
 			if (!holdingWand(player, hand)) return InteractionResult.PASS;
-			if (level.isClientSide) return InteractionResult.FAIL;
+			if (level.isClientSide()) return InteractionResult.FAIL;
 			punch((ServerPlayer) player);
 			return InteractionResult.FAIL;
 		});
 
 		AttackEntityCallback.EVENT.register((player, level, hand, entity, hit) -> {
 			if (!holdingWand(player, hand)) return InteractionResult.PASS;
-			if (level.isClientSide) return InteractionResult.FAIL;
+			if (level.isClientSide()) return InteractionResult.FAIL;
 			punch((ServerPlayer) player);
 			return InteractionResult.FAIL;
 		});

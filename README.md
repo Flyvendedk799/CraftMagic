@@ -397,6 +397,44 @@ Quota is per user per rolling 24 hours (`users.daily_gen_quota`, default 30) and
 and still runs first. A server that cannot enforce the quota refuses to generate rather than
 running unmetered.
 
+**M6 (the dashboard) — done.** `/dashboard` is home for anyone with an account, and the
+sign-in door for anyone without. It exists because the product is four things joined end to
+end — generate, edit, export, build in game — and every one of them lived on its own route, so
+the whole path was only visible to somebody who had already walked it.
+
+What is on it: a prompt box that hands its text to the editor as `?prompt=` (it never spends a
+generation itself — the editor shows the price first), four stat tiles, a three-step setup
+checklist that hides itself once finished, the most recent builds, the paired worlds with the
+pairing code, and the three ways a build leaves here.
+
+Nothing on it is a second implementation. Builds come from the same `listBuilds` the library
+uses, worlds from the same `useAgents` the editor's send panel uses, and the account form is
+the library's `AccountPanel`. A dashboard is a *view* over the product; the moment it grows its
+own copy of a feature, the two start disagreeing.
+
+`shell/AppNav` is the other half. Before it, each route knew about one or two of its
+neighbours by hand — the editor linked to `/mod` and `/status`, the library to the editor, the
+mod page back to the editor — and which links you got depended on which door you came in
+through. One component now owns the destinations, and the library and mod pages wear it in
+place of the single back-link they each used to carry. Not the editor or the guide: the editor
+is a full-viewport canvas with its own floating HUD, and the guide is a document that gets
+printed. Both link back instead.
+
+No new colour was introduced for any of it. What `styles.css` did grow is the vocabulary that
+was missing: `--sunken` and `--raised` name two surfaces that were already in the product as
+literals repeated across four stylesheets, and `--space-*`, `--radius-*` and `--text-*` are
+closed scales — the same idea `guide/tokens.css` applies to the printed booklet, where a size
+that is not on the scale is a bug rather than a decision. That is what makes a page assembled
+from eight independent cards read as one surface.
+
+The checklist's conditions are unit-tested (`dashboard/onboarding.test.ts`) rather than
+eyeballed, because every step's tick is a claim about the account that has to be *observable*
+from data already on the page. "Save your first build" keys off the library count and not
+`generationsUsedToday`, which is a rolling 24-hour number — a step keyed off that would tick on
+Monday and silently un-tick on Tuesday. Sending a build into a world is deliberately absent as
+a finale: no endpoint reports whether a job ever ran, and inferring it from "a world has been
+online" would tick for somebody who paired and then closed the game.
+
 ### Verifying changes
 
 Tests prove blocks land where asserted; they do not prove the result reads as a building.

@@ -9,10 +9,16 @@
  * `data-ready` and `data-count` on the root are the headless driver's readiness signal, the
  * same convention the editor uses: the list arrives over the network, so there is nothing
  * else for a screenshot to wait on.
+ *
+ * It is the *whole* list, and only that. The dashboard shows the handful of most recent builds
+ * alongside everything else about an account; this page is where you come when the handful is
+ * not the one you meant. Splitting them that way is what lets this stay a dense table instead
+ * of growing a summary nobody scrolls past.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { AppNav } from '../shell/AppNav.js';
 import { AccountPanel } from './AccountPanel.js';
 import { useAuth } from './auth.js';
 import { deleteBuild, listBuilds, renameBuild, type LibraryBuild } from './library.js';
@@ -27,8 +33,10 @@ type Listing =
 export function LibraryPage() {
   const auth = useAuth();
   const navigate = useNavigate();
-  // `?signup=1` is what the landing page's buttons carry. This page is where the account form
-  // lives, so it is also the sign-up destination — the flag only chooses which tab is open.
+  // `?signup=1` chooses which tab the account form opens on. The landing page's buttons carry
+  // it to the dashboard now, but the flag is still honoured here: links that pointed at this
+  // page are out in the world, in other people's bookmarks and messages, and they should still
+  // land on the form they promised.
   const [search] = useSearchParams();
   const signingUp = search.get('signup') === '1';
   const [listing, setListing] = useState<Listing>({ status: 'loading' });
@@ -95,134 +103,143 @@ export function LibraryPage() {
   const ready = auth.status !== 'loading' && listing.status !== 'loading';
 
   return (
-    <div className="library" data-ready={ready ? '1' : '0'} data-count={builds.length}>
-      <header className="library__head">
-        <div>
-          <h1 className="library__title">Library</h1>
-          <p className="library__sub">Builds you have saved. They stay here across devices.</p>
-        </div>
-        <Link className="library__back" to="/editor">
-          ← Editor
-        </Link>
-      </header>
+    <>
+      {/* Outside `.library`, which is a centred 60rem column: the bar is chrome and spans the
+          window. It also replaces the lone "← Editor" link this page used to carry. */}
+      <AppNav current="library" />
 
-      <section className="panel library__account">
-        {/* Unconditionally open, not `auth.status === 'anonymous'`: the panel captures this
-            in `useState` on its first render, and on that render the session has not been
-            fetched yet — so a computed value here would always resolve to false and the form
-            would never appear. Signed in, the panel ignores it. */}
-        <AccountPanel
-          initiallyOpen
-          initialMode={signingUp ? 'register' : 'login'}
-          invitation={
-            signingUp
-              ? 'Create an account to save builds, generate from a prompt, and send a bot into your world.'
-              : 'Sign in to keep your builds.'
-          }
-        />
-      </section>
-
-      {listing.status === 'error' && (
-        <p className="library__error" role="alert">
-          {listing.message}
-        </p>
-      )}
-
-      {auth.status === 'signedIn' && (
-        <section className="panel">
-          <h2>Saved builds</h2>
-
-          {listing.status === 'loading' && <p className="library__empty">Loading…</p>}
-
-          {ready && builds.length === 0 && (
-            <p className="library__empty">
-              Nothing saved yet. Open a build in the <Link to="/editor">editor</Link> and press
-              “Save to library”.
+      <div className="library" data-ready={ready ? '1' : '0'} data-count={builds.length}>
+        <header className="library__head">
+          <div>
+            <h1 className="library__title">Library</h1>
+            <p className="library__sub">
+              Every build you have saved. They stay here across devices —{' '}
+              <Link to="/dashboard">your dashboard</Link> shows the recent ones.
             </p>
-          )}
+          </div>
+        </header>
 
-          {builds.length > 0 && (
-            <ul className="library__list">
-              {builds.map((build) => (
-                <li key={build.id} className="library__row" data-build={build.id}>
-                  {renaming?.id === build.id ? (
-                    <form
-                      className="library__rename"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void onRename(build.id, renaming.name);
-                      }}
-                    >
-                      <input
-                        className="library__input"
-                        aria-label="New name"
-                        value={renaming.name}
-                        autoFocus
-                        maxLength={80}
-                        onChange={(event) => setRenaming({ id: build.id, name: event.target.value })}
-                      />
-                      <button type="submit" disabled={busy === build.id}>
-                        Save
-                      </button>
-                      <button type="button" onClick={() => setRenaming(null)}>
-                        Cancel
-                      </button>
-                    </form>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        className="library__name"
-                        title="Open in the editor"
-                        onClick={() => navigate(`/editor?build=${libraryBuildId(build.id)}`)}
+        {/* Only for someone who arrived signed out, which a direct link and an expired session
+            both do. Signed in, the bar above already says who you are and offers the way out, and
+            a second copy of that is furniture. The form stays here rather than redirecting to the
+            dashboard: this page is a destination people bookmark, and a redirect would lose the
+            build they came back for. */}
+        {auth.status === 'anonymous' && (
+          <section className="panel library__account">
+            <AccountPanel
+              initiallyOpen
+              initialMode={signingUp ? 'register' : 'login'}
+              invitation={
+                signingUp
+                  ? 'Create an account to save builds, generate from a prompt, and send a bot into your world.'
+                  : 'Sign in to keep your builds.'
+              }
+            />
+          </section>
+        )}
+
+        {listing.status === 'error' && (
+          <p className="library__error" role="alert">
+            {listing.message}
+          </p>
+        )}
+
+        {auth.status === 'signedIn' && (
+          <section className="panel">
+            <h2>Saved builds</h2>
+
+            {listing.status === 'loading' && <p className="library__empty">Loading…</p>}
+
+            {ready && builds.length === 0 && (
+              <p className="library__empty">
+                Nothing saved yet. Open a build in the <Link to="/editor">editor</Link> and press
+                “Save to library”.
+              </p>
+            )}
+
+            {builds.length > 0 && (
+              <ul className="library__list">
+                {builds.map((build) => (
+                  <li key={build.id} className="library__row" data-build={build.id}>
+                    {renaming?.id === build.id ? (
+                      <form
+                        className="library__rename"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void onRename(build.id, renaming.name);
+                        }}
                       >
-                        {build.name}
-                      </button>
-
-                      <dl className="library__meta">
-                        <dt>Size</dt>
-                        <dd>
-                          {build.sizeX}×{build.sizeY}×{build.sizeZ}
-                        </dd>
-                        <dt>Blocks</dt>
-                        <dd>{build.blockCount.toLocaleString()}</dd>
-                        <dt>Saved</dt>
-                        <dd>{formatDate(build.createdAt)}</dd>
-                        <dt>Kind</dt>
-                        <dd>{build.detached || !build.hasProgram ? 'edited' : 'resizable'}</dd>
-                      </dl>
-
-                      <div className="library__actions">
+                        <input
+                          className="library__input"
+                          aria-label="New name"
+                          value={renaming.name}
+                          autoFocus
+                          maxLength={80}
+                          onChange={(event) => setRenaming({ id: build.id, name: event.target.value })}
+                        />
+                        <button type="submit" disabled={busy === build.id}>
+                          Save
+                        </button>
+                        <button type="button" onClick={() => setRenaming(null)}>
+                          Cancel
+                        </button>
+                      </form>
+                    ) : (
+                      <>
                         <button
                           type="button"
+                          className="library__name"
+                          title="Open in the editor"
                           onClick={() => navigate(`/editor?build=${libraryBuildId(build.id)}`)}
                         >
-                          Open
+                          {build.name}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setRenaming({ id: build.id, name: build.name })}
-                        >
-                          Rename
-                        </button>
-                        <button
-                          type="button"
-                          className="library__delete"
-                          disabled={busy === build.id}
-                          onClick={() => void onDelete(build)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
-    </div>
+
+                        <dl className="library__meta">
+                          <dt>Size</dt>
+                          <dd>
+                            {build.sizeX}×{build.sizeY}×{build.sizeZ}
+                          </dd>
+                          <dt>Blocks</dt>
+                          <dd>{build.blockCount.toLocaleString()}</dd>
+                          <dt>Saved</dt>
+                          <dd>{formatDate(build.createdAt)}</dd>
+                          <dt>Kind</dt>
+                          <dd>{build.detached || !build.hasProgram ? 'edited' : 'resizable'}</dd>
+                        </dl>
+
+                        <div className="library__actions">
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/editor?build=${libraryBuildId(build.id)}`)}
+                          >
+                            Open
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRenaming({ id: build.id, name: build.name })}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            className="library__delete"
+                            disabled={busy === build.id}
+                            onClick={() => void onDelete(build)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+      </div>
+    </>
   );
 }
 

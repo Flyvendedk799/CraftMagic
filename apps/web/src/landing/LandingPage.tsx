@@ -19,6 +19,7 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Logo, Mark } from '../brand/Logo.js';
+import { useAuth } from '../library/auth.js';
 import { CountUp } from './CountUp.js';
 import { TypedPrompt } from './TypedPrompt.js';
 import { VoxelScene } from './VoxelScene.js';
@@ -28,15 +29,24 @@ import './landing.css';
 /**
  * Where every call to action goes.
  *
- * `?signup=1` opens the library's account panel on the "Create account" tab rather than on
+ * `?signup=1` opens the dashboard's account panel on the "Create account" tab rather than on
  * "Sign in". A button that says "Sign up free" and lands you on a sign-in form is a small lie
  * that costs a conversion.
+ *
+ * The dashboard rather than the library, which is where this used to point: signing up should
+ * land you on the page that shows what to do next, not on an empty list of builds you have not
+ * made yet.
  */
-const SIGN_UP = '/library?signup=1';
+const SIGN_UP = '/dashboard?signup=1';
 
 export function LandingPage() {
   const root = useRef<HTMLDivElement>(null);
   const hero = useRef<HTMLElement>(null);
+  // Only to relabel the calls to action. Someone already signed in who lands here from a
+  // bookmark should be offered the way back in, not asked to make a second account — "Sign up
+  // free" on a page you are signed into reads as the site not knowing who you are.
+  const auth = useAuth();
+  const signedIn = auth.status === 'signedIn';
 
   useRevealOnScroll(root);
   useScrollProgress(root);
@@ -79,8 +89,11 @@ export function LandingPage() {
           <a className="landing__nav-link" href="#editor">
             Editor
           </a>
-          <Link className="landing__cta landing__cta--small" to={SIGN_UP}>
-            Sign up free
+          <Link
+            className="landing__cta landing__cta--small"
+            to={signedIn ? '/dashboard' : SIGN_UP}
+          >
+            {signedIn ? 'Dashboard' : 'Sign up free'}
           </Link>
         </div>
       </nav>
@@ -114,8 +127,8 @@ export function LandingPage() {
             </p>
 
             <div className="landing__actions">
-              <Link className="landing__cta" to={SIGN_UP}>
-                Sign up free
+              <Link className="landing__cta" to={signedIn ? '/dashboard' : SIGN_UP}>
+                {signedIn ? 'Open your dashboard' : 'Sign up free'}
                 <ArrowIcon />
               </Link>
               <a className="landing__ghost" href="#how">
@@ -368,8 +381,8 @@ export function LandingPage() {
               world. Samples, the editor, and downloads are free to try — no account needed.
             </p>
             <div className="landing__actions landing__actions--centred">
-              <Link className="landing__cta" to={SIGN_UP}>
-                Create your account
+              <Link className="landing__cta" to={signedIn ? '/dashboard' : SIGN_UP}>
+                {signedIn ? 'Open your dashboard' : 'Create your account'}
                 <ArrowIcon />
               </Link>
               <Link className="landing__ghost" to="/editor">
@@ -392,7 +405,7 @@ export function LandingPage() {
           <a href="#how">How it works</a>
           <a href="#exports">Exports</a>
           <a href="#editor">Editor</a>
-          <Link to={SIGN_UP}>Sign up</Link>
+          <Link to={signedIn ? '/dashboard' : SIGN_UP}>{signedIn ? 'Dashboard' : 'Sign up'}</Link>
         </nav>
         <p className="landing__footer-domain">craftmagic.online</p>
       </footer>

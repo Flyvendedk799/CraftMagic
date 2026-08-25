@@ -97,7 +97,10 @@
   flex: 1;
 }
 
-.account__submit {
+/* Scoped to its container rather than left bare: `.account__actions button` above is a
+   descendant selector and outranks a lone class, so the primary action was quietly rendering
+   in the same grey as "Cancel" — the one button on the form that has to look like the answer. */
+.account__actions .account__submit {
   background: var(--accent);
   color: var(--bg);
   border-color: transparent;
@@ -198,10 +201,6 @@
   font-size: 0.875rem;
 }
 
-.library__back {
-  font-size: 0.875rem;
-  text-decoration: none;
-}
 
 .library__account {
   max-width: 24rem;

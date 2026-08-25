@@ -1,0 +1,181 @@
+/* The app bar.
+
+   Sticky and translucent rather than opaque: the dashboard scrolls under it, and a hard edge
+   sliding over a page of cards reads as two documents. Every value here is a token from
+   styles.css — the bar is the most repeated surface in the product and the one that would be
+   most obvious if it drifted from the rest. */
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+}
+
+.nav__inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-4);
+}
+
+.nav__brand {
+  display: inline-flex;
+  color: var(--text);
+  text-decoration: none;
+  flex: none;
+}
+
+.nav__links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav__links::-webkit-scrollbar {
+  display: none;
+}
+
+.nav__link {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-md);
+  color: var(--muted);
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+}
+
+.nav__link:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+
+/* The "you are here" state is a filled chip rather than an underline: the bar is dark and
+   dense, and an underline on one of six links is easy to miss on a first visit. */
+.nav__link[aria-current='page'] {
+  color: var(--text);
+  background: var(--raised);
+  font-weight: 600;
+}
+
+.nav__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  min-width: 0;
+}
+
+.nav__email {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.nav__signout {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+}
+
+.nav__cta {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nav__cta:hover {
+  filter: brightness(1.1);
+}
+
+/* --- quota pill ---------------------------------------------------------- */
+
+.nav__quota {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  color: var(--text);
+  text-decoration: none;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+}
+
+.nav__quota-bar {
+  display: block;
+  width: 3rem;
+  height: 4px;
+  background: var(--border);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.nav__quota-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width 200ms ease;
+}
+
+.nav__quota[data-level='low'] .nav__quota-bar span {
+  background: var(--pending);
+}
+
+.nav__quota[data-level='empty'] {
+  border-color: color-mix(in srgb, var(--fail) 45%, transparent);
+}
+
+.nav__quota[data-level='empty'] .nav__quota-bar span {
+  background: var(--fail);
+}
+
+.nav__quota-text {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.nav__quota-quota {
+  color: var(--muted);
+}
+
+/* A phone gets the links and the sign-out, and drops the two things that only repeat what is
+   already a tap away on the dashboard itself. */
+@media (max-width: 44rem) {
+  .nav__inner {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .nav__email,
+  .nav__quota-bar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav__quota-bar span {
+    transition: none;
+  }
+}

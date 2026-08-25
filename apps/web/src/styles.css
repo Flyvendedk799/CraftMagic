@@ -32,6 +32,43 @@
   --pending: var(--brand-amber);
   --accent: var(--brand-mint);
 
+  /* Two more surfaces, because "panel" alone is not enough vocabulary once a page has depth.
+     Both values were already in the product — as literals, repeated in four stylesheets — so
+     naming them is bookkeeping catching up with the design, not a new colour. `--sunken` is a
+     well *inside* a panel (a list row, an input, a code block); `--raised` is a control
+     sitting *on* one (a secondary button, a chip). */
+  --sunken: #12161b;
+  --raised: #212832;
+
+  /* --- scales ------------------------------------------------------------
+     Closed sets, the same idea `guide/tokens.css` applies to the booklet: a size that is not
+     on the scale is a bug rather than a decision. That is what makes a dashboard assembled
+     from a dozen unrelated cards read as one surface. */
+  --space-1: 0.35rem;
+  --space-2: 0.55rem;
+  --space-3: 0.85rem;
+  --space-4: 1.25rem;
+  --space-5: 1.75rem;
+  --space-6: 2.5rem;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --text-2xs: 0.6875rem; /* eyebrows, captions */
+  --text-xs: 0.75rem; /* chips, metadata */
+  --text-sm: 0.8125rem; /* labels, secondary controls */
+  --text-md: 0.875rem; /* secondary prose, buttons */
+  --text-base: 0.9375rem; /* body rows */
+  --text-lg: 1.25rem; /* card titles */
+  --text-xl: 1.75rem; /* stat values */
+  --text-display: 2rem; /* one page title */
+
+  /* Wide tracking is what makes a small uppercase label read as a label rather than as
+     shouting — one value, so every eyebrow in the app matches. */
+  --track-eyebrow: 0.14em;
+
   color-scheme: dark;
 }
 

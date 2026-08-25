@@ -76,7 +76,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
       <div className="agent">
         <p className="agent__note">
           Pairing a world attaches it to your account, so a stranger cannot build in it.{' '}
-          <Link className="agent__link" to="/library">
+          <Link className="agent__link" to="/dashboard">
             Sign in
           </Link>{' '}
           to pair one.

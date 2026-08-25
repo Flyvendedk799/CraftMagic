@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AdminPage } from './admin/AdminPage.js';
+import { DashboardPage } from './dashboard/DashboardPage.js';
 import { EditorPage } from './editor/EditorPage.js';
 import { GuidePage } from './guide/GuidePage.js';
 import { LandingPage } from './landing/LandingPage.js';
@@ -22,6 +23,10 @@ import { StatusPage } from './StatusPage.js';
  * `/library` opens a saved build the same way, with `?build=lib:<id>` — a library build is
  * not a separate kind of thing in the editor, only one that has to be fetched first.
  *
+ * `/dashboard` is home for anyone with an account, and the sign-in door for anyone without.
+ * Every other route reaches exactly one part of the product, and until this existed nothing
+ * showed how those parts join up. `?signup=1` opens its account form on the sign-up tab.
+ *
  * `/mod` is where "Send to game" sends anyone who does not have the mod yet. Without it the
  * pairing instructions name a command that cannot exist on their machine.
  */
@@ -30,6 +35,7 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/editor" element={<EditorPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />

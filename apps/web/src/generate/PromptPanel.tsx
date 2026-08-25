@@ -26,6 +26,14 @@ export interface PromptPanelProps {
    * program behind it to send.
    */
   onRefine: ((instruction: string) => void) | null;
+  /**
+   * Text to open with, handed over by the dashboard's launcher.
+   *
+   * Seeds the box; it never submits. A generation is charged to a daily allowance, and
+   * spending one because a route changed would be taking the user's turn on a click they made
+   * somewhere else, before they had seen the price.
+   */
+  initialPrompt?: string;
 }
 
 const EXAMPLES = [
@@ -71,9 +79,12 @@ export function PromptPanel({
   onGenerate,
   onCancel,
   onRefine,
+  initialPrompt = '',
 }: PromptPanelProps) {
   const auth = useAuth();
-  const [prompt, setPrompt] = useState('');
+  // Initial value only, deliberately: re-syncing to the prop would overwrite whatever the user
+  // had typed the moment anything above this re-rendered.
+  const [prompt, setPrompt] = useState(initialPrompt);
   const running = phase.kind !== 'idle' && phase.kind !== 'failed';
   // Every generation is billed to an account's daily allowance, so there is no such thing as
   // an anonymous one. Disabled up front rather than left to fail with a 401 after typing.
@@ -87,7 +98,7 @@ export function PromptPanel({
 
       {auth.status === 'anonymous' && (
         <p className="prompt__notice">
-          <Link className="hud__link" to="/library">
+          <Link className="hud__link" to="/dashboard">
             Sign in
           </Link>{' '}
           to generate — every build is charged to an account&rsquo;s daily allowance.

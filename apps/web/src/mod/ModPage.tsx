@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AppNav } from '../shell/AppNav.js';
 import './mod.css';
 
 interface ModManifest {
@@ -46,186 +47,191 @@ export function ModPage() {
   }, []);
 
   return (
-    <div className="modpage" data-ready={manifest || failed ? '1' : '0'}>
-      <header className="modpage__head">
-        <div>
-          <h1 className="modpage__title">Get the mod</h1>
-          <p className="modpage__sub">
-            Installs once. After that, any build on this site can be sent straight into your world.
-          </p>
-        </div>
-        <Link className="modpage__back" to="/editor">
-          ← Back to the editor
-        </Link>
-      </header>
+    <>
+      {/* Outside `.modpage`, which is a centred 52rem column: the bar is chrome and spans the
+          window. It replaces the single back-link this page used to carry, which could only
+          ever point at one of the several places somebody arrives here from. */}
+      <AppNav current="mod" />
 
-      <section className="panel modpage__download">
-        {manifest ? (
-          <>
-            <a className="modpage__button" href={manifest.file} download>
-              Download for Minecraft {manifest.minecraft}
-            </a>
-            <p className="modpage__meta">
-              v{manifest.version} · {formatBytes(manifest.bytes)} · Fabric
-              {manifest.loaderVersion ? ` ${manifest.loaderVersion}` : ''} · requires Java{' '}
-              {manifest.java ?? 25}
+      <div className="modpage" data-ready={manifest || failed ? '1' : '0'}>
+        <header className="modpage__head">
+          <div>
+            <h1 className="modpage__title">Get the mod</h1>
+            <p className="modpage__sub">
+              Installs once. After that, any build on this site can be sent straight into your world.
             </p>
-          </>
-        ) : failed ? (
-          <p className="modpage__error" role="alert">
-            The mod could not be listed just now. Try reloading — if it keeps happening, the
-            download has not been published yet.
+          </div>
+        </header>
+
+        <section className="panel modpage__download">
+          {manifest ? (
+            <>
+              <a className="modpage__button" href={manifest.file} download>
+                Download for Minecraft {manifest.minecraft}
+              </a>
+              <p className="modpage__meta">
+                v{manifest.version} · {formatBytes(manifest.bytes)} · Fabric
+                {manifest.loaderVersion ? ` ${manifest.loaderVersion}` : ''} · requires Java{' '}
+                {manifest.java ?? 25}
+              </p>
+            </>
+          ) : failed ? (
+            <p className="modpage__error" role="alert">
+              The mod could not be listed just now. Try reloading — if it keeps happening, the
+              download has not been published yet.
+            </p>
+          ) : (
+            <p className="modpage__meta">Looking up the current version…</p>
+          )}
+        </section>
+
+        <section className="panel">
+          <h2>Install it</h2>
+          <ol className="modpage__steps">
+            <li>
+              <strong>Install Fabric.</strong> Get the installer from{' '}
+              <a href="https://fabricmc.net/use/installer/" target="_blank" rel="noreferrer">
+                fabricmc.net
+              </a>{' '}
+              and run it for Minecraft {manifest?.minecraft ?? '26.2'}. This adds a “Fabric” profile
+              to your launcher — your normal Minecraft is untouched.
+            </li>
+            <li>
+              <strong>Drop the jar in your mods folder.</strong> Windows:{' '}
+              <code>%appdata%\.minecraft\mods</code> · macOS:{' '}
+              <code>~/Library/Application Support/minecraft/mods</code> · Linux:{' '}
+              <code>~/.minecraft/mods</code>. Create the folder if it isn’t there.
+            </li>
+            <li>
+              <strong>Launch the Fabric profile</strong> and open a world — single-player is fine.
+            </li>
+          </ol>
+          {/* Most Fabric mods require the Fabric API jar alongside them, so people reasonably
+              assume this one does too and go looking for it. Saying so plainly here saves a
+              support question and a wasted download. */}
+          <p className="modpage__note">
+            <strong>You do not need the Fabric API jar.</strong> Most mods ask you to install it
+            separately; this one bundles the parts it uses, so the file above is the only one that
+            goes in your mods folder. If you already run the full Fabric API, that keeps working —
+            Fabric just uses whichever version is newer.
           </p>
-        ) : (
-          <p className="modpage__meta">Looking up the current version…</p>
-        )}
-      </section>
+        </section>
 
-      <section className="panel">
-        <h2>Install it</h2>
-        <ol className="modpage__steps">
-          <li>
-            <strong>Install Fabric.</strong> Get the installer from{' '}
-            <a href="https://fabricmc.net/use/installer/" target="_blank" rel="noreferrer">
-              fabricmc.net
-            </a>{' '}
-            and run it for Minecraft {manifest?.minecraft ?? '26.2'}. This adds a “Fabric” profile
-            to your launcher — your normal Minecraft is untouched.
-          </li>
-          <li>
-            <strong>Drop the jar in your mods folder.</strong> Windows:{' '}
-            <code>%appdata%\.minecraft\mods</code> · macOS:{' '}
-            <code>~/Library/Application Support/minecraft/mods</code> · Linux:{' '}
-            <code>~/.minecraft/mods</code>. Create the folder if it isn’t there.
-          </li>
-          <li>
-            <strong>Launch the Fabric profile</strong> and open a world — single-player is fine.
-          </li>
-        </ol>
-        {/* Most Fabric mods require the Fabric API jar alongside them, so people reasonably
-            assume this one does too and go looking for it. Saying so plainly here saves a
-            support question and a wasted download. */}
-        <p className="modpage__note">
-          <strong>You do not need the Fabric API jar.</strong> Most mods ask you to install it
-          separately; this one bundles the parts it uses, so the file above is the only one that
-          goes in your mods folder. If you already run the full Fabric API, that keeps working —
-          Fabric just uses whichever version is newer.
-        </p>
-      </section>
+        <section className="panel">
+          <h2>Pair it with your account</h2>
+          <ol className="modpage__steps">
+            <li>
+              On your <Link to="/dashboard">dashboard</Link>, press <strong>Pair a world</strong>{' '}
+              — or open <strong>Send to game</strong> in the editor, which offers the same thing
+              next to a build. Either gives you a six-character code.
+            </li>
+            <li>
+              In Minecraft, type <code>/craftmagic pair ABC123</code> with that code. The world
+              appears on the site within a second or two.
+            </li>
+            <li>
+              Click <strong>Build here</strong>, then in game type <code>/wand</code>. Right-click
+              the ground where you want it — a glowing outline shows the footprint — and punch the
+              air to build. A builder bot appears and places the blocks.
+            </li>
+          </ol>
+          <p className="modpage__note">
+            Codes expire after ten minutes and can be used once. Pairing links that world to your
+            account, so nobody else can send builds to it.
+          </p>
+        </section>
 
-      <section className="panel">
-        <h2>Pair it with your account</h2>
-        <ol className="modpage__steps">
-          <li>
-            In the editor, open <strong>Send to game</strong> and choose{' '}
-            <strong>Pair a world…</strong>. You’ll get a six-character code.
-          </li>
-          <li>
-            In Minecraft, type <code>/craftmagic pair ABC123</code> with that code. The world
-            appears on the site within a second or two.
-          </li>
-          <li>
-            Click <strong>Build here</strong>, then in game type <code>/wand</code>. Right-click
-            the ground where you want it — a glowing outline shows the footprint — and punch the
-            air to build. A builder bot appears and places the blocks.
-          </li>
-        </ol>
-        <p className="modpage__note">
-          Codes expire after ten minutes and can be used once. Pairing links that world to your
-          account, so nobody else can send builds to it.
-        </p>
-      </section>
+        <section className="panel">
+          <h2>Commands</h2>
+          <dl className="modpage__commands">
+            <dt>
+              <code>/craftmagic pair &lt;code&gt;</code>
+            </dt>
+            <dd>Link this world to your account.</dd>
 
-      <section className="panel">
-        <h2>Commands</h2>
-        <dl className="modpage__commands">
-          <dt>
-            <code>/craftmagic pair &lt;code&gt;</code>
-          </dt>
-          <dd>Link this world to your account.</dd>
+            <dt>
+              <code>/wand</code>
+            </dt>
+            <dd>
+              Get the magic wand. <strong>Right-click</strong> marks the spot,{' '}
+              <strong>sneak + right-click</strong> turns the build 90°, and{' '}
+              <strong>punching the air</strong> builds it. Nothing is placed until you punch, so
+              you can re-aim as many times as you like.
+            </dd>
 
-          <dt>
-            <code>/wand</code>
-          </dt>
-          <dd>
-            Get the magic wand. <strong>Right-click</strong> marks the spot,{' '}
-            <strong>sneak + right-click</strong> turns the build 90°, and{' '}
-            <strong>punching the air</strong> builds it. Nothing is placed until you punch, so
-            you can re-aim as many times as you like.
-          </dd>
+            <dt>
+              <code>/craftmagic build</code>
+            </dt>
+            <dd>Place the pending build where you are standing, without the wand.</dd>
 
-          <dt>
-            <code>/craftmagic build</code>
-          </dt>
-          <dd>Place the pending build where you are standing, without the wand.</dd>
+            <dt>
+              <code>/craftmagic place &lt;x&gt; &lt;y&gt; &lt;z&gt;</code>
+            </dt>
+            <dd>Place it at exact coordinates instead.</dd>
 
-          <dt>
-            <code>/craftmagic place &lt;x&gt; &lt;y&gt; &lt;z&gt;</code>
-          </dt>
-          <dd>Place it at exact coordinates instead.</dd>
+            <dt>
+              <code>/craftmagic speed &lt;n&gt;</code>
+            </dt>
+            <dd>Blocks placed per second. <code>0</code> places everything at once.</dd>
 
-          <dt>
-            <code>/craftmagic speed &lt;n&gt;</code>
-          </dt>
-          <dd>Blocks placed per second. <code>0</code> places everything at once.</dd>
+            <dt>
+              <code>/craftmagic status</code>
+            </dt>
+            <dd>Show whether this world is paired, and to which server.</dd>
 
-          <dt>
-            <code>/craftmagic status</code>
-          </dt>
-          <dd>Show whether this world is paired, and to which server.</dd>
+            <dt>
+              <code>/craftmagic unpair</code>
+            </dt>
+            <dd>Forget the pairing and disconnect.</dd>
+          </dl>
+          <p className="modpage__note">
+            In your own world these all work as-is — you do <strong>not</strong> need to enable
+            cheats. On a dedicated server, pairing and settings need operator permission, since a
+            paired world can have blocks placed anywhere in it. Same on a world opened to LAN:
+            the host can pair it, and guests need <code>/op</code> first.
+          </p>
+        </section>
 
-          <dt>
-            <code>/craftmagic unpair</code>
-          </dt>
-          <dd>Forget the pairing and disconnect.</dd>
-        </dl>
-        <p className="modpage__note">
-          In your own world these all work as-is — you do <strong>not</strong> need to enable
-          cheats. On a dedicated server, pairing and settings need operator permission, since a
-          paired world can have blocks placed anywhere in it. Same on a world opened to LAN:
-          the host can pair it, and guests need <code>/op</code> first.
-        </p>
-      </section>
+        <section className="panel">
+          <h2>If something doesn’t work</h2>
+          <dl className="modpage__commands">
+            <dt>The command isn’t recognised</dt>
+            <dd>
+              Minecraft is running without the mod — check you launched the Fabric profile and that
+              the jar is in <code>mods</code>.
+            </dd>
 
-      <section className="panel">
-        <h2>If something doesn’t work</h2>
-        <dl className="modpage__commands">
-          <dt>The command isn’t recognised</dt>
-          <dd>
-            Minecraft is running without the mod — check you launched the Fabric profile and that
-            the jar is in <code>mods</code>.
-          </dd>
+            {/* Brigadier hides subcommands you lack permission for, and the resulting parse error
+                points at the word rather than saying "you are not an operator" — so this reads as
+                a broken command unless someone tells you otherwise. */}
+            <dt>
+              “Incorrect argument for command” on <code>pair</code>
+            </dt>
+            <dd>
+              On a dedicated server you need operator permission — Minecraft hides subcommands you
+              can’t use, and the error points at the word instead of explaining why. Ask an admin
+              for <code>/op</code>. In your own world this should just work; if it doesn’t, you’re
+              on an old build of the mod, so download it again.
+            </dd>
 
-          {/* Brigadier hides subcommands you lack permission for, and the resulting parse error
-              points at the word rather than saying "you are not an operator" — so this reads as
-              a broken command unless someone tells you otherwise. */}
-          <dt>
-            “Incorrect argument for command” on <code>pair</code>
-          </dt>
-          <dd>
-            On a dedicated server you need operator permission — Minecraft hides subcommands you
-            can’t use, and the error points at the word instead of explaining why. Ask an admin
-            for <code>/op</code>. In your own world this should just work; if it doesn’t, you’re
-            on an old build of the mod, so download it again.
-          </dd>
+            <dt>Pairing says the code is invalid</dt>
+            <dd>Codes last ten minutes and work once. Generate a fresh one.</dd>
 
-          <dt>Pairing says the code is invalid</dt>
-          <dd>Codes last ten minutes and work once. Generate a fresh one.</dd>
+            <dt>The world never comes online</dt>
+            <dd>
+              The mod dials out to this site over WebSocket. A firewall that blocks outbound
+              connections will stop it; run <code>/craftmagic status</code> to see which server it
+              is trying.
+            </dd>
 
-          <dt>The world never comes online</dt>
-          <dd>
-            The mod dials out to this site over WebSocket. A firewall that blocks outbound
-            connections will stop it; run <code>/craftmagic status</code> to see which server it
-            is trying.
-          </dd>
-
-          <dt>Blocks stop partway through</dt>
-          <dd>
-            Building pauses in unloaded chunks. Stay near the site, or lower{' '}
-            <code>/craftmagic speed</code> so it keeps up.
-          </dd>
-        </dl>
-      </section>
-    </div>
+            <dt>Blocks stop partway through</dt>
+            <dd>
+              Building pauses in unloaded chunks. Stay near the site, or lower{' '}
+              <code>/craftmagic speed</code> so it keeps up.
+            </dd>
+          </dl>
+        </section>
+      </div>
+    </>
   );
 }

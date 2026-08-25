@@ -99,6 +99,25 @@ export function EditorPage() {
   // -1 until the first frame reports, so `data-remaining="0"` unambiguously means "meshed".
   const [remaining, setRemaining] = useState(-1);
 
+  // A prompt handed over by the dashboard's launcher: read once, then removed from the URL.
+  // It seeds the prompt box and nothing else. Left in the query it would put a half-written
+  // sentence into every link copied out of the editor, and would re-seed the box over whatever
+  // had been typed since on any reload — the rule here is that the query describes the build on
+  // screen, and a prompt is not one.
+  const [seededPrompt] = useState(() => params.get('prompt') ?? '');
+
+  useEffect(() => {
+    if (!params.has('prompt')) return;
+    setParams(
+      (prev) => {
+        const search = new URLSearchParams(prev);
+        search.delete('prompt');
+        return search;
+      },
+      { replace: true },
+    );
+  }, [params, setParams]);
+
   const rawBuild = params.get('build');
 
   // A library build lives in the database rather than in the bundle, so `?build=lib:<id>`
@@ -604,6 +623,10 @@ export function EditorPage() {
         </div>
 
         <p className="hud__sub" style={{ marginTop: '0.875rem' }}>
+          <Link className="hud__link" to="/dashboard">
+            Dashboard →
+          </Link>
+          <br />
           <Link className="hud__link" to="/mod">
             Get the Minecraft mod →
           </Link>
@@ -623,6 +646,7 @@ export function EditorPage() {
         onGenerate={generation.generate}
         onCancel={generation.cancel}
         onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
+        initialPrompt={seededPrompt}
       />
 
       <aside className="hover-readout">

@@ -1,18 +1,23 @@
 /* Build guide — screen and paper.
  *
- * The app is dark-themed and the booklet is not, because nobody prints a black page. The
- * split is deliberate: the page chrome (sheets, headings, rules) follows the app's tokens on
- * screen and is overridden wholesale inside `@media print`, while the two art panels are
- * *always* paper-white. Those panels carry alpha-blended ghost layers, and letting their
- * background flip between screen and print would blend the same drawing against two
- * different colours — the printed booklet would stop matching the one on screen.
+ * Every value below is a token from `tokens.css`. That is the rule this file is written to
+ * follow, and it is what makes the `@media print` block at the bottom short: the booklet is
+ * repainted for paper by redefining eight roles, not by restating a hundred rules.
+ *
+ * The app is dark-themed and the booklet is not, because nobody prints a black page. The two
+ * art frames are the exception in both directions — they are paper-white on screen as well
+ * as on paper, since they carry alpha-blended ghost layers and blending the same drawing
+ * against two different backgrounds would make the printed booklet stop matching the one on
+ * screen.
  */
 
 .guide {
-  max-width: 60rem;
+  max-width: var(--guide-page);
   margin: 0 auto;
-  padding: 5rem 1.25rem 4rem;
+  padding: 5rem var(--guide-space-4) var(--guide-space-6);
 }
+
+/* --- chrome (screen only) ----------------------------------------------- */
 
 .guide__bar {
   position: fixed;
@@ -23,193 +28,233 @@
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 0.75rem 1.25rem;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  border-bottom: 1px solid var(--border);
+  padding: 0.75rem var(--guide-space-4);
+  background: color-mix(in srgb, var(--guide-paper) 92%, transparent);
+  border-bottom: 1px solid var(--guide-rule);
   backdrop-filter: blur(8px);
 }
 
 .guide__back {
-  color: var(--muted);
-  font-size: 0.8125rem;
+  color: var(--guide-ink-muted);
+  font-size: var(--guide-text-sm);
   text-decoration: none;
 }
 
 .guide__back:hover {
-  color: var(--accent);
+  color: var(--guide-accent);
 }
 
 .guide__status {
   margin-left: auto;
-  font-size: 0.75rem;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  color: var(--muted);
+  font-size: var(--guide-text-xs);
+  font-family: var(--guide-font-mono);
+  color: var(--guide-ink-muted);
 }
 
 .guide__print {
-  font-size: 0.8125rem;
+  font-size: var(--guide-text-sm);
   padding: 0.4rem 0.9rem;
 }
 
 .guide__print:disabled {
-  background: #212832;
-  color: var(--muted);
+  background: var(--guide-disabled);
+  color: var(--guide-ink-muted);
   cursor: progress;
   filter: none;
 }
 
+/* --- sheets -------------------------------------------------------------- */
+
 .sheet {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: var(--guide-paper);
+  border: 1px solid var(--guide-rule);
+  border-radius: var(--guide-radius-sheet);
   padding: 2rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--guide-space-5);
 }
 
 .sheet__title {
   margin: 0;
-  font-size: 0.8125rem;
+  font-size: var(--guide-text-sm);
   text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--muted);
+  letter-spacing: var(--guide-track-label);
+  color: var(--guide-ink-muted);
 }
 
 .sheet__lede {
   margin: 0.75rem 0 0;
-  max-width: 52ch;
-  font-size: 0.875rem;
-  color: var(--muted);
+  max-width: var(--guide-measure-lede);
+  font-size: var(--guide-text-md);
+  color: var(--guide-ink-muted);
 }
 
-/* --- cover ------------------------------------------------------------- */
+.eyebrow {
+  margin: 0;
+  font-size: var(--guide-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--guide-track-eyebrow);
+  color: var(--guide-accent);
+}
+
+/* --- cover --------------------------------------------------------------- */
 
 .cover {
   text-align: center;
-  padding: 2.5rem 2rem 2rem;
-}
-
-.cover__eyebrow {
-  margin: 0;
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: var(--accent);
+  padding: var(--guide-space-6) 2rem 2rem;
 }
 
 .cover__title {
   margin: 0.5rem 0 0;
-  font-size: 2.75rem;
+  font-size: var(--guide-text-display);
   line-height: 1.1;
   letter-spacing: -0.03em;
 }
 
 .cover__lede {
   margin: 0.75rem auto 0;
-  max-width: 46ch;
-  color: var(--muted);
+  max-width: var(--guide-measure-cover);
+  color: var(--guide-ink-muted);
 }
 
-/* Paper-white in both themes, matching the plan canvases — see the file header.
+/* --- art frames ----------------------------------------------------------
+   Paper-white in both themes — see the file header.
 
-   Scoped under `.step__panels` rather than styling a bare `.panel`. Vite bundles every
-   route's CSS into one stylesheet, so this file's rules reach the whole app the moment any
-   route imports it — and `.panel` is also the app-wide card used by the status, library and
-   mod pages. An unscoped `.panel { display: flex }` here silently relaid out those pages. */
-.cover__art,
-.step__panels .panel {
-  background: #f6f7f9;
-  border: 1px solid rgba(20, 26, 33, 0.18);
-  border-radius: 10px;
+   Named `.art` rather than `.panel` on purpose. Vite bundles every route's CSS into one
+   stylesheet, so this file's rules reach the whole app the moment any route imports it, and
+   `.panel` is also the app-wide card used by the status, library and mod pages. An
+   unscoped `.panel { display: flex }` here silently relaid out those pages once already. */
+.art {
+  margin: 0;
+  background: var(--guide-art-paper);
+  border: 1px solid var(--guide-art-rule);
+  border-radius: var(--guide-radius-panel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--guide-space-2);
+  /* Grid items default to `min-width: auto`, so without this the column widens to the
+     canvas's intrinsic width and the two panels overflow the page instead of scaling. */
+  min-width: 0;
   /* Chrome drops backgrounds and images from printouts unless asked twice. */
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
 
-.cover__art {
-  margin: 1.75rem 0 0;
+.art--cover {
+  margin-top: var(--guide-space-5);
   padding: 0.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   min-height: 18rem;
 }
 
-.cover__art img {
+.art--panel {
+  padding: 0.6rem;
+}
+
+.art__image {
   display: block;
-  width: 100%;
-  max-width: 34rem;
+  max-width: 100%;
   height: auto;
 }
 
+.art--cover .art__image {
+  width: 100%;
+  max-width: 34rem;
+}
+
 .art__wait {
-  font-size: 0.75rem;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  color: #79818b;
+  font-size: var(--guide-text-xs);
+  font-family: var(--guide-font-mono);
+  color: var(--guide-art-ink-faint);
   padding: 2rem 0;
 }
 
-.cover__stats {
+.art__caption {
+  font-size: var(--guide-text-2xs);
+  line-height: 1.35;
+  text-align: center;
+  color: var(--guide-art-ink);
+}
+
+/* --- stats --------------------------------------------------------------- */
+
+.stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
-  margin: 1.75rem 0 0;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--border);
+  margin: var(--guide-space-5) 0 0;
+  padding-top: var(--guide-space-4);
+  border-top: 1px solid var(--guide-rule);
 }
 
-.cover__stats dt {
-  font-size: 0.6875rem;
+.stats dt {
+  font-size: var(--guide-text-2xs);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
+  letter-spacing: var(--guide-track-label);
+  color: var(--guide-ink-muted);
 }
 
-.cover__stats dd {
-  margin: 0.35rem 0 0;
-  font-size: 1.25rem;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+.stats dd {
+  margin: var(--guide-space-1) 0 0;
 }
 
-.cover__stats .stat__difficulty {
+.stat__value {
+  font-size: var(--guide-text-lg);
+  font-family: var(--guide-font-mono);
+}
+
+.stat__value--plain {
   text-transform: capitalize;
   font-family: inherit;
 }
 
-.cover__stats .stat__note {
+.stat__note {
   margin-top: 0.15rem;
-  font-size: 0.6875rem;
+  font-size: var(--guide-text-2xs);
   font-family: inherit;
-  color: var(--muted);
+  color: var(--guide-ink-muted);
 }
 
-/* --- bill of materials ------------------------------------------------- */
+/* --- rows: parts and materials -------------------------------------------
+   One row shape, two lists. The bill of parts and the bill of materials answer the same kind
+   of question — "what is in this, and how much of it" — so they are set identically; only
+   the trailing column differs. */
 
-.materials__list {
+.materials__list,
+.parts__list {
   list-style: none;
-  margin: 1.25rem 0 0;
+  margin: var(--guide-space-4) 0 0;
   padding: 0;
-  counter-reset: material;
+}
+
+.material,
+.part {
+  display: grid;
+  align-items: center;
+  gap: var(--guide-space-3);
+  padding: var(--guide-space-2) 0;
+  border-bottom: 1px solid var(--guide-rule-faint);
 }
 
 .material {
-  display: grid;
   grid-template-columns: 1.1rem 1fr auto 9rem;
-  align-items: center;
-  gap: 0.85rem;
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--border);
 }
 
-.material:last-child {
+.part {
+  grid-template-columns: 1fr auto 9rem;
+}
+
+.material:last-child,
+.part:last-child {
   border-bottom: 0;
 }
 
 .swatch {
   width: 1.1rem;
   height: 1.1rem;
-  border-radius: 4px;
-  border: 1px solid rgba(20, 26, 33, 0.35);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  border-radius: var(--guide-radius-swatch);
+  border: 1px solid var(--guide-swatch-rule);
+  box-shadow: inset 0 0 0 1px var(--guide-swatch-sheen);
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
@@ -219,80 +264,110 @@
   height: 0.7rem;
   border-radius: 3px;
   vertical-align: -0.05rem;
-  margin-right: 0.35rem;
+  margin-right: var(--guide-space-1);
   display: inline-block;
 }
 
-.material__name {
-  font-size: 0.9375rem;
+.material__name,
+.part__name {
+  font-size: var(--guide-text-base);
 }
 
 .material__count,
-.material__stacks {
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  font-size: 0.875rem;
+.material__stacks,
+.part__count {
+  font-family: var(--guide-font-mono);
+  font-size: var(--guide-text-md);
   text-align: right;
 }
 
-.material__stacks {
-  color: var(--muted);
+.material__stacks,
+.part__note {
+  color: var(--guide-ink-muted);
 }
 
-/* --- steps ------------------------------------------------------------- */
+.part__note {
+  font-size: var(--guide-text-sm);
+  text-align: right;
+}
 
-.steps__title {
-  margin-bottom: 1rem;
+/* --- steps ---------------------------------------------------------------- */
+
+.steps__lede {
+  margin-bottom: var(--guide-space-4);
 }
 
 .step {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 1.25rem 1.5rem 1.5rem;
-  margin-bottom: 1.25rem;
+  background: var(--guide-paper);
+  border: 1px solid var(--guide-rule);
+  border-radius: var(--guide-radius-sheet);
+  padding: var(--guide-space-4) var(--guide-space-5) var(--guide-space-5);
+  margin-bottom: var(--guide-space-4);
   break-inside: avoid;
 }
 
 .step__head {
+  padding-bottom: var(--guide-space-3);
+  border-bottom: 1px solid var(--guide-rule);
+}
+
+/* The identifying line: which step this is, and where in the build it sits. */
+.step__id {
   display: flex;
   align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  padding-bottom: 0.85rem;
-  border-bottom: 1px solid var(--border);
+  gap: var(--guide-space-3);
 }
 
 .step__index {
-  font-size: 1.25rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-size: var(--guide-text-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--guide-track-label);
+  color: var(--guide-ink-muted);
 }
 
 .step__of {
-  font-size: 0.8125rem;
   font-weight: 400;
-  color: var(--muted);
 }
 
 .step__layer {
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  font-size: 0.8125rem;
-  color: var(--accent);
+  margin-left: auto;
+  font-family: var(--guide-font-mono);
+  font-size: var(--guide-text-sm);
+  color: var(--guide-accent);
 }
 
 .step__part {
-  color: var(--muted);
+  color: var(--guide-ink-muted);
+}
+
+/* The name of the part being placed — the thing a reader navigates by, so it outranks the
+   step number that used to carry this weight on its own. */
+.step__title {
+  margin: var(--guide-space-1) 0 0;
+  font-size: var(--guide-text-lg);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+/* Named after the part it mostly places, so anything else in the step is said out loud
+   rather than left for the reader to discover mid-course. */
+.step__also {
+  margin: var(--guide-space-1) 0 0;
+  font-size: var(--guide-text-sm);
+  color: var(--guide-ink-muted);
 }
 
 .step__materials {
   list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 1rem;
-  margin: 0 0 0 auto;
+  gap: var(--guide-space-1) 1rem;
+  margin: var(--guide-space-2) 0 0;
   padding: 0;
-  font-size: 0.8125rem;
-  color: var(--muted);
+  font-size: var(--guide-text-sm);
+  color: var(--guide-ink-muted);
 }
 
 .step__panels {
@@ -303,18 +378,6 @@
   align-items: start;
 }
 
-.step__panels .panel {
-  margin: 0;
-  padding: 0.6rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  /* Grid items default to `min-width: auto`, so without this the column widens to the
-     canvas's intrinsic width and the two panels overflow the page instead of scaling. */
-  min-width: 0;
-}
-
 .panel__plan,
 .panel__shot {
   display: block;
@@ -322,17 +385,10 @@
   height: auto;
 }
 
-.step__panels .panel figcaption {
-  font-size: 0.6875rem;
-  line-height: 1.35;
-  text-align: center;
-  color: #5b636d;
-}
-
 .guide__foot {
   margin-top: 2rem;
-  font-size: 0.75rem;
-  color: var(--muted);
+  font-size: var(--guide-text-xs);
+  color: var(--guide-ink-muted);
   text-align: center;
 }
 
@@ -344,12 +400,15 @@
     grid-template-columns: 1fr;
   }
 
-  .cover__stats {
+  .stats {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
-/* --- paper ------------------------------------------------------------- */
+/* --- paper ---------------------------------------------------------------
+   Short by design. The colours were handled by redefining roles in `tokens.css`; what is
+   left here is only what genuinely differs between a scrolling page and a bound booklet —
+   page breaks, physical units, and dropping the screen chrome. */
 
 @page {
   size: A4;
@@ -357,28 +416,9 @@
 }
 
 @media print {
-  /* The dark theme is a screen affordance; on paper it is a toner bill. Overriding the
-     tokens rather than each rule keeps the two views one stylesheet.
-
-     Declared on `.guide` rather than `:root` on purpose: this file is imported from a route
-     component, so the bundler emits it *before* `styles.css`, and a `:root` block here would
-     lose the cascade to the dark palette declared later. Custom properties inherit, so
-     re-declaring them on an ancestor of everything printed sidesteps source order entirely.
-     `html body` gets the same treatment via specificity, since body is not inside .guide. */
-  .guide {
-    --bg: #ffffff;
-    --panel: #ffffff;
-    --border: #d3d8de;
-    --text: #14181d;
-    --muted: #59616b;
-    --accent: #0f6f52;
-    color-scheme: light;
-    color: #14181d;
-  }
-
   html body {
     background: #ffffff;
-    color: #14181d;
+    color: var(--guide-ink);
   }
 
   .no-print {
@@ -391,6 +431,7 @@
     padding: 0;
   }
 
+  /* A sheet is a page's worth of content, so on paper it stops being a card. */
   .sheet,
   .step {
     border-radius: 0;
@@ -399,10 +440,12 @@
     border: 0;
   }
 
-  /* The cover and the parts list each own a page; assembly starts on a fresh one. */
-  .cover,
-  .materials {
+  .sheet--break-after {
     break-after: page;
+  }
+
+  .sheet--break-avoid {
+    break-inside: avoid;
   }
 
   .cover {
@@ -413,17 +456,13 @@
     font-size: 30pt;
   }
 
-  .cover__art {
+  .art--cover {
     min-height: 0;
     margin-top: 10mm;
   }
 
-  .cover__art img {
+  .art--cover .art__image {
     max-width: 150mm;
-  }
-
-  .material {
-    border-bottom: 1px solid #e2e6ea;
   }
 
   .steps__title {
@@ -435,7 +474,7 @@
   .step {
     min-height: 122mm;
     padding: 4mm 0 6mm;
-    border-bottom: 1px dashed #d3d8de;
+    border-bottom: 1px dashed var(--guide-rule);
     break-inside: avoid;
   }
 

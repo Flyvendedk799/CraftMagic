@@ -291,6 +291,14 @@ export const LIMITS = {
   maxDetailOps: 5_000,
   /** A single `fill` detail op may not cover more than this many blocks. */
   maxDetailFillVolume: 512,
+  /**
+   * Distinct parts provenance can track.
+   *
+   * Bounded by the `Uint16Array` that stores them: 0 means "unowned", so the last usable id
+   * is 65534. Components past this draw normally and simply report no part, which is the
+   * right failure — a guide with unnamed steps beats an expander that refuses to run.
+   */
+  maxParts: 65_534,
 } as const;
 
 export type ExpandIssueCode =
@@ -313,6 +321,59 @@ export interface ExpandIssue {
   message: string;
 }
 
+/**
+ * One drawable component of a program, and what it still owns once the build is baked.
+ *
+ * "Still owns" is the load-bearing word. Components are painted in order and later ones
+ * overwrite earlier ones, so a part's `blocks` counts what survived to the finished grid, not
+ * what it drew. A wall entirely hidden behind a later wall reports zero — which is what the
+ * build guide wants, since naming a step after something invisible helps nobody.
+ *
+ * Repeats collapse. A `repeat` transform draws its children many times but they remain *one*
+ * part, so a courtyard of 100 identical towers yields "Tower walls" once rather than a
+ * hundred indistinguishable entries.
+ */
+export interface BuildPart {
+  /** 1-based, matching the values stored in {@link ExpandResult.origin}. Never 0. */
+  id: number;
+  /** Where the component sits in the program: `components[3].children[0]`. */
+  path: string;
+  /**
+   * The component that drew it, or `'details'` for the raw voxel patches applied last.
+   *
+   * No human-readable name here on purpose. What a part is *called* is a presentation
+   * decision — it depends on the build's proportions and on which document is asking — so it
+   * lives in the build guide's design system rather than being frozen at expansion time.
+   */
+  type: ComponentType | 'details';
+  /** The palette role it draws in, when the component names exactly one. */
+  role?: string;
+  /**
+   * The wall the component declared itself against, for the types that name one.
+   *
+   * Carried through rather than re-derived from bounds because it is the author's own word:
+   * a window grid on a two-block-thick wall is ambiguous by geometry and unambiguous here.
+   */
+  face?: Face;
+  /** Voxels this part still owns in the finished grid. */
+  blocks: number;
+  /** Bounds of what it owns, or undefined when `blocks` is 0. */
+  min?: Vec3;
+  max?: Vec3;
+}
+
+export interface ExpandOptions {
+  /**
+   * Record which component each voxel came from.
+   *
+   * Off by default, and deliberately so: it costs a second `Uint16Array` the size of the grid
+   * plus a full pass to measure the parts. The editor re-expands on every frame of a slider
+   * drag — on the 200k-block stress build that is 2.7MB of churn per frame for something it
+   * never reads. The build guide expands once and needs it, so it asks.
+   */
+  provenance?: boolean;
+}
+
 export interface ExpandResult {
   grid: VoxelGrid;
   /** Non-air block count. */
@@ -321,6 +382,15 @@ export interface ExpandResult {
   warnings: ExpandIssue[];
   /** Fatal for the component that produced them; empty means a clean expansion. */
   errors: ExpandIssue[];
+  /**
+   * Per-voxel part id, parallel to `grid.voxels`; 0 where nothing owns the cell.
+   *
+   * Null unless {@link ExpandOptions.provenance} was set. Index with `voxelIndex`, exactly
+   * like the voxels themselves.
+   */
+  origin: Uint16Array | null;
+  /** The parts `origin` refers to, in program order. Empty when provenance is off. */
+  parts: BuildPart[];
 }
 
 /** An undo/redo unit. Typed arrays keep large edits cheap (~10 bytes per voxel). */

@@ -20,12 +20,32 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { buildGuide, colorOf, type BuildGuide, type BuildStep, type MaterialCount } from '@craftmagic/core';
+import {
+  buildGuide,
+  type BuildGuide,
+  type BuildStep,
+  type GuidePart,
+  type MaterialCount,
+} from '@craftmagic/core';
 import { expandBuild, isBuildId, type LoadedBuild } from '../editor/builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
 import { carrySettings, parseScale, scaleKey as readScaleKey, PARAM_PREFIX } from '../editor/urlState.js';
 import { IsoFilmstrip } from './isoRender.js';
 import { drawLayerPlan, earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
+import {
+  ArtFrame,
+  ArtImage,
+  Eyebrow,
+  Lede,
+  Sheet,
+  SheetTitle,
+  Stat,
+  StatGrid,
+  Swatch,
+} from './primitives.js';
+// Tokens first: `print.css` is written entirely against them, and the bundler preserves this
+// order, so the roles exist by the time anything asks for one.
+import './tokens.css';
 import './print.css';
 
 /**
@@ -103,11 +123,22 @@ export function GuidePage() {
   // Both halves of the editor's URL, or the guide prints a different build from the one the
   // link came from: `parseOverrides` alone was silently dropped, because it is a bare map of
   // values where `expandBuild` expects them under `params`.
+  // Provenance is asked for here and nowhere else in the app. It is what lets a step be
+  // called "South windows" instead of "y = 7, part 2 of 3", and the guide is the one place
+  // that expands a build once rather than on every frame of a slider drag.
   const build = useMemo(
-    () => expandBuild(buildId, { params: parseOverrides(overrideKey), scale: parseScale(scaleKey) }),
+    () =>
+      expandBuild(
+        buildId,
+        { params: parseOverrides(overrideKey), scale: parseScale(scaleKey) },
+        { provenance: true },
+      ),
     [buildId, overrideKey, scaleKey],
   );
-  const guide = useMemo(() => buildGuide(build.grid, build.name), [build]);
+  const guide = useMemo(
+    () => buildGuide(build.grid, build.name, { parts: build.parts, origin: build.origin }),
+    [build],
+  );
 
   const printable = guide.steps.length <= MAX_PRINTABLE_STEPS;
   // `renderable` and not just `printable`: an unresolved id would otherwise spin up a WebGL
@@ -159,11 +190,20 @@ export function GuidePage() {
       </nav>
 
       <Cover build={build} guide={guide} art={film.cover} />
+      <Parts guide={guide} />
       <Materials guide={guide} />
 
       {printable ? (
         <section className="steps">
-          <h2 className="sheet__title steps__title">Assembly</h2>
+          <h2 className="sheet__title">Assembly</h2>
+          {/* The rules the segmentation actually followed, read off the design system rather
+              than restated here — so a guide laid out under a different one describes itself
+              correctly instead of describing the default. */}
+          <p className="sheet__lede steps__lede">
+            Bottom-up, at most {guide.design.step.maxBlocks} blocks a step
+            {guide.parts.length > 0 && ', and one part at a time'}. Grey squares in a plan are
+            what you have already placed; outlined ones are this step.
+          </p>
           {guide.steps.map((step, i) => (
             <StepCard
               key={step.index}
@@ -175,16 +215,16 @@ export function GuidePage() {
           ))}
         </section>
       ) : (
-        <article className="sheet oversize">
-          <h2 className="sheet__title">Assembly</h2>
-          <p className="sheet__lede">
+        <Sheet variant="oversize">
+          <SheetTitle>Assembly</SheetTitle>
+          <Lede>
             This build segments into {guide.steps.length.toLocaleString()} steps — about{' '}
             {Math.ceil(guide.steps.length / 2).toLocaleString()} printed pages, past what a
             booklet can usefully be. The cover and the bill of materials above still apply;
             for step-by-step assembly, resize the build down in the editor or export a
             schematic instead.
-          </p>
-        </article>
+          </Lede>
+        </Sheet>
       )}
 
       <footer className="guide__foot">
@@ -223,8 +263,8 @@ function Unavailable({
         </Link>
       </nav>
 
-      <article className="sheet cover">
-        <p className="cover__eyebrow">CraftMagic · Build guide</p>
+      <Sheet variant="cover">
+        <Eyebrow>CraftMagic · Build guide</Eyebrow>
         <h1 className="cover__title">{loading ? 'Loading…' : 'Build not found'}</h1>
         {loading ? (
           <p className="cover__lede">Fetching {id} from your library.</p>
@@ -240,7 +280,7 @@ function Unavailable({
             fetch it anywhere.
           </p>
         )}
-      </article>
+      </Sheet>
     </div>
   );
 }
@@ -249,71 +289,108 @@ function Unavailable({
 
 function Cover({ build, guide, art }: { build: LoadedBuild; guide: BuildGuide; art: string | null }) {
   return (
-    <article className="sheet cover">
-      <p className="cover__eyebrow">CraftMagic · Build guide</p>
+    <Sheet variant="cover" break="after">
+      <Eyebrow>CraftMagic · Build guide</Eyebrow>
       <h1 className="cover__title">{guide.name}</h1>
       {build.description && <p className="cover__lede">{build.description}</p>}
 
-      <figure className="cover__art">
-        {art ? (
-          <img src={art} alt={`Finished ${guide.name}, seen from above at an angle`} />
-        ) : (
-          <span className="art__wait">Rendering…</span>
-        )}
-      </figure>
+      <ArtFrame size="cover">
+        <ArtImage src={art} alt={`Finished ${guide.name}, seen from above at an angle`} />
+      </ArtFrame>
 
-      <dl className="cover__stats">
-        <div>
-          <dt>Dimensions</dt>
-          <dd>
-            {guide.size.x} × {guide.size.y} × {guide.size.z}
-          </dd>
-          <dd className="stat__note">W × H × L</dd>
-        </div>
-        <div>
-          <dt>Blocks</dt>
-          <dd>{guide.totalBlocks.toLocaleString()}</dd>
-          <dd className="stat__note">{guide.materials.length} kinds</dd>
-        </div>
-        <div>
-          <dt>Steps</dt>
-          <dd>{guide.steps.length.toLocaleString()}</dd>
-          <dd className="stat__note">bottom-up</dd>
-        </div>
-        <div>
-          <dt>Difficulty</dt>
-          <dd className="stat__difficulty">{guide.difficulty}</dd>
-          {/* Layers that hold something, not the grid's height: an empty top half is not
-              work, and a builder counting courses would be told the wrong number. */}
-          <dd className="stat__note">{new Set(guide.steps.map((step) => step.layer)).size} layers</dd>
-        </div>
-      </dl>
-    </article>
+      <StatGrid>
+        <Stat
+          label="Dimensions"
+          value={`${guide.size.x} × ${guide.size.y} × ${guide.size.z}`}
+          note="W × H × L"
+        />
+        <Stat
+          label="Blocks"
+          value={guide.totalBlocks.toLocaleString()}
+          note={`${guide.materials.length} kinds`}
+        />
+        {/* Layers that hold something, not the grid's height: an empty top half is not work,
+            and a builder counting courses would be told the wrong number. */}
+        <Stat
+          label="Steps"
+          value={guide.steps.length.toLocaleString()}
+          note={`${new Set(guide.steps.map((step) => step.layer)).size} layers`}
+        />
+        <Stat
+          label="Difficulty"
+          value={guide.difficulty}
+          plain
+          note={guide.parts.length > 0 ? `${guide.parts.length} parts` : 'bottom-up'}
+        />
+      </StatGrid>
+    </Sheet>
   );
+}
+
+/* --- bill of parts --------------------------------------------------------------------- */
+
+/**
+ * What the build is made of, before what it is made from.
+ *
+ * The bill of materials answers "what do I gather"; this answers "what am I building", which
+ * is the question that comes first and which a booklet of forty near-identical step diagrams
+ * otherwise never answers at all. It exists only when the build came from a program — a
+ * hand-edited grid has no components to name, and inventing names for it would be fiction.
+ */
+function Parts({ guide }: { guide: BuildGuide }) {
+  if (guide.parts.length === 0) return null;
+
+  return (
+    <Sheet variant="parts">
+      <SheetTitle>What you are building</SheetTitle>
+      <Lede>
+        The parts this build is made of, in the order they go up. Each assembly step below is
+        named after the part it advances.
+      </Lede>
+
+      <ol className="parts__list">
+        {guide.parts.map((part) => (
+          <li className="part" key={part.id}>
+            <span className="part__name">{part.label}</span>
+            <span className="part__count">{part.blocks.toLocaleString()}</span>
+            <span className="part__note">{partExtent(part)}</span>
+          </li>
+        ))}
+      </ol>
+    </Sheet>
+  );
+}
+
+/** `7 × 4 × 11` — the box a part occupies, which is how you spot the roof in a list. */
+function partExtent(part: GuidePart): string {
+  if (!part.min || !part.max) return '';
+  const [x0, y0, z0] = part.min;
+  const [x1, y1, z1] = part.max;
+  return `${x1 - x0 + 1} × ${y1 - y0 + 1} × ${z1 - z0 + 1}`;
 }
 
 /* --- bill of materials ----------------------------------------------------------------- */
 
 function Materials({ guide }: { guide: BuildGuide }) {
   return (
-    <article className="sheet materials">
-      <h2 className="sheet__title">Bill of materials</h2>
-      <p className="sheet__lede">
+    <Sheet variant="materials" break="after">
+      <SheetTitle>Bill of materials</SheetTitle>
+      <Lede>
         Everything the build needs, most-used first. Stacks are the unit you actually gather
         in, so they are spelled out; a door counts once, not twice.
-      </p>
+      </Lede>
 
       <ol className="materials__list">
         {guide.materials.map((material) => (
           <li className="material" key={material.block}>
-            <span className="swatch" style={{ background: cssColor(material.block) }} aria-hidden="true" />
+            <Swatch block={material.block} />
             <span className="material__name">{material.displayName}</span>
             <span className="material__count">{material.count.toLocaleString()}</span>
             <span className="material__stacks">{stackText(material)}</span>
           </li>
         ))}
       </ol>
-    </article>
+    </Sheet>
   );
 }
 
@@ -338,26 +415,41 @@ function StepCard({
     if (canvas.current) drawLayerPlan(canvas.current, plan);
   }, [plan]);
 
+  // Named after the part it mostly places, so anything else riding along in the step is said
+  // out loud rather than left for the reader to find mid-course.
+  const also = step.parts.slice(1);
+
   return (
     <article className="step">
       <header className="step__head">
-        <span className="step__index">
-          Step {step.index}
-          <span className="step__of"> of {total}</span>
-        </span>
-        <span className="step__layer">
-          y = {step.layer}
-          {step.partOfLayer && (
-            <span className="step__part">
-              {' '}
-              ({step.partOfLayer.part} of {step.partOfLayer.total})
-            </span>
-          )}
-        </span>
+        <div className="step__id">
+          <span className="step__index">
+            Step {step.index}
+            <span className="step__of"> of {total}</span>
+          </span>
+          <span className="step__layer">
+            y = {step.layer}
+            {step.partOfLayer && (
+              <span className="step__part">
+                {' '}
+                ({step.partOfLayer.part} of {step.partOfLayer.total})
+              </span>
+            )}
+          </span>
+        </div>
+
+        <h3 className="step__title">{step.title}</h3>
+
+        {also.length > 0 && (
+          <p className="step__also">
+            with {also.map((part) => `${part.label} × ${part.blocks}`).join(', ')}
+          </p>
+        )}
+
         <ul className="step__materials">
           {step.materials.map((material) => (
             <li key={material.block}>
-              <span className="swatch swatch--small" style={{ background: cssColor(material.block) }} aria-hidden="true" />
+              <Swatch block={material.block} small />
               {material.count} × {material.displayName}
             </li>
           ))}
@@ -365,18 +457,12 @@ function StepCard({
       </header>
 
       <div className="step__panels">
-        <figure className="panel">
+        <ArtFrame size="panel" caption={`Layer ${step.layer} from above — place the outlined squares`}>
           <canvas className="panel__plan" ref={canvas} />
-          <figcaption>Layer {step.layer} from above — place the outlined squares</figcaption>
-        </figure>
-        <figure className="panel">
-          {shot ? (
-            <img className="panel__shot" src={shot} alt={`The build after step ${step.index}`} />
-          ) : (
-            <span className="art__wait">Rendering…</span>
-          )}
-          <figcaption>How it looks once this step is done</figcaption>
-        </figure>
+        </ArtFrame>
+        <ArtFrame size="panel" caption="How it looks once this step is done">
+          <ArtImage className="panel__shot" src={shot} alt={`The build after step ${step.index}`} />
+        </ArtFrame>
       </div>
     </article>
   );
@@ -505,11 +591,6 @@ function stackText(material: MaterialCount): string {
   if (material.stacks === 0) return `${material.remainder}`;
   const stacks = `${material.stacks} stack${material.stacks === 1 ? '' : 's'}`;
   return material.remainder === 0 ? stacks : `${stacks} + ${material.remainder}`;
-}
-
-function cssColor(block: string): string {
-  const [r, g, b] = colorOf(block);
-  return `rgb(${r}, ${g}, ${b})`;
 }
 
 function parseOverrides(key: string): Record<string, number> {

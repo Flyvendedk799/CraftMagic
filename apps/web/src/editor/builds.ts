@@ -18,6 +18,7 @@ import {
   paletteFlags,
   samples,
   scaledSize,
+  type BuildPart,
   type BuildProgram,
   type ExpandIssue,
   type ProgramParam,
@@ -56,6 +57,15 @@ export interface LoadedBuild {
   params: BuildParam[];
   warnings: ExpandIssue[];
   errors: ExpandIssue[];
+  /**
+   * Which component drew each block, for the build guide to name its steps after.
+   *
+   * Only populated when the caller asked for it — see `provenance` on {@link expandBuild}.
+   * Always empty for a build that arrived as raw voxels: no program describes it, so there is
+   * nothing to attribute the blocks to and nothing truthful the guide could call them.
+   */
+  parts: BuildPart[];
+  origin: Uint16Array | null;
 }
 
 /**
@@ -332,6 +342,18 @@ export interface ScaleOutcome {
   clamped: boolean;
 }
 
+/** Everything about an expansion that is not the user's doing. */
+export interface ExpandBuildOptions {
+  /**
+   * Record which component drew each block.
+   *
+   * Off by default because the editor re-expands on every frame of a slider drag, and on the
+   * 200k-block stress build the extra array and its measuring pass are pure waste there. The
+   * guide expands once and names its steps from it, so the guide asks.
+   */
+  provenance?: boolean;
+}
+
 /**
  * Expand a build, optionally overriding param values and resizing it.
  *
@@ -339,7 +361,11 @@ export interface ScaleOutcome {
  * the geometry; this one keeps `params` in the result truthful, so a hand-edited URL shows
  * the slider at the value that was actually built rather than the one that was asked for.
  */
-export function expandBuild(id: string, overrides: BuildOverrides = {}): LoadedBuild {
+export function expandBuild(
+  id: string,
+  overrides: BuildOverrides = {},
+  options: ExpandBuildOptions = {},
+): LoadedBuild {
   const stored = library.get(id);
   if (stored?.kind === 'voxels') return fromVoxels(id, stored.name, stored.grid);
 
@@ -347,7 +373,7 @@ export function expandBuild(id: string, overrides: BuildOverrides = {}): LoadedB
   if (!program) throw new Error(`unknown build "${id}"`);
 
   const applied = applyOverrides(program, overrides.params ?? {}, overrides.scale);
-  const result = expand(applied);
+  const result = expand(applied, { provenance: options.provenance });
 
   return {
     id,
@@ -361,6 +387,8 @@ export function expandBuild(id: string, overrides: BuildOverrides = {}): LoadedB
     params: toParams(applied.params),
     warnings: result.warnings,
     errors: result.errors,
+    parts: result.parts,
+    origin: result.origin,
   };
 }
 
@@ -394,6 +422,10 @@ function fromVoxels(id: string, name: string, source: VoxelGrid): LoadedBuild {
     params: [],
     warnings: [],
     errors: [],
+    // Hand-edited voxels have no program behind them, so nothing can say which component a
+    // block came from. The guide falls back to naming steps by layer, which is the truth.
+    parts: [],
+    origin: null,
   };
 }
 

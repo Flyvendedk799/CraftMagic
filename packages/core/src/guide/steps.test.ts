@@ -3,7 +3,7 @@ import { expand } from '../expand/expander.js';
 import { cottage, samples } from '../samples/index.js';
 import type { VoxelGrid } from '../ir/types.js';
 import { voxelIndex } from '../ir/types.js';
-import { MAX_BLOCKS_PER_STEP, buildGuide } from './steps.js';
+import { MAX_BLOCKS_PER_STEP, MIN_BLOCKS_PER_STEP, buildGuide } from './steps.js';
 
 /** Build a grid from a per-layer ASCII map, '.' meaning air. */
 function gridFrom(layers: string[][], palette: string[]): VoxelGrid {
@@ -177,6 +177,119 @@ describe('buildGuide — bill of materials', () => {
 		}
 		for (const total of guide.materials) {
 			expect(perStep.get(total.block), total.block).toBe(total.count);
+		}
+	});
+});
+
+describe('buildGuide — parts', () => {
+	/** A guide over a sample, with the provenance the expander can now supply. */
+	function guided(program: (typeof samples)[keyof typeof samples], name: string) {
+		const result = expand(program, { provenance: true });
+		return {
+			result,
+			guide: buildGuide(result.grid, name, { parts: result.parts, origin: result.origin }),
+		};
+	}
+
+	it('names every step when provenance is available', () => {
+		const { guide } = guided(cottage, 'Cottage');
+		for (const step of guide.steps) {
+			expect(step.title, `step ${step.index}`).toBeTruthy();
+			expect(step.title).not.toMatch(/^Layer /);
+			expect(step.parts.length).toBeGreaterThan(0);
+		}
+	});
+
+	it('falls back to the layer when nothing owns the blocks', () => {
+		const grid = gridFrom([['11', '11']], PALETTE);
+		const guide = buildGuide(grid);
+		expect(guide.steps[0]!.title).toBe('Layer 0');
+		expect(guide.steps[0]!.parts).toEqual([]);
+		expect(guide.parts).toEqual([]);
+	});
+
+	it('keeps a split step to a single part', () => {
+		const { guide } = guided(cottage, 'Cottage');
+		// A step may still gather more than one part when a part is too slight in that layer
+		// to be worth a page of its own — but never a second *substantial* one.
+		for (const step of guide.steps) {
+			const substantial = step.parts.filter((p) => p.blocks >= MIN_BLOCKS_PER_STEP);
+			expect(substantial.length, `step ${step.index}: ${step.title}`).toBeLessThanOrEqual(1);
+		}
+	});
+
+	it('names a step after the part it mostly places', () => {
+		const { guide } = guided(cottage, 'Cottage');
+		for (const step of guide.steps) {
+			if (step.parts.length === 0) continue;
+			const most = Math.max(...step.parts.map((p) => p.blocks));
+			expect(step.parts[0]!.blocks).toBe(most);
+			expect(step.title).toBe(step.parts[0]!.label);
+		}
+	});
+
+	it('accounts for every block exactly once, parts or no parts', () => {
+		for (const [name, program] of Object.entries(samples)) {
+			const { result, guide } = guided(program, name);
+			const placed = guide.steps.reduce((sum, s) => sum + s.blocks.length, 0);
+			expect(placed, name).toBe(result.blockCount);
+
+			const seen = new Set<string>();
+			for (const step of guide.steps) {
+				for (const b of step.blocks) {
+					const key = `${b.x},${b.y},${b.z}`;
+					expect(seen.has(key), `${name} duplicated ${key}`).toBe(false);
+					seen.add(key);
+				}
+			}
+		}
+	});
+
+	it('still never exceeds the per-step cap', () => {
+		for (const [name, program] of Object.entries(samples)) {
+			const { guide } = guided(program, name);
+			for (const step of guide.steps) {
+				expect(step.blocks.length, `${name} step ${step.index}`).toBeLessThanOrEqual(
+					MAX_BLOCKS_PER_STEP,
+				);
+			}
+		}
+	});
+
+	it('slices evenly, so a big layer leaves no one-block remainder behind', () => {
+		// 361 blocks greedily chunked is nine steps of 40 and one of 1 — and that last step
+		// can never be folded away, because the step before it is already full.
+		const { guide } = guided(samples.pavilion!, 'Pavilion');
+		const layerZero = guide.steps.filter((step) => step.layer === 0);
+		expect(layerZero.length).toBeGreaterThan(1);
+		for (const step of layerZero) {
+			expect(step.blocks.length).toBeGreaterThanOrEqual(MIN_BLOCKS_PER_STEP);
+		}
+	});
+
+	it('reports a bill of parts that adds up to the build', () => {
+		const { result, guide } = guided(cottage, 'Cottage');
+		expect(guide.parts.length).toBeGreaterThan(0);
+		expect(guide.parts.reduce((sum, p) => sum + p.blocks, 0)).toBe(result.blockCount);
+		expect(new Set(guide.parts.map((p) => p.label)).size).toBe(guide.parts.length);
+	});
+
+	it('is deterministic with provenance too', () => {
+		const a = guided(cottage, 'Cottage').guide;
+		const b = guided(cottage, 'Cottage').guide;
+		expect(JSON.stringify(a.steps)).toBe(JSON.stringify(b.steps));
+		expect(JSON.stringify(a.parts)).toBe(JSON.stringify(b.parts));
+	});
+
+	it('ignores half a pair, rather than titling steps after parts it cannot describe', () => {
+		const { result } = guided(cottage, 'Cottage');
+		// Origin without parts, or parts without origin, is a caller bug; the guide must not
+		// produce steps referring to ids it has no labels for.
+		const noParts = buildGuide(result.grid, 'Cottage', { origin: result.origin });
+		const noOrigin = buildGuide(result.grid, 'Cottage', { parts: result.parts });
+		for (const guide of [noParts, noOrigin]) {
+			expect(guide.parts).toEqual([]);
+			for (const step of guide.steps) expect(step.parts).toEqual([]);
 		}
 	});
 });

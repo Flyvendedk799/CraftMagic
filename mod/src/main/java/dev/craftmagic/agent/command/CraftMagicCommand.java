@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import dev.craftmagic.agent.CraftMagicMod;
 import dev.craftmagic.agent.config.ModConfig;
 import dev.craftmagic.agent.net.AgentSocket;
+import dev.craftmagic.agent.wand.WandItem;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -13,6 +14,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Rotation;
 import dev.craftmagic.agent.job.JobManager;
 
@@ -122,9 +124,13 @@ public final class CraftMagicCommand {
 											.then(
 													Commands.argument("url", StringArgumentType.greedyString())
 															.executes(CraftMagicCommand::setServer)))
-							// `build` needs no elevated permission: a job only exists because
-							// someone paired this world and sent it, and it lands where the
-							// player is standing. Rotation is optional — most people want it
+							// The wand is the ordinary way to place a build now; `build` and
+							// `place` remain for the console, command blocks, and anyone who
+							// would rather type.
+							.then(Commands.literal("wand").executes(CraftMagicCommand::wand))
+							// Neither `wand` nor `build` needs elevated permission: a job only
+							// exists because someone paired this world and sent it, and it lands
+							// where the player chose. Rotation is optional — most people want it
 							// facing the way they are.
 							.then(
 									Commands.literal("build")
@@ -152,7 +158,40 @@ public final class CraftMagicCommand {
 													Commands.argument("blocksPerSecond", IntegerArgumentType.integer(0, 4000))
 															.executes(CraftMagicCommand::setSpeed)))
 							.executes(CraftMagicCommand::status));
+
+			// A bare `/wand`, because reaching for the wand is the one thing a player does
+			// before they have a build to place, and `/craftmagic wand` is six extra words at
+			// exactly the wrong moment. WorldEdit's wand is `//wand`, so this does not collide
+			// with the mod most likely to be installed alongside this one.
+			dispatcher.register(Commands.literal("wand").executes(CraftMagicCommand::wand));
 		});
+	}
+
+	/**
+	 * Put a wand in the player's hand.
+	 *
+	 * <p>Requires a player for the obvious reason, and drops the wand at their feet rather than
+	 * failing when the inventory is full — losing the command to a full hotbar would be a
+	 * baffling way for this to not work.
+	 */
+	private static int wand(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+		ServerPlayer player = context.getSource().getPlayer();
+		if (player == null) {
+			context.getSource().sendFailure(Component.literal("Run this as a player — the wand goes in your hand."));
+			return 0;
+		}
+
+		ItemStack wand = WandItem.create();
+		if (!player.getInventory().add(wand)) {
+			player.drop(wand, false);
+		}
+
+		context.getSource().sendSuccess(
+				() -> Component.literal(
+						"CraftMagic wand. Right-click to mark a spot, sneak + right-click to turn it, "
+								+ "punch the air to build."),
+				false);
+		return 1;
 	}
 
 	private static int status(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {

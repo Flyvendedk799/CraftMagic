@@ -26,16 +26,14 @@ import {
   expandBuild,
   generatedBuilds,
   isBuildId,
-  isLibraryId,
-  libraryRowId,
   paramsOf,
   previewScale,
   baseSize,
   NO_SCALE,
   type ScalePercent,
   registerGeneratedBuild,
-  registerLibraryBuild,
 } from './builds.js';
+import { useLibraryBuild } from '../library/useLibraryBuild.js';
 import {
   carrySettings,
   parseScale,
@@ -57,7 +55,6 @@ import { familyOf, swapFamily, swapPaletteIndex } from './tools/paletteSwap.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
 import { AccountPanel } from '../library/AccountPanel.js';
-import { getBuild } from '../library/library.js';
 import type { VoxelHit } from './raycast.js';
 import './editor.css';
 
@@ -108,46 +105,10 @@ export function EditorPage() {
   // has to be fetched before it can be expanded. Fetching on demand rather than caching it in
   // the browser is what makes the deep link survive a reload and, more importantly, what stops
   // it from ever showing a stale copy of a build that was renamed or deleted elsewhere.
-  const [fetching, setFetching] = useState<{ id: string; error: string | null } | null>(null);
-  const needsFetch = rawBuild !== null && isLibraryId(rawBuild) && !isBuildId(rawBuild);
-
-  useEffect(() => {
-    if (!needsFetch || rawBuild === null) return;
-    const rowId = libraryRowId(rawBuild);
-    if (!rowId) return;
-
-    let cancelled = false;
-    setFetching({ id: rawBuild, error: null });
-
-    getBuild(rowId)
-      .then((detail) => {
-        if (cancelled) return;
-        // Prefer the program so the param sliders still work — except when the build was
-        // hand-edited, where no program describes what was saved and only the voxels do.
-        registerLibraryBuild(
-          rowId,
-          detail.program && !detail.detached
-            ? { kind: 'program', name: detail.name, program: detail.program }
-            : {
-                kind: 'voxels',
-                name: detail.name,
-                grid: {
-                  size: detail.grid.size,
-                  palette: detail.grid.palette,
-                  voxels: Uint16Array.from(detail.grid.voxels),
-                },
-              },
-        );
-        setFetching(null);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setFetching({ id: rawBuild, error: (err as Error).message });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [needsFetch, rawBuild]);
+  //
+  // Shared with the guide, which needs the same build from the same URL — see
+  // `useLibraryBuild` for why that must not be two copies of the same rule.
+  const fetching = useLibraryBuild(rawBuild);
 
   const buildId = isBuildId(rawBuild) ? rawBuild : DEFAULT_BUILD;
 
@@ -194,11 +155,10 @@ export function EditorPage() {
   // The guide reads the same query convention as the editor, so it renders exactly the
   // build on screen — including whatever the param sliders are currently set to.
   //
-  // Not offered for a library build. The guide rebuilds the grid from the id in the URL and
-  // has no network fetch of its own, so `/guide?build=lib:<id>` would open on the default
-  // build and print the wrong thing — a broken link is better named by not existing.
+  // Offered for library builds too, now that the guide fetches one itself. It used
+  // to be withheld for them because the guide could only resolve ids already in the bundle,
+  // and `/guide?build=lib:<id>` opened on the default build and printed the wrong thing.
   const guideHref = useMemo(() => {
-    if (isLibraryId(buildId)) return null;
     const search = new URLSearchParams();
     search.set('build', buildId);
     // Params *and* scale: the guide prints the build on screen, and a resized one is a
@@ -389,8 +349,8 @@ export function EditorPage() {
 
   // --- generation ----------------------------------------------------------
 
-  // Seeded from anything restored out of sessionStorage, so a reload does not lose builds
-  // that were paid for.
+  // Seeded from anything restored out of localStorage, so neither a reload nor a new tab
+  // loses builds that were paid for.
   const [saved, setSaved] = useState(() => generatedBuilds());
   const [generated, setGenerated] = useState<{ id: string; result: GenerationResult } | null>(null);
 
@@ -429,7 +389,7 @@ export function EditorPage() {
   // After every hook, never before: an early return above one would change the hook order
   // between renders. The cost is expanding the default build while a library one is in
   // flight, which is a few milliseconds nobody sees.
-  if (fetching && fetching.id === rawBuild) {
+  if (fetching.loading || fetching.error !== null) {
     return (
       <div className="library" data-ready={fetching.error ? '1' : '0'}>
         <section className="panel">

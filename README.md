@@ -85,6 +85,24 @@ JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew runServer  # headless dev serve
 JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew runClient  # dev client
 ```
 
+### Placing a build: the wand
+
+`/wand` hands the player a stick. **Right-click** marks a spot and draws the footprint in
+particles, **sneak + right-click** turns it a quarter, and **punching the air** builds it
+there. Nothing is placed until the punch, so aiming is free and repeatable — which is the
+whole reason it exists. `/craftmagic build` and `/craftmagic place <x> <y> <z>` still work,
+for the console, command blocks and anyone who would rather type.
+
+Punching a *block* or a mob reaches the server as an ordinary Fabric interaction event.
+Punching *air* does not — vanilla sends only a swing animation — so the client relays a
+`craftmagic:wand_punch` payload that carries nothing but the fact of the punch. The marked
+spot lives on the server and never travels, so a modified client cannot ask for a build at
+coordinates it never marked.
+
+```bash
+JAVA_HOME=... ./gradlew verifyPlacement   # the centring math, at every rotation, with no game
+```
+
 ### Version pins
 
 Everything is pinned in `mod/gradle.properties`, cross-checked against

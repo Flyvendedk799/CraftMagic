@@ -349,10 +349,11 @@ export function LandingPage() {
             </div>
             <h3 className="landing__path-title">Builder bot</h3>
             <p className="landing__path-body">
-              Pair your world and a bot walks in and builds it for you. The mod always dials out
-              — no port forwarding, works behind any home router.
+              Pair your world, point a wand at the ground and punch the air — a bot walks in and
+              builds it for you. The mod always dials out — no port forwarding, works behind any
+              home router.
             </p>
-            <p className="landing__path-meta">/craftmagic build · Fabric 26.2</p>
+            <p className="landing__path-meta">/wand · Fabric 26.2</p>
           </article>
         </div>
       </section>

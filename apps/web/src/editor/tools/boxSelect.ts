@@ -1,17 +1,19 @@
 /**
  * Box edits between two picked corners.
  *
- * Three modes rather than three tools, because they share every line except the predicate:
+ * Four modes rather than four tools, because they share every line except the predicate:
  * `fill` writes the block into every cell, `replace` only into cells that already hold
- * something (re-skin a wall without filling the room behind it), and `clear` empties the
- * box. `replace` is the one that makes the tool usable on a finished build — most of the
- * time the intent is "this region, but in spruce", not "this region, solid".
+ * something (re-skin a wall without filling the room behind it), `hollow` writes only the
+ * six faces of the box, and `clear` empties it. `replace` is the one that makes the tool
+ * usable on a finished build — most of the time the intent is "this region, but in spruce",
+ * not "this region, solid" — and `hollow` is the one that makes it usable on an empty plot,
+ * where a room is a box with the inside left out.
  */
 
 import { AIR_INDEX, voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
 import { EditBuilder } from './op.js';
 
-export type BoxMode = 'fill' | 'replace' | 'clear';
+export type BoxMode = 'fill' | 'replace' | 'hollow' | 'clear';
 
 export interface BoxCorner {
   x: number;
@@ -64,10 +66,16 @@ export function boxEdit(
   // y → z → x matches the YZX index order, so the inner loop walks contiguous memory and
   // the index is one addition rather than a multiply per cell.
   for (let y = min.y; y <= max.y; y++) {
+    const yShell = y === min.y || y === max.y;
     for (let z = min.z; z <= max.z; z++) {
+      const zShell = z === min.z || z === max.z;
       let index = voxelIndex(size, min.x, y, z);
       for (let x = min.x; x <= max.x; x++, index++) {
         if (mode === 'replace' && voxels[index] === AIR_INDEX) continue;
+        // A cell is on the shell if it is extreme on any one axis. A box thinner than three
+        // cells on some axis is therefore entirely shell, which is right: a 1-block-thick
+        // wall hollowed out is still the wall.
+        if (mode === 'hollow' && !yShell && !zShell && x !== min.x && x !== max.x) continue;
         builder.set(index, value);
       }
     }

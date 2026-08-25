@@ -45,6 +45,21 @@ describe('boxEdit', () => {
     expect([...op!.after]).toEqual(new Array(16).fill(0));
   });
 
+  it('hollow writes only the shell of the box', () => {
+    const grid = grid8();
+    const op = boxEdit(grid, { x: 1, y: 1, z: 1 }, { x: 5, y: 5, z: 5 }, 'hollow', 2);
+    // 5^3 minus the 3^3 interior.
+    expect(op!.indices).toHaveLength(125 - 27);
+    // The centre cell is untouched, which is the whole point of the mode.
+    expect([...op!.indices]).not.toContain(voxelIndex(grid.size, 3, 3, 3));
+  });
+
+  it('hollow on a one-block-thick box is the whole box', () => {
+    const grid = grid8();
+    const op = boxEdit(grid, { x: 0, y: 4, z: 0 }, { x: 7, y: 4, z: 7 }, 'hollow', 2);
+    expect(op!.indices).toHaveLength(64);
+  });
+
   it('is null when the box changes nothing', () => {
     const grid = grid8();
     expect(boxEdit(grid, { x: 5, y: 5, z: 5 }, { x: 7, y: 7, z: 7 }, 'clear', 2)).toBeNull();

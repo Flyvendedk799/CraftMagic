@@ -202,10 +202,15 @@
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
 }
 
+/* Secondary by default. The layer bar is a view control: nothing in it is the thing to do
+   next, so `aria-pressed` is the only state that earns the accent. */
 .hud--layers button {
   font-size: 0.75rem;
   padding: 0.35rem 0.7rem;
   white-space: nowrap;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 .hud--layers button:disabled {
@@ -246,6 +251,9 @@
   border-radius: 10px;
   color: var(--muted);
   min-width: 11rem;
+  /* Bounded, because this line now carries a preview's cell count as well as the block
+     under the pointer, and an unbounded readout would stretch across the build. */
+  max-width: min(36rem, calc(100vw - 2rem));
 }
 
 .hover-readout strong {
@@ -881,4 +889,276 @@
 .section__body > .params > .params__title:first-child,
 .section__body > .export > .params__title:first-child {
   display: none;
+}
+
+/* --- brush -----------------------------------------------------------------
+   A row of small controls rather than a slider: the useful radii are the first four, and a
+   slider for a range of nine would take the panel's whole width to express what two buttons
+   and a number say better. */
+
+.tools__row--brush {
+  margin-top: 0.5rem;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.tools__label {
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  margin-right: 0.15rem;
+}
+
+.tools__step {
+  width: 1.5rem;
+  padding: 0.2rem 0;
+  font-size: 0.8125rem;
+  line-height: 1;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+
+.tools__step:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
+}
+
+.tools__brush-size {
+  min-width: 2.6rem;
+  text-align: center;
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.tools__shape {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  padding: 0.25rem 0.5rem;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* --- clipboard ------------------------------------------------------------- */
+
+.clip {
+  margin-top: 0.5rem;
+}
+
+.clip__what {
+  margin: 0;
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+.clip__what--empty {
+  font-family: inherit;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.tools__row--clip {
+  margin-top: 0.4rem;
+}
+
+.tools__row--clip button {
+  flex: 1 1 auto;
+  font-size: var(--text-2xs);
+  padding: 0.3rem 0.4rem;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* --- recent blocks ---------------------------------------------------------
+   Swatches only. A name on each would be three rows of text for something the eye picks out
+   by colour anyway, and the title attribute still names them on hover. */
+
+.picker__recent {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+}
+
+.picker__chip {
+  flex: none;
+  padding: 3px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  line-height: 0;
+}
+
+/* Bigger than the swatch inside a list row: this one is the click target, not a label. */
+.picker__chip .picker__swatch {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.picker__chip[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
+.picker__item[data-active='true'] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* --- the layer bar's extra controls ---------------------------------------- */
+
+.hud--layers button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+}
+
+/* Pushed to the far end: the view presets are about the camera, not the layer cut, and
+   sharing a row with it should not read as sharing a purpose. */
+.layers__views {
+  display: flex;
+  gap: 0.3rem;
+  margin-left: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--border);
+}
+
+/* Secondary, like the tool buttons: the camera presets are always available, and four
+   accent-filled buttons in the corner would out-shout the build. */
+.layers__views button {
+  font-size: var(--text-2xs);
+  padding: 0.3rem 0.5rem;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.layers__views button:hover {
+  border-color: var(--accent);
+  filter: none;
+}
+
+.hover-readout__preview {
+  font-style: normal;
+  color: var(--pending);
+}
+
+/* --- keyboard sheet --------------------------------------------------------
+   A real overlay rather than another HUD panel: it is the one thing on this screen that is
+   read rather than used, and it should not have to compete with the build for space. */
+
+.sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.sheet__scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--brand-void) 72%, transparent);
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sheet__panel {
+  position: relative;
+  width: min(50rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 45%);
+}
+
+.sheet__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.sheet__title {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.sheet__close {
+  font-size: var(--text-xs);
+  padding: 0.3rem 0.7rem;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.sheet__cols {
+  margin-top: 1rem;
+  display: grid;
+  /* Two wide columns rather than three narrow ones: the descriptions are sentences, and a
+     13rem column wrapped every one of them onto four lines. */
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 1.25rem 2rem;
+}
+
+.sheet__group-title {
+  margin: 0 0 0.4rem;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.sheet__list {
+  margin: 0;
+  display: grid;
+  /* The key column sizes to its widest entry, so every description starts on one line. */
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 0.6rem;
+  align-items: baseline;
+  font-size: var(--text-xs);
+}
+
+.sheet__list dt {
+  white-space: nowrap;
+}
+
+.sheet__list dd {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.sheet__list kbd {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.sheet__foot {
+  margin: 1.25rem 0 0;
+  font-size: var(--text-2xs);
+  color: var(--muted);
 }

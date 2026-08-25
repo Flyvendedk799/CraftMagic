@@ -22,12 +22,24 @@ const buildId = process.argv[2] ?? 'cottage';
 const outFile = process.argv[3] ?? 'out/verify-edit.png';
 const ORIGIN = process.env.CM_ORIGIN ?? 'http://localhost:3016';
 
-const EDGE = [
+/**
+ * Any Chromium will do — the driver speaks CDP, not Edge.
+ *
+ * Listing the Linux paths as well as the Windows ones is what lets this run in CI and in a
+ * container, where the only browser on disk is the one Playwright unpacked. `CM_BROWSER`
+ * wins over both, for a checkout that keeps its browser somewhere else entirely.
+ */
+const BROWSER = [
+	process.env.CM_BROWSER,
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
 	'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-].find((p) => fs.existsSync(p));
-if (!EDGE) {
-	console.error('Edge not found');
+	'/opt/pw-browsers/chromium',
+	'/usr/bin/chromium',
+	'/usr/bin/chromium-browser',
+	'/usr/bin/google-chrome',
+].find((p) => p && fs.existsSync(p));
+if (!BROWSER) {
+	console.error('no Chromium-based browser found — set CM_BROWSER to one');
 	process.exit(1);
 }
 
@@ -60,13 +72,16 @@ const openSection = (title) => `(() => {
 
 
 const child = spawn(
-	EDGE,
+	BROWSER,
 	[
 		'--headless=new',
 		'--disable-gpu',
 		'--use-gl=swiftshader',
 		'--enable-unsafe-swiftshader',
 		'--hide-scrollbars',
+		// Extra flags for the machine this runs on. A container running as root needs
+		// `--no-sandbox`, which is not something to hardcode for everyone else.
+		...(process.env.CM_BROWSER_FLAGS ?? '').split(' ').filter(Boolean),
 		`--window-size=${WIDTH},${HEIGHT}`,
 		`--remote-debugging-port=${port}`,
 		`--user-data-dir=${profile}`,
@@ -268,7 +283,10 @@ try {
 	// --- fill ----------------------------------------------------------------
 	// Selected by `data-tool` rather than by the button's text: the buttons now carry their
 	// keyboard shortcut inside them, so matching on textContent broke on "Place1".
-	const TOOL_IDS = { Place: 'place', Erase: 'erase', Fill: 'fill', Box: 'select', Swap: 'swap' };
+	const TOOL_IDS = {
+		Place: 'place', Erase: 'erase', Fill: 'fill', Box: 'select', Swap: 'swap',
+		Line: 'line', Stamp: 'stamp', Pick: 'pick',
+	};
 	const useTool = (label) =>
 		evaluate(`
 			(() => {
@@ -402,6 +420,160 @@ try {
 	const withFocus = await stats();
 	check('Ctrl+Z inside the prompt textarea does not undo', withFocus.edits === 4, `${withFocus.edits} edits`);
 	await evaluate("(() => { document.querySelector('.prompt__input').blur(); return true; })()");
+
+	// --- brush, line, clipboard, pick, isolate --------------------------------
+	// The tools added after the first five, driven the same way: real key events and real
+	// clicks. Most of these read their result off the notice line, which is the same sentence
+	// the user is shown — a check that passes while the user is told nothing is not a check
+	// worth having.
+
+	/** Keys that are not a letter need their real `code`, or the app sees `key: undefined`. */
+	const CODES = {
+		'=': ['Equal', 187], '-': ['Minus', 189], '[': ['BracketLeft', 219], ']': ['BracketRight', 221],
+		'\\': ['Backslash', 220], '?': ['Slash', 191], Escape: ['Escape', 27],
+	};
+	const press = async (k, modifiers = 0) => {
+		const [code, vk] = CODES[k] ?? [`Key${k.toUpperCase()}`, k.toUpperCase().charCodeAt(0)];
+		const base = { key: k, code, windowsVirtualKeyCode: vk, modifiers };
+		await send('Input.dispatchKeyEvent', { type: 'keyDown', ...base });
+		await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+		await sleep(120);
+	};
+	const altClick = async (x, y) => {
+		await move(x, y);
+		for (const type of ['mousePressed', 'mouseReleased']) {
+			await send('Input.dispatchMouseEvent', {
+				type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0,
+				clickCount: 1, pointerType: 'mouse', modifiers: 1, // 1 = Alt
+			});
+		}
+	};
+	const text = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)})?.textContent?.trim() ?? null`);
+	const editCount = () => evaluate("Number(document.querySelector('.editor').dataset.edits)");
+
+	// Brush: two presses of "+" is a 5x5 brush, and one click has to remove more than one
+	// block or the radius never reached the tool.
+	await useTool('Erase');
+	await press('=');
+	await press('=');
+	check('the brush grows on the keyboard', (await text('.tools__brush-size')) === '5×5', String(await text('.tools__brush-size')));
+
+	const brushTarget = (await probe(null)) ?? target;
+	const beforeBrush = await stats();
+	await click(brushTarget.x, brushTarget.y);
+	await meshed();
+	const afterBrush = await stats();
+	check('a wide brush erases more than one block', afterBrush.blocks < beforeBrush.blocks - 1, `${beforeBrush.blocks} → ${afterBrush.blocks}`);
+	check('the brush says what it did', /Erased [\d,]+ blocks/.test(afterBrush.notice ?? ''), afterBrush.notice ?? '');
+	await press('-');
+	await press('-');
+
+	// Shift-drag: one gesture across the build, landing as one edit rather than nine.
+	await useTool('Place');
+	const strokeFrom = (await probe(null)) ?? target;
+	const beforeStroke = await stats();
+	const editsBeforeStroke = await editCount();
+	const SHIFT = 8;
+	await move(strokeFrom.x, strokeFrom.y);
+	await send('Input.dispatchMouseEvent', {
+		type: 'mousePressed', x: strokeFrom.x, y: strokeFrom.y, button: 'left', buttons: 1,
+		clickCount: 1, pointerType: 'mouse', modifiers: SHIFT,
+	});
+	for (let step = 1; step <= 8; step++) {
+		await send('Input.dispatchMouseEvent', {
+			type: 'mouseMoved', x: strokeFrom.x + step * 6, y: strokeFrom.y, button: 'left', buttons: 1,
+			pointerType: 'mouse', modifiers: SHIFT,
+		});
+		await sleep(40);
+	}
+	await send('Input.dispatchMouseEvent', {
+		type: 'mouseReleased', x: strokeFrom.x + 48, y: strokeFrom.y, button: 'left', buttons: 0,
+		clickCount: 1, pointerType: 'mouse', modifiers: SHIFT,
+	});
+	await sleep(400);
+	await meshed();
+	const afterStroke = await stats();
+	check('a shift-drag places along the whole drag', afterStroke.blocks > beforeStroke.blocks + 1, `${beforeStroke.blocks} → ${afterStroke.blocks}`);
+	check('...as a single undo step', (await editCount()) === editsBeforeStroke + 1, `${editsBeforeStroke} → ${await editCount()} edits`);
+	check('...and says so', /in one stroke/.test(afterStroke.notice ?? ''), afterStroke.notice ?? '');
+
+	// Line: two clicks, one op, and a run of blocks between them.
+	await useTool('Line');
+	const lineA = (await probe(null)) ?? target;
+	await click(lineA.x, lineA.y);
+	await sleep(200);
+	const lineB = (await probe(null, lineA)) ?? lineA;
+	const beforeLine = await editCount();
+	await click(lineB.x, lineB.y);
+	await waitFor(`document.querySelector('.editor').dataset.edits === '${beforeLine + 1}'`, 'the line', 15_000);
+	await meshed();
+	const afterLine = await stats();
+	check('a line is one edit, however long it is', /Drew a line of [\d,]+ blocks/.test(afterLine.notice ?? ''), afterLine.notice ?? '');
+
+	// Alt-click samples the block under the pointer without editing anything.
+	const pickTarget = (await probe(null)) ?? target;
+	const editsBeforePick = await editCount();
+	await altClick(pickTarget.x, pickTarget.y);
+	await sleep(250);
+	const sampled = await text('.picker__current .picker__name');
+	check('Alt+click picks the block under the pointer', sampled === pickTarget.block, `${sampled} vs ${pickTarget.block}`);
+	check('Alt+click changes nothing', (await editCount()) === editsBeforePick);
+
+	// Copy a region with the box tool, then stamp it somewhere else.
+	await useTool('Box');
+	await evaluate(`
+		(() => {
+			const button = [...document.querySelectorAll('.tools__mode')].find((b) => b.textContent.trim() === 'Copy');
+			if (!button) throw new Error('no Copy mode on the box tool');
+			button.click();
+			return true;
+		})()
+	`);
+	const copyA = (await probe(null)) ?? target;
+	await click(copyA.x, copyA.y);
+	await sleep(200);
+	const copyB = (await probe(null, copyA)) ?? copyA;
+	await click(copyB.x, copyB.y);
+	await sleep(300);
+	const copied = await stats();
+	check('copying takes the region without editing it', /Copied \d+×\d+×\d+/.test(copied.notice ?? ''), copied.notice ?? '');
+	check('copying hands over to the stamp tool', (await evaluate("document.querySelector('.editor').dataset.tool")) === 'stamp');
+
+	await press('r');
+	check('R rotates the clipboard', /rotated/i.test((await text('.tools__notice')) ?? ''), (await text('.tools__notice')) ?? '');
+
+	const stampTarget = (await probe(null, copyA)) ?? copyA;
+	const beforeStamp = await editCount();
+	await click(stampTarget.x, stampTarget.y);
+	await waitFor(`document.querySelector('.editor').dataset.edits === '${beforeStamp + 1}'`, 'the stamp', 15_000);
+	await meshed();
+	check('stamping writes the clipboard into the build', /Stamped [\d,]+ blocks/.test((await stats()).notice ?? ''), (await stats()).notice ?? '');
+
+	// Layer keys and the isolate slice.
+	await press('[');
+	// Against the URL, not the readout: with no cut at all the readout already says
+	// "y 0–<top>", so a check that only read it would pass while nothing had happened.
+	const cut = await evaluate("new URLSearchParams(location.search).get('layer')");
+	check('[ cuts the build at a layer', cut !== null && Number(cut) >= 0, `layer=${cut}`);
+	await press('i');
+	// Waited for rather than read once: a re-render on the 202k-block build takes longer than
+	// the pause after a keypress, and a single read here was checking the previous frame.
+	let isolated = null;
+	for (let i = 0; i < 40; i++) {
+		isolated = await text('.layers__value');
+		if (/^y \d+$/.test(isolated ?? '')) break;
+		await sleep(150);
+	}
+	check('I isolates that layer alone', /^y \d+$/.test(isolated ?? ''), isolated ?? '');
+	await press('\\');
+	await waitFor("!new URLSearchParams(location.search).has('layer')", 'the layer cut to clear', 10_000);
+	check('\\ shows every layer again', true);
+
+	// The shortcut sheet, which is the only place several of these keys are written down.
+	await press('?');
+	check('? opens the shortcut sheet', (await evaluate("!!document.querySelector('.sheet')")) === true);
+	await press('Escape');
+	check('Escape closes it', (await evaluate("!!document.querySelector('.sheet')")) === false);
 
 	await sleep(400);
 	const shot = await send('Page.captureScreenshot', { format: 'png' });

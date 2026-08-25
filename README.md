@@ -205,17 +205,44 @@ upgrades over the internet, and the mod compiles and loads on a real 26.2 dedica
 - Performance: a 200×60×200 build (265k blocks) expands in ~190 ms; the 202k-block stress
   fixture meshes 389k quads in ~114 ms, and scrubbing layers re-meshes nothing.
 
-**Editing tools — done.** Place, erase, flood fill, box (fill / replace / clear) and palette
-swap, with undo/redo on Ctrl+Z / Ctrl+Shift+Z. Each tool is a pure function of the grid and
-a pick that returns an `EditOp` — it never touches the renderer — so the caller owns
-applying and recording, and every tool is testable without a DOM.
+**Editing tools — done.** Eight of them: place, erase, flood fill, box (fill / replace /
+hollow / clear / copy), palette swap, line, stamp and pick, on the number keys `1`–`8`, with
+undo/redo on Ctrl+Z / Ctrl+Shift+Z. Each tool is a pure function of the grid and a pick that
+returns an `EditOp` — it never touches the renderer — so the caller owns applying and
+recording, and every tool is testable without a DOM.
+
+Four of those exist because clicking one block at a time is not building:
+
+- **A brush**, round or square, radius 0–8, on `−` and `+`. It shares one module with
+  **Shift-drag strokes**, because both are the same problem: a set of cells that has to
+  become *one* `EditOp`. A drag that pushed an op per pointer move would need eighty presses
+  of Ctrl+Z to take back one stroke, and the byte ceiling below would evict the start of a
+  stroke still visible on screen.
+- **A line** between two picked cells, walked with integer 3D Bresenham so the far end lands
+  exactly where it was clicked — beams, frames, rooflines.
+- **A clipboard**: copy a region with the box tool, then stamp it, rotating with `R` and
+  mirroring with `M`. A clip carries its own palette of block *refs* rather than indices,
+  which is what lets it be pasted into a build numbered differently and rotated at all —
+  indices cannot be rotated, and `facing=north` has to become `facing=east` with the
+  geometry or the staircase turns and keeps facing the old wall.
+- **Alt+click picks** the block under the pointer from any tool, and the picker keeps the
+  last eight blocks as swatches. Matching a block already in the build used to mean reading
+  its name off the readout and typing it back into a search box.
+
+Nothing destructive happens unannounced: the canvas outlines what the next click would
+change — the brush's actual footprint, the line's path, the box between the two corners, the
+clipboard where it would land — and the readout under the build carries the cell count,
+which is the part that is hard to judge by eye. Past 800 cells the outline collapses to a
+bounding box, since it is rebuilt on every pointer move.
 
 Two limits are deliberate rather than defensive. The flood fill stops at **100,000 cells**
 and says so: a stone shell on a 500k-block build is one connected region, and an unbounded
 flood there freezes the tab on what may have been a stray click. The undo stack caps at
 **100 ops or 64 MB**, whichever binds first — a depth limit alone cannot bound memory when
 one box fill is 10 MB, and a byte limit alone lets ten thousand single-voxel pokes make
-every undo a linear walk.
+every undo a linear walk. A stroke is capped at **250,000 cells** and a clip at **2,000,000**,
+for the same reason in the other direction: a clip is held for the whole session and copied
+again by every rotation.
 
 The interesting conflict is with the param slider. Manual edits write voxels; the slider
 re-derives them, so moving it would silently delete the edits. The first edit marks the
@@ -225,15 +252,29 @@ Growing the palette to hold a newly placed block does **not** reload the world: 
 appended slot cannot be in any existing mesh, so `VoxelWorld.setPalette` widens the worker's
 colour tables in place instead of re-meshing 400 chunks.
 
+The layer slider gained a second cut: **`I` isolates** the layer under the slider so the
+build reads as one floor plan at a time, and `[` / `]` step the cut a layer at a time. Both
+are still clipping planes rather than a re-mesh, and the picker is told about both cuts, so
+a click cannot land on a block nobody can see. Four camera presets sit beside it, because an
+orbit camera is very good at ending up somewhere with no way back. `?` lists every shortcut,
+which is the only way anyone was ever going to find Alt+click.
+
 ```bash
 node tools/verify-edit.mjs cottage out/verify-edit.png   # real clicks over CDP
 node tools/verify-edit.mjs field   out/verify-field.png  # same, on the 202k-block build
+
+# Any Chromium will do; CM_BROWSER points at one, CM_BROWSER_FLAGS adds machine-specific
+# flags (a container running as root needs --no-sandbox).
+CM_BROWSER=/opt/pw-browsers/chromium CM_BROWSER_FLAGS=--no-sandbox node tools/verify-edit.mjs
 ```
 
 That driver clicks the canvas for real — pointer events, DDA pick, op, re-mesh, HUD — and
 checks the block count moves, Ctrl+Z puts it back, the fill spreads, the box and the swap
-report what they touched, the re-expansion guard appears, revert restores the build exactly,
-and Ctrl+Z inside the generation prompt does *not* undo. On a 100k-cell fill the op costs
+report what they touched, a wide brush removes more than one block, a Shift-drag lands as a
+single undo step, a line is one op however long it is, Alt+click samples without editing,
+a copied region stamps back rotated, `[` and `I` cut and isolate a layer, the shortcut sheet
+opens and closes, the re-expansion guard appears, revert restores the build exactly, and
+Ctrl+Z inside the generation prompt does *not* undo. On a 100k-cell fill the op costs
 ~8 ms to build and ~2.5 ms to undo through `VoxelWorld`; a 1.25M-cell box op is 10 MB and
 applies in ~34 ms.
 

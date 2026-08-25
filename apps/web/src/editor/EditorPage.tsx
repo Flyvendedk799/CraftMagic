@@ -9,16 +9,21 @@
  * straight to the voxels, so they are exactly what re-expanding destroys. That conflict is
  * settled here — the page holds the confirmation, `useEditSession` holds the evidence.
  *
- * View state lives in the query string (`?build=tower&p.height=24&layer=6`). It costs
+ * View state lives in the query string (`?build=tower&p.height=24&layer=6&only=1`). It costs
  * nothing, makes a view linkable, and lets a headless screenshot reach any of these states
  * without a driver. Edits deliberately do not: a URL that claimed to describe an edited
  * build would be a lie the moment it was shared.
+ *
+ * The tools themselves are pure functions in `tools/`, and this file is the only place that
+ * knows a pointer exists. Every branch of `onCanvasClick` does the same three things —
+ * resolve a palette slot, ask a tool for an op, hand the op to the session — which is what
+ * lets a new tool be a new function and a row in `toolset.ts` rather than a new subsystem.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AIR_BLOCK, displayName, voxelIndex } from '@craftmagic/core';
-import { EditorCanvas } from './EditorCanvas.js';
+import { EditorCanvas, type ViewKind, type ViewRequest } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
   BLANK_BUILD,
@@ -45,12 +50,27 @@ import {
 import { ExportBar } from './ExportBar.js';
 import { ScalePanel } from './ScalePanel.js';
 import { Section } from './Section.js';
-import { ToolPalette, type ToolId } from './ToolPalette.js';
+import { ShortcutHelp } from './ShortcutHelp.js';
+import { ToolPalette, type BoxAction } from './ToolPalette.js';
+import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
+import { previewFor } from './preview.js';
 import { useEditSession } from './useEditSession.js';
-import { place } from './tools/place.js';
+import { placementCell } from './tools/place.js';
 import { erase } from './tools/erase.js';
 import { floodFill } from './tools/fill.js';
-import { boxBounds, boxEdit, type BoxCorner, type BoxMode } from './tools/boxSelect.js';
+import { boxBounds, boxEdit, type BoxCorner } from './tools/boxSelect.js';
+import { brushEdit, MAX_BRUSH_RADIUS, type BrushShape, type Cell } from './tools/brush.js';
+import { lineEdit } from './tools/line.js';
+import {
+  ClipTooLargeError,
+  copyRegion,
+  mirrorClip,
+  rotateClip,
+  stampEdit,
+  type Clip,
+  type StampMode,
+} from './tools/clipboard.js';
+import { pickBlock } from './tools/pick.js';
 import { familyOf, swapFamily, swapPaletteIndex } from './tools/paletteSwap.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
@@ -70,15 +90,6 @@ const DEFAULT_BUILD = BLANK_BUILD;
 /** Common enough to be a sane starting block, and present in most sample palettes. */
 const DEFAULT_BLOCK = 'minecraft:oak_planks';
 
-/** Kept beside the palette's own labels; both are wrong the moment they disagree. */
-const TOOL_KEYS: Record<string, ToolId> = {
-  '1': 'place',
-  '2': 'erase',
-  '3': 'fill',
-  '4': 'select',
-  '5': 'swap',
-};
-
 const BUILD_LABELS: Record<string, string> = {
   blank: 'Empty',
   cottage: 'Cottage',
@@ -86,6 +97,13 @@ const BUILD_LABELS: Record<string, string> = {
   pavilion: 'Pavilion',
   field: 'Stress test',
 };
+
+const VIEWS: readonly { kind: ViewKind; label: string }[] = [
+  { kind: 'iso', label: 'Iso' },
+  { kind: 'top', label: 'Top' },
+  { kind: 'front', label: 'Front' },
+  { kind: 'side', label: 'Side' },
+];
 
 /** A navigation that would re-expand the program, held back until the user confirms. */
 type PendingNav =
@@ -165,6 +183,8 @@ export function EditorPage() {
     buildId !== BLANK_BUILD && !session.detached ? build.program : null;
   const topLayer = grid.size.y - 1;
   const layer = readLayer(params.get('layer'), topLayer);
+  // Isolate is meaningless without a cut, so it follows the layer rather than standing alone.
+  const isolate = layer !== null && params.get('only') === '1';
 
   const totalChunks = useMemo(() => {
     const counts = chunkCounts(grid.size);
@@ -186,20 +206,38 @@ export function EditorPage() {
     return `/guide?${search.toString()}`;
   }, [buildId, params]);
 
+  /**
+   * Write view state to the query string.
+   *
+   * Seeded from `window.location.search` rather than from the `prev` React Router hands
+   * over, and the stepping and toggling forms (`layerStep`, `toggleIsolate`) are resolved
+   * there rather than against this render's values. Both are the same fix for the same bug:
+   * `useSearchParams` closes its setter over the params of the render it came from, and a
+   * navigation updates the URL synchronously but only re-renders later. On a 200k-block
+   * build that gap is long enough to press two keys in, and pressing `[` then `I` quickly
+   * left the second one looking at a query string with no `layer` in it, so isolate did
+   * nothing at all. The location is always at least as fresh as `prev`, never less.
+   */
   const update = useCallback(
     (next: {
       build?: string;
       layer?: number | null;
+      /** Move the cut by this many layers, from wherever it currently is. */
+      layerStep?: number;
+      only?: boolean;
+      /** Flip isolate, when there is a cut to isolate. */
+      toggleIsolate?: boolean;
       param?: { name: string; value: number };
       scale?: ScalePercent | null;
     }) => {
       setParams(
-        (prev) => {
-          const search = new URLSearchParams(prev);
+        () => {
+          const search = new URLSearchParams(window.location.search);
           if (next.build !== undefined) {
             search.set('build', next.build);
             // Layers and params are per-build; carrying either across is meaningless.
             search.delete('layer');
+            search.delete('only');
             for (const key of [...search.keys()]) {
               if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX)) search.delete(key);
             }
@@ -207,8 +245,23 @@ export function EditorPage() {
           if (next.param) search.set(PARAM_PREFIX + next.param.name, String(next.param.value));
           if (next.scale !== undefined) writeScale(search, next.scale);
           if (next.layer !== undefined) {
-            if (next.layer === null) search.delete('layer');
-            else search.set('layer', String(next.layer));
+            if (next.layer === null) {
+              search.delete('layer');
+              // Nothing to isolate once the whole build is showing again.
+              search.delete('only');
+            } else search.set('layer', String(next.layer));
+          }
+          if (next.layerStep !== undefined) {
+            const current = readLayer(search.get('layer'), topLayer) ?? topLayer;
+            search.set('layer', String(Math.max(0, Math.min(topLayer, current + next.layerStep))));
+          }
+          if (next.only !== undefined) {
+            if (next.only) search.set('only', '1');
+            else search.delete('only');
+          }
+          if (next.toggleIsolate && search.has('layer')) {
+            if (search.get('only') === '1') search.delete('only');
+            else search.set('only', '1');
           }
           return search;
         },
@@ -216,45 +269,59 @@ export function EditorPage() {
       );
       if (next.build !== undefined) setHover(null);
     },
-    [setParams],
+    [setParams, topLayer],
   );
 
   // --- editing ------------------------------------------------------------
 
   const [tool, setTool] = useState<ToolId>('place');
-
-  /**
-   * Number keys pick a tool.
-   *
-   * Guarded against firing while someone is typing: the prompt box and the rename field are
-   * both on this page, and a shortcut that changes the tool mid-sentence is worse than no
-   * shortcut. Modifier combinations are left alone so Ctrl+Z still reaches undo.
-   */
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (target?.isContentEditable) return;
-
-      const picked = TOOL_KEYS[event.key];
-      if (!picked) return;
-      event.preventDefault();
-      setTool(picked);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
   const [block, setBlock] = useState<string>(DEFAULT_BLOCK);
-  const [boxMode, setBoxMode] = useState<BoxMode>('fill');
+  const [boxAction, setBoxAction] = useState<BoxAction>('fill');
   const [familyMode, setFamilyMode] = useState(false);
   const [anchor, setAnchor] = useState<BoxCorner | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [brushRadius, setBrushRadius] = useState(0);
+  const [brushShape, setBrushShape] = useState<BrushShape>('ball');
+  const [clip, setClip] = useState<Clip | null>(null);
+  const [stampMode, setStampMode] = useState<StampMode>('merge');
+  const [help, setHelp] = useState(false);
+  const [view, setView] = useState<ViewRequest | null>(null);
+
+  const onTool = useCallback((next: ToolId) => {
+    setTool(next);
+    setAnchor(null);
+    setNotice(null);
+  }, []);
+
+  const setViewKind = useCallback((kind: ViewKind) => {
+    // A new nonce every time, so pressing the same preset twice really does re-frame — the
+    // whole reason to reach for it is usually that the camera has wandered.
+    setView((prev) => ({ kind, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
+  const stepBrush = useCallback((delta: number) => {
+    setBrushRadius((prev) => Math.max(0, Math.min(MAX_BRUSH_RADIUS, prev + delta)));
+  }, []);
+
+  const stepLayer = useCallback((delta: number) => update({ layerStep: delta }), [update]);
+
+  const rotateClipboard = useCallback(() => {
+    setClip((prev) => (prev ? rotateClip(prev, 1) : prev));
+    setNotice('Clipboard rotated 90°.');
+  }, []);
+
+  const mirrorClipboard = useCallback(() => {
+    setClip((prev) => (prev ? mirrorClip(prev, 'x') : prev));
+    setNotice('Clipboard mirrored.');
+  }, []);
 
   /**
    * A tool click. Every branch does the same three things — resolve a palette slot, ask a
    * pure tool for an op, hand the op to the session — which is the whole reason the tools
    * take a palette index rather than a block ref and return an op rather than applying one.
+   *
+   * The two exceptions prove it: `copy` produces a clip instead of an op because it changes
+   * nothing, and `pick` produces a block ref for the same reason.
    */
   const onCanvasClick = useCallback(
     (hit: VoxelHit) => {
@@ -268,16 +335,42 @@ export function EditorPage() {
         case 'place': {
           const index = slot();
           if (index < 0) return;
-          const op = place(grid, hit, index);
-          if (!op) setNotice('Nothing to place there — that face is already covered.');
-          else setNotice(null);
-          session.apply(op);
+          const cell = placementCell(grid, hit);
+          if (!cell) {
+            setNotice('Nothing to place there — that face is already covered.');
+            return;
+          }
+          const result = brushEdit(grid, [cell], index, {
+            radius: brushRadius,
+            shape: brushShape,
+            onlyAir: true,
+          });
+          session.apply(result.op);
+          setNotice(
+            result.cells === 0
+              ? 'Nothing to place there — every cell the brush covers is already filled.'
+              : brushRadius === 0
+                ? null
+                : `Placed ${result.cells.toLocaleString()} blocks.`,
+          );
           return;
         }
 
         case 'erase': {
-          session.apply(erase(grid, hit));
-          setNotice(null);
+          if (brushRadius === 0) {
+            session.apply(erase(grid, hit));
+            setNotice(null);
+            return;
+          }
+          const result = brushEdit(grid, [hit], 0, {
+            radius: brushRadius,
+            shape: brushShape,
+            onlySolid: true,
+          });
+          session.apply(result.op);
+          setNotice(
+            result.cells === 0 ? 'Nothing there to erase.' : `Erased ${result.cells.toLocaleString()} blocks.`,
+          );
           return;
         }
 
@@ -294,23 +387,90 @@ export function EditorPage() {
           return;
         }
 
+        case 'line': {
+          if (!anchor) {
+            setAnchor({ x: hit.x, y: hit.y, z: hit.z });
+            setNotice('Now click the other end.');
+            return;
+          }
+          const index = slot();
+          if (index < 0) return;
+          const result = lineEdit(grid, anchor, hit, index, {
+            radius: brushRadius,
+            shape: brushShape,
+          });
+          session.apply(result.op);
+          setAnchor(null);
+          setNotice(`Drew a line of ${result.cells.toLocaleString()} blocks.`);
+          return;
+        }
+
         case 'select': {
           if (!anchor) {
             setAnchor({ x: hit.x, y: hit.y, z: hit.z });
-            setNotice('Now click the opposite corner.');
+            setNotice(
+              boxAction === 'copy' ? 'Now click the opposite corner to copy.' : 'Now click the opposite corner.',
+            );
             return;
           }
-          const index = boxMode === 'clear' ? 0 : slot();
-          if (index < 0) return;
+
           const bounds = boxBounds(grid, anchor, hit);
-          const op = boxEdit(grid, anchor, hit, boxMode, index);
+          const extent = `${bounds.max.x - bounds.min.x + 1}×${bounds.max.y - bounds.min.y + 1}×${
+            bounds.max.z - bounds.min.z + 1
+          }`;
+
+          if (boxAction === 'copy') {
+            setAnchor(null);
+            try {
+              const copied = copyRegion(grid, anchor, hit);
+              setClip(copied);
+              // Straight to the tool that uses it: copying is never the goal, and leaving the
+              // box tool armed after a copy invites a second selection nobody wanted.
+              setTool('stamp');
+              setNotice(
+                `Copied ${extent} — ${copied.blocks.toLocaleString()} blocks. Click to stamp it; R rotates.`,
+              );
+            } catch (err) {
+              setNotice(err instanceof ClipTooLargeError ? err.message : String(err));
+            }
+            return;
+          }
+
+          const index = boxAction === 'clear' ? 0 : slot();
+          if (index < 0) return;
+          const op = boxEdit(grid, anchor, hit, boxAction, index);
           session.apply(op);
           setAnchor(null);
           setNotice(
-            `${boxMode === 'clear' ? 'Cleared' : 'Filled'} a ${bounds.max.x - bounds.min.x + 1}×${
-              bounds.max.y - bounds.min.y + 1
-            }×${bounds.max.z - bounds.min.z + 1} box — ${(op?.indices.length ?? 0).toLocaleString()} blocks changed.`,
+            `${VERB[boxAction]} a ${extent} box — ${(op?.indices.length ?? 0).toLocaleString()} blocks changed.`,
           );
+          return;
+        }
+
+        case 'stamp': {
+          if (!clip) {
+            setNotice('Nothing copied yet — use the Box tool in Copy mode first.');
+            return;
+          }
+          const cell = placementCell(grid, hit) ?? hit;
+          const result = stampEdit(grid, clip, cell, (ref) => session.resolveBlock(ref), stampMode);
+          session.apply(result.op);
+          setNotice(
+            result.truncated
+              ? 'Palette is full — part of the clipboard could not be stamped.'
+              : `Stamped ${result.cells.toLocaleString()} blocks at ${cell.x}, ${cell.y}, ${cell.z}.`,
+          );
+          return;
+        }
+
+        case 'pick': {
+          const picked = pickBlock(grid, hit);
+          if (!picked) {
+            setNotice('Nothing to pick there.');
+            return;
+          }
+          setBlock(picked);
+          setNotice(`Picked ${displayName(picked)}.`);
           return;
         }
 
@@ -350,14 +510,60 @@ export function EditorPage() {
         }
       }
     },
-    [tool, block, boxMode, familyMode, anchor, grid, session],
+    [tool, block, boxAction, familyMode, anchor, grid, session, brushRadius, brushShape, clip, stampMode],
   );
 
-  const onTool = useCallback((next: ToolId) => {
-    setTool(next);
-    setAnchor(null);
-    setNotice(null);
-  }, []);
+  /**
+   * A Shift-drag, delivered once with every cell it crossed.
+   *
+   * Folded into a single op rather than replayed as one edit per cell: a stroke is one
+   * gesture, so it has to be one press of Ctrl+Z. Offered only for the two tools where
+   * "keep going" means something — the canvas reads the absence of this callback as
+   * permission to let the drag orbit the camera instead.
+   */
+  const onStroke = useCallback(
+    (hits: VoxelHit[]) => {
+      if (tool === 'place') {
+        const index = session.resolveBlock(block);
+        if (index < 0) {
+          setNotice('Palette is full — this build cannot hold another block type.');
+          return;
+        }
+        const cells = hits
+          .map((hit) => placementCell(grid, hit))
+          .filter((cell): cell is Cell => cell !== null);
+        const result = brushEdit(grid, cells, index, {
+          radius: brushRadius,
+          shape: brushShape,
+          onlyAir: true,
+        });
+        session.apply(result.op);
+        setNotice(result.op ? `Placed ${result.cells.toLocaleString()} blocks in one stroke.` : null);
+        return;
+      }
+
+      if (tool !== 'erase') return;
+      const result = brushEdit(grid, hits, 0, {
+        radius: brushRadius,
+        shape: brushShape,
+        onlySolid: true,
+      });
+      session.apply(result.op);
+      setNotice(result.op ? `Erased ${result.cells.toLocaleString()} blocks in one stroke.` : null);
+    },
+    [tool, block, grid, session, brushRadius, brushShape],
+  );
+
+  /** Alt+click, from any tool: sample the block under the pointer rather than editing it. */
+  const onPick = useCallback(
+    (hit: VoxelHit) => {
+      const picked = pickBlock(grid, hit);
+      if (!picked) return;
+      setBlock(picked);
+      setNotice(`Picked ${displayName(picked)}.`);
+    },
+    [grid],
+  );
 
   // A box corner is a position in *this* grid. Switching build or moving a param produces a
   // new one, where the same coordinates mean something else entirely.
@@ -365,6 +571,102 @@ export function EditorPage() {
     setAnchor(null);
     setNotice(null);
   }, [grid]);
+
+  const preview = useMemo(
+    () => previewFor({ grid, tool, hover, anchor, radius: brushRadius, shape: brushShape, clip }),
+    [grid, tool, hover, anchor, brushRadius, brushShape, clip],
+  );
+
+  // --- keyboard ------------------------------------------------------------
+
+  // Every shortcut reads state that changes on almost every render, and this listener sits on
+  // the window. Binding it to the live values would tear down and re-add a listener on every
+  // pointer move over the canvas, so the handler is kept in a ref and the listener is bound
+  // exactly once.
+  const shortcuts = useRef<(event: KeyboardEvent) => void>(() => {});
+  shortcuts.current = (event: KeyboardEvent) => {
+    // While the shortcut sheet is up it is the only thing on screen, so a key that would
+    // change the tool or the brush behind it is not what anyone meant. Escape is the one
+    // key that still does something, and the sheet handles that itself.
+    if (help) return;
+
+    const picked = toolForKey(event.key);
+    if (picked) {
+      onTool(picked);
+      return;
+    }
+
+    switch (event.key) {
+      case '[':
+        stepLayer(-1);
+        return;
+      case ']':
+        stepLayer(1);
+        return;
+      case '\\':
+        update({ layer: null });
+        return;
+      case 'i':
+      case 'I':
+        update({ toggleIsolate: true });
+        return;
+      case '-':
+      case '_':
+        stepBrush(-1);
+        return;
+      case '=':
+      case '+':
+        stepBrush(1);
+        return;
+      case 'b':
+      case 'B':
+        setBrushShape((prev) => (prev === 'ball' ? 'cube' : 'ball'));
+        return;
+      case 'r':
+      case 'R':
+        if (clip) rotateClipboard();
+        return;
+      case 'm':
+      case 'M':
+        if (clip) mirrorClipboard();
+        return;
+      case 'f':
+      case 'F':
+        setViewKind('iso');
+        return;
+      case '?':
+        setHelp(true);
+        return;
+      case 'Escape':
+        setAnchor(null);
+        setNotice(null);
+        return;
+      default:
+    }
+  };
+
+  /**
+   * Guarded against firing while someone is typing: the prompt box and the rename field are
+   * both on this page, and a shortcut that changes the tool mid-sentence is worse than no
+   * shortcut. Modifier combinations are left alone so Ctrl+Z still reaches undo — Shift is
+   * not one of them, because `?` and `+` are Shift keys.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (target?.isContentEditable) return;
+
+      const before = event.defaultPrevented;
+      shortcuts.current(event);
+      // Only swallow keys a shortcut actually claimed — anything else still reaches the
+      // browser, which is what keeps Tab, F5 and the like working.
+      if (!before && HANDLED.test(event.key)) event.preventDefault();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // --- generation ----------------------------------------------------------
 
@@ -404,6 +706,7 @@ export function EditorPage() {
   const meshed = totalChunks === 0 ? 1 : 1 - remaining / totalChunks;
   const issues = [...build.errors, ...build.warnings];
   const hoverBlock = hover ? blockAt(grid, hover) : null;
+  const strokable = tool === 'place' || tool === 'erase';
 
   // After every hook, never before: an early return above one would change the hook order
   // between renders. The cost is expanding the default build while a library one is in
@@ -436,6 +739,7 @@ export function EditorPage() {
       data-build={buildId}
       data-edits={session.edits}
       data-detached={session.detached}
+      data-tool={tool}
     >
       <div className="editor__canvas">
         <EditorCanvas
@@ -443,11 +747,16 @@ export function EditorPage() {
           paletteColors={session.paletteColors}
           paletteFlags={session.paletteFlags}
           layerClip={layer}
+          layerFloor={isolate && layer !== null ? layer : 0}
           onHover={setHover}
           onClick={onCanvasClick}
+          onStroke={strokable ? onStroke : undefined}
+          onPick={onPick}
           marker={anchor}
+          preview={preview}
           onProgress={setRemaining}
           onWorld={session.attachWorld}
+          view={view}
         />
       </div>
 
@@ -485,12 +794,25 @@ export function EditorPage() {
           onTool={onTool}
           block={block}
           onBlock={setBlock}
-          boxMode={boxMode}
-          onBoxMode={setBoxMode}
+          boxAction={boxAction}
+          onBoxAction={setBoxAction}
           anchor={anchor}
           onClearAnchor={() => setAnchor(null)}
           familyMode={familyMode}
           onFamilyMode={setFamilyMode}
+          brushRadius={brushRadius}
+          brushShape={brushShape}
+          onBrushRadius={setBrushRadius}
+          onBrushShape={setBrushShape}
+          clip={clip}
+          stampMode={stampMode}
+          onStampMode={setStampMode}
+          onRotateClip={rotateClipboard}
+          onMirrorClip={mirrorClipboard}
+          onForgetClip={() => {
+            setClip(null);
+            setNotice('Clipboard emptied.');
+          }}
           edits={session.edits}
           detached={session.detached}
           canUndo={session.canUndo}
@@ -499,6 +821,7 @@ export function EditorPage() {
           onRedo={session.redo}
           onDiscard={session.discard}
           notice={notice}
+          onShowHelp={() => setHelp(true)}
         />
         </Section>
 
@@ -524,7 +847,11 @@ export function EditorPage() {
           <dt>Chunks</dt>
           <dd>{totalChunks.toLocaleString()}</dd>
           <dt>Layer</dt>
-          <dd>{layer === null ? 'all' : `0–${layer}`}</dd>
+          <dd>{layer === null ? 'all' : isolate ? `y ${layer} only` : `0–${layer}`}</dd>
+          <dt>Clipboard</dt>
+          <dd>
+            {clip ? `${clip.size.x}×${clip.size.y}×${clip.size.z}` : 'empty'}
+          </dd>
         </dl>
         </Section>
 
@@ -649,14 +976,17 @@ export function EditorPage() {
         initialPrompt={seededPrompt}
       />
 
+      {/* The one line that is always on screen, so it carries what the pointer is over and
+          what the next click would do — the two things a HUD panel is too far away to say. */}
       <aside className="hover-readout">
         {hover ? (
           <>
             <strong>{hoverBlock}</strong>
             {hover.x}, {hover.y}, {hover.z} · {hover.face}
+            {preview && <em className="hover-readout__preview"> · {preview.label}</em>}
           </>
         ) : (
-          <>drag to orbit · scroll to zoom · click to {tool}</>
+          <>drag to orbit · scroll to zoom · click to {TOOL_BY_ID[tool].verb}</>
         )}
       </aside>
 
@@ -671,14 +1001,49 @@ export function EditorPage() {
           onChange={(event) => update({ layer: Number(event.target.value) })}
           aria-label="Highest visible layer"
         />
-        <span className="layers__value">{layer === null ? `y 0–${topLayer}` : `y 0–${layer}`}</span>
+        <span className="layers__value">
+          {layer === null ? `y 0–${topLayer}` : isolate ? `y ${layer}` : `y 0–${layer}`}
+        </span>
+        <button
+          type="button"
+          aria-pressed={isolate}
+          disabled={layer === null}
+          title="Show only the cut layer  (I)"
+          onClick={() => update({ toggleIsolate: true })}
+        >
+          Isolate
+        </button>
         <button type="button" onClick={() => update({ layer: null })} disabled={layer === null}>
           Show all
         </button>
+        <span className="layers__views">
+          {VIEWS.map((entry) => (
+            <button
+              key={entry.kind}
+              type="button"
+              title={`Look from ${entry.label.toLowerCase()}${entry.kind === 'iso' ? '  (F)' : ''}`}
+              onClick={() => setViewKind(entry.kind)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </span>
       </section>
+
+      {help && <ShortcutHelp onClose={() => setHelp(false)} />}
     </div>
   );
 }
+
+/** Keys a shortcut claims, so everything else still reaches the browser. */
+const HANDLED = /^([1-8]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape)$/;
+
+const VERB: Record<string, string> = {
+  fill: 'Filled',
+  replace: 'Replaced in',
+  hollow: 'Lined',
+  clear: 'Cleared',
+};
 
 function applyNav(
   nav: PendingNav,

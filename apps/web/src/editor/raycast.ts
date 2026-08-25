@@ -33,6 +33,12 @@ export interface RaycastOptions {
    * rather than re-meshing, so the picker has to be told about the cut separately.
    */
   maxY?: number;
+  /**
+   * Treat everything *below* this layer as air, for the isolate mode that shows one slice.
+   * Without it the picker would happily return a block the user cannot see, and a click
+   * meant for the visible slice would land on the roof of the floor below.
+   */
+  minY?: number;
 }
 
 /** Neighbour of a hit, i.e. the empty cell a newly placed block would occupy. */
@@ -54,7 +60,8 @@ export function raycastVoxel(
   const { size, voxels } = grid;
   const maxDistance = options.maxDistance ?? 1024;
   const maxY = options.maxY ?? size.y - 1;
-  if (maxY < 0) return null;
+  const minY = Math.max(0, options.minY ?? 0);
+  if (maxY < minY) return null;
 
   const len = Math.hypot(direction.x, direction.y, direction.z);
   if (len === 0) return null;
@@ -64,7 +71,7 @@ export function raycastVoxel(
 
   // The camera normally orbits outside the structure, so start by skipping to the box.
   // A ray that misses the box entirely is rejected here rather than stepped.
-  const entry = clipToBounds(origin, dx, dy, dz, size.x, maxY + 1, size.z, maxDistance);
+  const entry = clipToBounds(origin, dx, dy, dz, size.x, minY, maxY + 1, size.z, maxDistance);
   if (!entry) return null;
 
   // Nudge past the boundary so the floor lands inside the first cell rather than on its face.
@@ -74,7 +81,7 @@ export function raycastVoxel(
   const pz = origin.z + dz * (t + 1e-4);
 
   let x = clampIndex(Math.floor(px), size.x);
-  let y = clampIndex(Math.floor(py), maxY + 1);
+  let y = Math.min(maxY, Math.max(minY, Math.floor(py)));
   let z = clampIndex(Math.floor(pz), size.z);
 
   const stepX = dx > 0 ? 1 : -1;
@@ -109,7 +116,7 @@ export function raycastVoxel(
       t = tMaxY;
       tMaxY += tDeltaY;
       face = stepY > 0 ? 'down' : 'up';
-      if (y < 0 || y > maxY) return null;
+      if (y < minY || y > maxY) return null;
     } else {
       z += stepZ;
       t = tMaxZ;
@@ -128,13 +135,14 @@ interface BoundsEntry {
   face: VoxelFace | null;
 }
 
-/** Slab test against the box [0,ex]×[0,ey]×[0,ez], returning where the ray enters it. */
+/** Slab test against the box [0,ex]×[loY,ey]×[0,ez], returning where the ray enters it. */
 function clipToBounds(
   origin: Vec3Like,
   dx: number,
   dy: number,
   dz: number,
   ex: number,
+  loY: number,
   ey: number,
   ez: number,
   maxDistance: number,
@@ -143,18 +151,18 @@ function clipToBounds(
   let tMax = maxDistance;
   let face: VoxelFace | null = null;
 
-  const axes: readonly [number, number, number, VoxelFace, VoxelFace][] = [
-    [origin.x, dx, ex, 'west', 'east'],
-    [origin.y, dy, ey, 'down', 'up'],
-    [origin.z, dz, ez, 'north', 'south'],
+  const axes: readonly [number, number, number, number, VoxelFace, VoxelFace][] = [
+    [origin.x, dx, 0, ex, 'west', 'east'],
+    [origin.y, dy, loY, ey, 'down', 'up'],
+    [origin.z, dz, 0, ez, 'north', 'south'],
   ];
 
-  for (const [o, d, extent, lowFace, highFace] of axes) {
+  for (const [o, d, low, extent, lowFace, highFace] of axes) {
     if (d === 0) {
-      if (o < 0 || o > extent) return null;
+      if (o < low || o > extent) return null;
       continue;
     }
-    let tEnter = (0 - o) / d;
+    let tEnter = (low - o) / d;
     let tExit = (extent - o) / d;
     let enterFace = lowFace;
     if (tEnter > tExit) {

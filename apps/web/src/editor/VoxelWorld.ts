@@ -30,6 +30,9 @@ const REQUEST_BATCH = 48;
 /** Cap on outstanding work so a reload cannot queue thousands of stale chunks. */
 const MAX_IN_FLIGHT = 192;
 
+/** How far past a block boundary a clipping plane sits, to keep it off any face. */
+const CLIP_EPSILON = 0.001;
+
 /** Half-diagonal of a 16³ cube; every chunk shares it, so the bounding sphere is free. */
 const CHUNK_RADIUS = (CHUNK_SIZE * Math.sqrt(3)) / 2;
 
@@ -65,8 +68,10 @@ export class VoxelWorld {
   /** Batches issued before the current `load()`; their results are dropped on arrival. */
   private generation = 0;
 
-  private readonly clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
-  private clipped = false;
+  private readonly topPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  private readonly bottomPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  /** How many planes the materials are currently compiled for: 0, 1 (top) or 2 (a slice). */
+  private clipCount = 0;
 
   constructor() {
     this.group.name = 'voxel-world';
@@ -163,23 +168,36 @@ export class VoxelWorld {
   }
 
   /**
-   * Hide everything above layer `y`.
+   * Show only layers `bottom` to `top`. `top === null` shows everything.
    *
-   * A clipping plane rather than a re-mesh: scrubbing the layer slider would otherwise
-   * rebuild every chunk on every pixel of drag. This costs one uniform and stays exact,
-   * because the plane cuts at the block boundary y+1.
+   * Clipping planes rather than a re-mesh: scrubbing the layer slider would otherwise
+   * rebuild every chunk on every pixel of drag. This costs one uniform per plane and stays
+   * exact, because the planes cut on the block boundaries — above y+1 and below y.
+   *
+   * The plane *count* is what recompiles the shader, so a scrub costs nothing and only
+   * turning isolate on or off pays for it. That is why the bottom plane is dropped entirely
+   * at layer 0 rather than parked at the floor: an isolated ground floor would otherwise
+   * keep the two-plane shader for the rest of the session.
    */
-  setLayerClip(y: number | null): void {
-    const wanted = y !== null;
-    if (wanted) this.clipPlane.constant = y + 1;
+  setLayerClip(top: number | null, bottom = 0): void {
+    const wantsTop = top !== null;
+    const wantsBottom = wantsTop && bottom > 0;
+    // The cuts are nudged a thousandth of a block past the boundary they mean. Landing a
+    // clipping plane exactly on a face makes the two coplanar, and the depth precision left
+    // over decides per pixel whether that face survives — which reads as a speckled slice
+    // rather than a clean one.
+    if (wantsTop) this.topPlane.constant = top + 1 + CLIP_EPSILON;
+    // `normal·p + constant > 0` is the kept side, so -bottom keeps everything above it.
+    if (wantsBottom) this.bottomPlane.constant = -bottom + CLIP_EPSILON;
 
-    if (wanted === this.clipped) return;
-    this.clipped = wanted;
+    const count = wantsTop ? (wantsBottom ? 2 : 1) : 0;
+    if (count === this.clipCount) return;
+    this.clipCount = count;
 
-    const planes = wanted ? [this.clipPlane] : null;
+    const planes =
+      count === 0 ? null : count === 1 ? [this.topPlane] : [this.topPlane, this.bottomPlane];
     for (const material of [this.opaqueMaterial, this.transparentMaterial]) {
       material.clippingPlanes = planes;
-      // Only the count change recompiles the shader, so a scrub never touches this.
       material.needsUpdate = true;
     }
   }

@@ -22,11 +22,20 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { buildGuide, colorOf, type BuildGuide, type BuildStep, type MaterialCount } from '@craftmagic/core';
 import { expandBuild, isBuildId, type LoadedBuild } from '../editor/builds.js';
+import { useLibraryBuild } from '../library/useLibraryBuild.js';
 import { carrySettings, parseScale, scaleKey as readScaleKey, PARAM_PREFIX } from '../editor/urlState.js';
 import { IsoFilmstrip } from './isoRender.js';
 import { drawLayerPlan, earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
 import './print.css';
 
+/**
+ * What `/guide` with no build named prints.
+ *
+ * Only ever used when the URL names nothing at all. It is emphatically *not* a fallback for a
+ * build that failed to resolve — substituting it there is what made every generated build's
+ * guide come out as the sample cottage, silently and with no clue that anything had gone
+ * wrong. An unresolvable id now prints an explanation instead.
+ */
 const DEFAULT_BUILD = 'cottage';
 
 /** Step art. Sized for print (~88mm at 190dpi) rather than for the screen. */
@@ -56,7 +65,26 @@ export function GuidePage() {
   const [params] = useSearchParams();
 
   const rawBuild = params.get('build');
-  const buildId = isBuildId(rawBuild) ? rawBuild : DEFAULT_BUILD;
+
+  // A library build lives in the database rather than in the bundle, so `?build=lib:<id>`
+  // has to be fetched before it can be expanded. The guide used not to do this at all, which
+  // is why the editor withheld the link for a library build rather than hand out a URL that
+  // printed the wrong thing.
+  const fetching = useLibraryBuild(rawBuild);
+
+  /**
+   * The build to print, or null when the URL names one this browser cannot produce.
+   *
+   * Recomputed on every render rather than memoised: `isBuildId` is two map lookups, and the
+   * render after a fetch lands is exactly when the answer must change. Null is a real state
+   * with its own page — never a reason to print something else.
+   */
+  const resolved = rawBuild === null ? DEFAULT_BUILD : isBuildId(rawBuild) ? rawBuild : null;
+
+  // Hooks below must run on every render, so an unresolved id still expands *something*.
+  // Nothing is drawn from it — `renderable` gates the expensive work and the page body.
+  const buildId = resolved ?? DEFAULT_BUILD;
+  const renderable = resolved !== null;
 
   // A stable string key rather than the URLSearchParams object: it is a fresh instance on
   // every render, and re-expanding a build is not something to do 60 times a second.
@@ -82,16 +110,29 @@ export function GuidePage() {
   const guide = useMemo(() => buildGuide(build.grid, build.name), [build]);
 
   const printable = guide.steps.length <= MAX_PRINTABLE_STEPS;
-  const film = useFilmstrip(build, guide, printable);
+  // `renderable` and not just `printable`: an unresolved id would otherwise spin up a WebGL
+  // context and read back a cover for a build nobody asked for, behind an error page.
+  const film = useFilmstrip(build, guide, printable, renderable);
   const ready = film.cover !== null;
 
-  const plans = useLayerPlans(build, guide, printable);
+  const plans = useLayerPlans(build, guide, printable && renderable);
   const editorHref = useMemo(() => {
     const search = new URLSearchParams();
-    search.set('build', buildId);
+    if (rawBuild !== null) search.set('build', rawBuild);
     carrySettings(params, search);
     return `/editor?${search.toString()}`;
-  }, [buildId, params]);
+  }, [rawBuild, params]);
+
+  if (!renderable) {
+    return (
+      <Unavailable
+        id={rawBuild ?? ''}
+        loading={fetching.loading}
+        error={fetching.error}
+        editorHref={editorHref}
+      />
+    );
+  }
 
   return (
     <div
@@ -149,6 +190,57 @@ export function GuidePage() {
       <footer className="guide__foot">
         Built from a program, not a picture — resize it in the editor and print a new booklet.
       </footer>
+    </div>
+  );
+}
+
+/* --- when the build cannot be resolved --------------------------------------------------- */
+
+/**
+ * The page for a build this browser cannot produce.
+ *
+ * It exists because the alternative — quietly printing {@link DEFAULT_BUILD} — is worse than
+ * useless: the booklet looks finished, the cover says "Oak Cottage", and nothing anywhere
+ * says the link named something else. A guide that admits it cannot find a build is a bug
+ * report; a guide that prints the wrong build is a mystery.
+ */
+function Unavailable({
+  id,
+  loading,
+  error,
+  editorHref,
+}: {
+  id: string;
+  loading: boolean;
+  error: string | null;
+  editorHref: string;
+}) {
+  return (
+    <div className="guide" data-ready="0" data-build={id} data-unavailable="1">
+      <nav className="guide__bar no-print">
+        <Link className="guide__back" to={editorHref}>
+          ← Back to editor
+        </Link>
+      </nav>
+
+      <article className="sheet cover">
+        <p className="cover__eyebrow">CraftMagic · Build guide</p>
+        <h1 className="cover__title">{loading ? 'Loading…' : 'Build not found'}</h1>
+        {loading ? (
+          <p className="cover__lede">Fetching {id} from your library.</p>
+        ) : error !== null ? (
+          <p className="cover__lede">
+            <code>{id}</code> could not be loaded: {error}
+          </p>
+        ) : (
+          <p className="cover__lede">
+            <code>{id}</code> is not a build this browser knows about. Generated builds are
+            kept on the device that made them, so a link opened on another computer — or after
+            clearing site data — cannot rebuild one. Save it to your library and the guide will
+            fetch it anywhere.
+          </p>
+        )}
+      </article>
     </div>
   );
 }
@@ -315,11 +407,17 @@ const EMPTY: Filmstrip = { shots: [], cover: null, elapsedMs: 0 };
  * placed in one pass and read back once — the readbacks, not the meshing, are what would
  * have taken minutes.
  */
-function useFilmstrip(build: LoadedBuild, guide: BuildGuide, printable: boolean): Filmstrip {
+function useFilmstrip(
+  build: LoadedBuild,
+  guide: BuildGuide,
+  printable: boolean,
+  enabled: boolean,
+): Filmstrip {
   const [state, setState] = useState<Filmstrip>(EMPTY);
 
   useEffect(() => {
     setState(EMPTY);
+    if (!enabled) return;
 
     let cancelled = false;
     let frame = 0;
@@ -366,7 +464,7 @@ function useFilmstrip(build: LoadedBuild, guide: BuildGuide, printable: boolean)
       cancelAnimationFrame(frame);
       film.dispose();
     };
-  }, [build, guide, printable]);
+  }, [build, guide, printable, enabled]);
 
   return state;
 }

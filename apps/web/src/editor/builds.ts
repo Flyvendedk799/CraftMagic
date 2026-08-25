@@ -159,7 +159,7 @@ export const BUILD_IDS = Object.keys(PROGRAMS);
 export const BLANK_BUILD = 'blank';
 
 /**
- * Programs that arrived from the generator this session.
+ * Programs that arrived from the generator.
  *
  * Registering them here rather than treating them as a separate kind of thing is what lets a
  * generated build behave exactly like a sample: same expander, same meshing path, and — the
@@ -171,25 +171,50 @@ const generated = new Map<string, BuildProgram>();
 export const GENERATED_PREFIX = 'gen:';
 
 /**
- * Generated builds survive a reload.
+ * Generated builds survive a reload — and a hop to another tab.
  *
  * Every one of these cost real money, so losing them to an accidental refresh is worse than
- * the small complexity of persisting them. sessionStorage rather than localStorage: they are
- * scoped to this tab's session until builds are properly saved server-side (M5).
+ * the small complexity of persisting them.
+ *
+ * localStorage, not sessionStorage. The build guide opens through
+ * `<a target="_blank">`, and in Chromium a link-opened tab starts with an *empty*
+ * sessionStorage — unlike a same-tab navigation or `window.open`, which both inherit one. So
+ * the guide tab had never heard of `gen:1`, could not resolve it, and printed the fallback
+ * sample instead: every generated build's guide came out as the cottage. Session scope was
+ * simply the wrong lifetime for something reachable by link.
+ *
+ * Capped, because localStorage is durable where a session store cleaned itself up. A program
+ * is a few KB and a long session generates a lot of them; without a cap they would sit there
+ * forever and eventually make `persist` throw.
  */
 const STORAGE_KEY = 'craftmagic.generated';
+const MAX_STORED = 40;
 
 function persist(): void {
+  // Oldest first, so trimming to the cap drops the ones least likely to still be open.
+  while (generated.size > MAX_STORED) {
+    const oldest = generated.keys().next();
+    if (oldest.done) break;
+    generated.delete(oldest.value);
+  }
+
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([...generated.entries()]));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...generated.entries()]));
   } catch {
     // Storage full or blocked; the build still works for this page view.
   }
 }
 
+/**
+ * Merge in what is on disk.
+ *
+ * Called at import *and* before minting an id, because localStorage is shared across tabs
+ * where sessionStorage was not: two editors open at once would otherwise each mint `gen:4`
+ * for a different build, and whichever persisted last would win.
+ */
 function restore(): void {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     for (const [id, program] of JSON.parse(raw) as [string, BuildProgram][]) {
       generated.set(id, program);
@@ -201,14 +226,31 @@ function restore(): void {
 
 restore();
 
+/**
+ * The next free `gen:` number.
+ *
+ * Counted from the highest id in use rather than from `generated.size`, which stopped being
+ * the same thing once the store started evicting: after a trim, `size + 1` names a build
+ * somebody's open tab or bookmarked URL already means something else by.
+ */
+function nextGeneratedId(): string {
+  let highest = 0;
+  for (const id of generated.keys()) {
+    const n = Number.parseInt(id.slice(GENERATED_PREFIX.length), 10);
+    if (Number.isFinite(n) && n > highest) highest = n;
+  }
+  return `${GENERATED_PREFIX}${highest + 1}`;
+}
+
 export function registerGeneratedBuild(program: BuildProgram): string {
-  const id = `${GENERATED_PREFIX}${generated.size + 1}`;
+  restore();
+  const id = nextGeneratedId();
   generated.set(id, program);
   persist();
   return id;
 }
 
-/** Generated builds from this session, newest last. */
+/** Generated builds this browser still remembers, oldest first. */
 export function generatedBuilds(): { id: string; name: string }[] {
   return [...generated.entries()].map(([id, program]) => ({ id, name: program.meta.name }));
 }

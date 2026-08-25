@@ -98,7 +98,7 @@ export function AdminPage() {
           <h1 className="admin__title">Settings</h1>
           <p className="admin__sub">Which model generates builds, and the key it uses.</p>
         </div>
-        <Link className="admin__back" to="/">
+        <Link className="admin__back" to="/editor">
           ← Back to the editor
         </Link>
       </header>

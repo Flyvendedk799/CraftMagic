@@ -17,14 +17,24 @@ export interface AccountPanelProps {
   invitation?: string;
   /** The library page opens expanded; the editor HUD starts collapsed. */
   initiallyOpen?: boolean;
+  /**
+   * Which tab to open on. Defaults to signing in, which is right for someone who came back to
+   * their own library — but the landing page's buttons all say "sign up", and landing a new
+   * visitor on a sign-in form asks them for a password they have not chosen yet.
+   */
+  initialMode?: Mode;
 }
 
 type Mode = 'login' | 'register';
 
-export function AccountPanel({ invitation, initiallyOpen = false }: AccountPanelProps) {
+export function AccountPanel({
+  invitation,
+  initiallyOpen = false,
+  initialMode = 'login',
+}: AccountPanelProps) {
   const auth = useAuth();
   const [open, setOpen] = useState(initiallyOpen);
-  const [mode, setMode] = useState<Mode>('login');
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

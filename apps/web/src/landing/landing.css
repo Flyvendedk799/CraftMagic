@@ -1,0 +1,1131 @@
+/* The landing page.
+
+   The only page in the app with its own visual language rather than the `.panel` shell the
+   others share: it is painted on Void instead of the app background, it uses the display face
+   for headings, and it is full-bleed. That is deliberate and it stops at this file — every
+   class here is namespaced `landing__`, so nothing leaks into the editor.
+
+   Colours that are part of the brand come from the tokens in styles.css. The literals that
+   remain are this page's own surface treatment — the exact greys of a card gradient, the
+   alphas of three stacked washes over a 3D scene — and naming them globally would imply the
+   rest of the app should reach for them. */
+
+.landing {
+  /* Set by `useScrollProgress` every frame the page scrolls; 0–1. Declared here so the first
+     paint has a value rather than an invalid custom property. */
+  --scroll-progress: 0;
+
+  --landing-lede: #aeb6c0;
+  --landing-body: #9aa3ad;
+  --landing-dim: #7d8794;
+  --landing-card: #12161b;
+  --landing-edge: #232a33;
+
+  position: relative;
+  background: var(--brand-void);
+  /* The hero canvas and the rail both sit outside the content column; without this a phone
+     gets a horizontal scrollbar for a background that was never meant to be reachable. */
+  overflow-x: hidden;
+
+  /* The app's body rule is `16px/1.5`, which is right for the editor's dense panels and wrong
+     for display type: inherited, it opens the headings out by half a line each and adds five
+     pixels to the height of every button. Reset to the default here and let the paragraph
+     rules below set their own — they are the only things on this page that want 1.5+. */
+  line-height: normal;
+}
+
+.landing ::selection {
+  background: var(--brand-mint);
+  color: var(--brand-void);
+}
+
+/* Underline only. Deliberately *not* a colour: `.landing a` out-specifies a single class, so a
+   colour here would beat `.landing__cta` and paint the buttons' labels mint on mint. Every
+   link on this page states its own colour. */
+.landing a {
+  text-decoration: none;
+}
+
+/* ── Scroll indicators ─────────────────────────────────────────────────────────────────────
+   The bar and the rail read the same `--scroll-progress`, so they cannot disagree about where
+   the page is. */
+
+.landing__progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  height: 2px;
+  width: calc(var(--scroll-progress) * 100%);
+  background: linear-gradient(90deg, var(--brand-mint), var(--brand-grass));
+  box-shadow: 0 0 10px rgb(110 231 183 / 0.6);
+}
+
+.landing__rail {
+  position: fixed;
+  left: clamp(9px, 1.7vw, 26px);
+  top: 84px;
+  bottom: 26px;
+  z-index: 40;
+  width: 3px;
+  pointer-events: none;
+}
+
+.landing__rail-track {
+  position: absolute;
+  inset: 0;
+  background: #161b23;
+  border-radius: 3px;
+}
+
+.landing__rail-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(var(--scroll-progress) * 100%);
+  background: linear-gradient(var(--brand-mint), var(--brand-grass));
+  border-radius: 3px;
+  box-shadow: 0 0 14px rgb(110 231 183 / 0.55);
+}
+
+.landing__rail-node {
+  position: absolute;
+  left: 50%;
+  top: calc(var(--scroll-progress) * 100%);
+  transform: translate(-50%, -50%) rotate(calc(var(--scroll-progress) * 360deg));
+  filter: drop-shadow(0 3px 8px rgb(110 231 183 / 0.5));
+}
+
+.landing__rail-node svg {
+  display: block;
+}
+
+/* ── Nav ───────────────────────────────────────────────────────────────────────────────── */
+
+.landing__nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px clamp(20px, 4vw, 44px);
+  backdrop-filter: blur(12px);
+  /* Opaque at the top edge, fading down: the bar has to stay legible over whatever the hero
+     animation is doing behind it without becoming a solid block across the scene. */
+  background: linear-gradient(to bottom, rgb(11 14 18 / 0.9), rgb(11 14 18 / 0.35));
+  border-bottom: 1px solid #171c24;
+}
+
+.landing__nav-brand {
+  color: var(--text);
+}
+
+.landing__nav-links {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 2.4vw, 30px);
+}
+
+.landing__nav-link {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.landing__nav-link:hover {
+  color: var(--text);
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────────────────── */
+
+.landing__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 15px 28px;
+  background: var(--brand-mint);
+  /* Near-black rather than the shell colour: this is the highest-contrast pairing on the page
+     and the one control that must never look disabled. */
+  color: #07120d;
+  font-weight: 700;
+  font-size: 16px;
+  border-radius: 11px;
+  box-shadow: 0 10px 34px rgb(110 231 183 / 0.3);
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.landing__cta:hover {
+  background: #8bf0c6;
+  color: #07120d;
+  transform: translateY(-2px);
+}
+
+.landing__cta--small {
+  gap: 7px;
+  padding: 9px 18px;
+  font-size: 14px;
+  border-radius: 9px;
+  box-shadow: 0 6px 22px rgb(110 231 183 / 0.28);
+}
+
+.landing__cta--small:hover {
+  transform: translateY(-1px);
+}
+
+.landing__cta-arrow {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.landing__ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 15px 26px;
+  background: rgb(255 255 255 / 0.04);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 16px;
+  border: 1px solid #2b3340;
+  border-radius: 11px;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.landing__ghost:hover {
+  color: var(--text);
+  border-color: var(--brand-mint);
+  background: rgb(110 231 183 / 0.06);
+}
+
+.landing__actions {
+  margin: 32px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.landing__actions--centred {
+  margin: 34px 0 0;
+  justify-content: center;
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────────────────────────── */
+
+.landing__hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 100vh;
+  padding: 100px 0 56px;
+  overflow: hidden;
+}
+
+.landing__hero-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.landing__hero-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 78% 42%, rgb(110 231 183 / 0.1), transparent 55%);
+}
+
+/* Dark at the left, clear at the right. The copy sits in the solid half and the build in the
+   clear half, so the headline keeps its contrast against a scene that is always moving. */
+.landing__hero-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, #0b0e12 8%, rgb(11 14 18 / 0.72) 42%, transparent 70%);
+}
+
+.landing__hero-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 180px;
+  background: linear-gradient(to top, var(--brand-void), transparent);
+}
+
+.landing__hero-inner {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 4vw, 44px);
+}
+
+.landing__hero-copy {
+  max-width: 640px;
+}
+
+.landing__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid #26414f;
+  background: rgb(110 231 183 / 0.07);
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--brand-mint);
+}
+
+.landing__badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brand-grass);
+  box-shadow: 0 0 10px var(--brand-grass);
+  animation: landing-dot 1.6s ease-in-out infinite;
+}
+
+.landing__title {
+  margin: 22px 0 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(44px, 6.6vw, 86px);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+}
+
+.landing__title-accent {
+  background: linear-gradient(105deg, var(--brand-mint), var(--brand-grass) 60%, #c8f8e4);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.landing__prompt {
+  margin: 26px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 12px 16px;
+  background: rgb(18 22 27 / 0.82);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-family: var(--font-mono);
+  font-size: clamp(13px, 1.5vw, 16px);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.4);
+}
+
+.landing__prompt-chevron {
+  color: var(--brand-grass);
+}
+
+/* The box grows with the prompt being typed, and the longest one is wider than a phone. The
+   text shrinks and clips instead of pushing the caret out of the box or the box off the page —
+   an overflowing terminal is a legible failure, a horizontally scrolling hero is not. */
+.landing__prompt-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.landing__caret {
+  display: inline-block;
+  width: 9px;
+  height: 1.15em;
+  background: var(--brand-mint);
+  vertical-align: middle;
+  animation: landing-blink 1s step-end infinite;
+}
+
+.landing__lede {
+  margin: 24px 0 0;
+  max-width: 540px;
+  font-size: clamp(16px, 1.9vw, 20px);
+  line-height: 1.55;
+  color: var(--landing-lede);
+}
+
+.landing__lede strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.landing__stats {
+  margin: 44px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+}
+
+.landing__stat-value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 26px;
+  color: var(--brand-mint);
+}
+
+.landing__stat-label {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--landing-dim);
+}
+
+.landing__stat-rule {
+  width: 1px;
+  background: #242b34;
+}
+
+.landing__scroll-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  z-index: 3;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  color: #5a6572;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.landing__scroll-hint svg {
+  width: 16px;
+  height: 16px;
+  animation: landing-float 2.2s ease-in-out infinite;
+}
+
+/* ── Sections ──────────────────────────────────────────────────────────────────────────── */
+
+.landing__section {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: clamp(80px, 11vw, 150px) clamp(20px, 4vw, 44px);
+}
+
+.landing__section--exports {
+  padding-block: clamp(70px, 10vw, 140px);
+}
+
+.landing__eyebrow {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--brand-grass);
+}
+
+.landing__h2 {
+  margin: 14px 0 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(30px, 4.4vw, 52px);
+  letter-spacing: -0.02em;
+}
+
+.landing__h2--narrow {
+  max-width: 16ch;
+}
+
+/* ── How it works ──────────────────────────────────────────────────────────────────────── */
+
+.landing__steps {
+  margin: 56px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 22px;
+}
+
+.landing__step {
+  position: relative;
+  padding: 30px;
+  background: linear-gradient(160deg, var(--landing-card), #0e1216);
+  border: 1px solid var(--landing-edge);
+  border-radius: 18px;
+  transition: border-color 0.25s ease;
+}
+
+.landing__step:hover {
+  border-color: #2f5648;
+}
+
+.landing__step-num {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand-grass);
+}
+
+.landing__step-icon {
+  margin-top: 16px;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: rgb(110 231 183 / 0.1);
+  border: 1px solid #2c4a3f;
+}
+
+.landing__step-icon svg {
+  width: 26px;
+  height: 26px;
+  stroke: var(--brand-mint);
+}
+
+.landing__step-title {
+  margin: 20px 0 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 22px;
+}
+
+.landing__step-body {
+  margin: 10px 0 0;
+  color: var(--landing-body);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.landing__step-body em {
+  font-style: normal;
+  color: #cdd3da;
+}
+
+.landing__step-body code,
+.landing__path-body code {
+  font-family: var(--font-mono);
+  color: var(--brand-mint);
+}
+
+/* ── Editor showcase ───────────────────────────────────────────────────────────────────── */
+
+.landing__showcase {
+  position: relative;
+  padding: clamp(60px, 8vw, 110px) clamp(20px, 4vw, 44px);
+  background: linear-gradient(180deg, var(--brand-void), #0c1013 40%, var(--brand-void));
+}
+
+.landing__showcase-head {
+  max-width: 640px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.landing__showcase-lede {
+  margin: 16px 0 0;
+  color: var(--landing-body);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.landing__window {
+  position: relative;
+  max-width: 1200px;
+  margin: 48px auto 0;
+  border: 1px solid var(--landing-edge);
+  border-radius: 20px;
+  overflow: hidden;
+  background: #0d1014;
+  box-shadow: 0 40px 120px rgb(0 0 0 / 0.55);
+}
+
+.landing__window-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 18px;
+  border-bottom: 1px solid #1b212a;
+  background: #0f141a;
+}
+
+.landing__window-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+}
+
+.landing__window-dot--close {
+  background: var(--brand-coral);
+}
+
+.landing__window-dot--min {
+  background: var(--brand-amber);
+}
+
+.landing__window-dot--max {
+  background: var(--brand-grass);
+}
+
+.landing__window-url {
+  margin-left: 12px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: #6b7480;
+  /* The chrome is a fixed-width strip; a long URL must clip rather than push the dots out. */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.landing__window-body {
+  position: relative;
+  height: clamp(340px, 52vw, 560px);
+}
+
+.landing__window-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.landing__window-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(80% 70% at 50% 40%, transparent, rgb(11 14 18 / 0.35));
+}
+
+.landing__hud {
+  position: absolute;
+  background: rgb(23 27 33 / 0.86);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+}
+
+.landing__hud--build {
+  top: 16px;
+  left: 16px;
+  width: min(240px, 42%);
+  padding: 14px 16px;
+}
+
+.landing__hud--generate {
+  top: 16px;
+  right: 16px;
+  width: min(230px, 42%);
+  padding: 14px 16px;
+}
+
+.landing__hud--layers {
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 16px;
+}
+
+.landing__hud-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.landing__hud-title--small {
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.landing__hud-sub {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.landing__hud-stats {
+  margin: 14px 0 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  font-size: 11.5px;
+}
+
+.landing__hud-stats dt {
+  color: var(--muted);
+}
+
+.landing__hud-stats dd {
+  margin: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.landing__hud-slider {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.landing__hud-legend {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.landing__hud-layer-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.landing__hud-prompt {
+  margin: 9px 0 0;
+  padding: 9px 10px;
+  background: var(--landing-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #c8cfd7;
+}
+
+.landing__hud-buttons {
+  margin-top: 9px;
+  display: flex;
+  gap: 6px;
+}
+
+.landing__hud-button {
+  flex: 1;
+  padding: 7px;
+  text-align: center;
+  background: var(--brand-mint);
+  color: #07120d;
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 7px;
+}
+
+.landing__hud-button--ghost {
+  flex: none;
+  padding: 7px 11px;
+  background: #1d232b;
+  border: 1px solid var(--border);
+  color: #c8cfd7;
+  font-weight: 400;
+}
+
+.landing__hud-count {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: #c8cfd7;
+  white-space: nowrap;
+}
+
+.landing__track {
+  position: relative;
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 3px;
+  background: #212832;
+}
+
+.landing__track--layers {
+  flex: 1;
+  margin-top: 0;
+}
+
+.landing__track-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: var(--brand-mint);
+}
+
+.landing__track--layers .landing__track-fill {
+  background: linear-gradient(90deg, var(--brand-teal), var(--brand-mint));
+}
+
+.landing__track-knob {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--brand-mint);
+  box-shadow: 0 0 0 3px rgb(110 231 183 / 0.2);
+}
+
+.landing__scanline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 120px;
+  background: linear-gradient(var(--brand-mint), transparent);
+  opacity: 0.05;
+  pointer-events: none;
+  animation: landing-scan 6s linear infinite;
+}
+
+/* ── Export paths ──────────────────────────────────────────────────────────────────────── */
+
+.landing__exports-head {
+  max-width: 640px;
+}
+
+.landing__paths {
+  margin-top: 52px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 22px;
+}
+
+.landing__path {
+  padding: 32px;
+  background: var(--landing-card);
+  border: 1px solid var(--landing-edge);
+  border-top-width: 3px;
+  border-radius: 16px;
+  transition:
+    transform 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.landing__path:hover {
+  transform: translateY(-6px);
+}
+
+.landing__path-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+}
+
+.landing__path-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Each path keeps its own top edge on hover. `border-color` alone would repaint the 3px edge
+   in the hover colour, and that stripe is the only thing telling the three cards apart. */
+.landing__path--schem {
+  border-top-color: var(--brand-mint);
+}
+
+.landing__path--schem:hover {
+  border-color: #2f5648;
+  border-top-color: var(--brand-mint);
+}
+
+.landing__path--schem .landing__path-icon {
+  background: rgb(110 231 183 / 0.1);
+}
+
+.landing__path--schem .landing__path-icon svg {
+  stroke: var(--brand-mint);
+}
+
+.landing__path--guide {
+  border-top-color: var(--brand-amber);
+}
+
+.landing__path--guide:hover {
+  border-color: #5a4a1f;
+  border-top-color: var(--brand-amber);
+}
+
+.landing__path--guide .landing__path-icon {
+  background: rgb(251 191 36 / 0.1);
+}
+
+.landing__path--guide .landing__path-icon svg {
+  stroke: var(--brand-amber);
+}
+
+.landing__path--bot {
+  border-top-color: var(--brand-grass);
+}
+
+.landing__path--bot:hover {
+  border-color: #2f5648;
+  border-top-color: var(--brand-grass);
+}
+
+.landing__path--bot .landing__path-icon {
+  background: rgb(74 222 128 / 0.1);
+}
+
+.landing__path--bot .landing__path-icon svg {
+  stroke: var(--brand-grass);
+}
+
+.landing__path-title {
+  margin: 18px 0 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 21px;
+}
+
+.landing__path-body {
+  margin: 10px 0 0;
+  color: var(--landing-body);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.landing__path-meta {
+  margin: 16px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--landing-dim);
+}
+
+/* ── Final call to action ──────────────────────────────────────────────────────────────── */
+
+.landing__final {
+  padding: clamp(20px, 4vw, 44px) clamp(20px, 4vw, 44px) clamp(60px, 8vw, 110px);
+}
+
+.landing__final-card {
+  position: relative;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: clamp(48px, 7vw, 88px) clamp(28px, 5vw, 64px);
+  border: 1px solid #234034;
+  border-radius: 26px;
+  overflow: hidden;
+  background: linear-gradient(140deg, #0f1a16, #0c1013);
+  text-align: center;
+}
+
+.landing__final-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(70% 120% at 50% 0%, rgb(110 231 183 / 0.18), transparent 60%);
+  pointer-events: none;
+}
+
+.landing__final-inner {
+  position: relative;
+}
+
+.landing__final-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(32px, 5vw, 62px);
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.landing__final-lede {
+  margin: 20px auto 0;
+  max-width: 520px;
+  color: var(--landing-lede);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.landing__final .landing__cta {
+  padding: 16px 32px;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgb(110 231 183 / 0.32);
+}
+
+.landing__final .landing__ghost {
+  padding: 16px 28px;
+  border-radius: 12px;
+}
+
+/* ── Footer ────────────────────────────────────────────────────────────────────────────── */
+
+.landing__footer {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 44px clamp(20px, 4vw, 44px);
+  border-top: 1px solid #171c24;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.landing__footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.landing__footer-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.landing__footer-tagline {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7480;
+}
+
+.landing__footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+  font-size: 14px;
+}
+
+.landing__footer-links a {
+  color: var(--muted);
+}
+
+.landing__footer-links a:hover {
+  color: var(--text);
+}
+
+.landing__footer-domain {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #5a6572;
+}
+
+/* ── Reveals ───────────────────────────────────────────────────────────────────────────── */
+
+.landing [data-reveal] {
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.landing [data-reveal='hidden'] {
+  opacity: 0;
+  transform: translateY(28px);
+}
+
+.landing [data-reveal='shown'] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Staggered so a row of three cards arrives as a sequence rather than a block. */
+.landing [data-reveal-delay='1'] {
+  transition-delay: 120ms;
+}
+
+.landing [data-reveal-delay='2'] {
+  transition-delay: 240ms;
+}
+
+/* ── Keyframes ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes landing-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+
+@keyframes landing-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes landing-scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+/* ── Narrow screens ────────────────────────────────────────────────────────────────────── */
+
+@media (max-width: 46rem) {
+  /* The section links and the sign-up button cannot both fit beside the wordmark on a phone.
+     The button is the reason the page exists, so the links are what goes — the same
+     destinations are in the footer. */
+  .landing__nav-link {
+    display: none;
+  }
+
+  /* Three HUD panels over a 340px-tall canvas leave no canvas. The one naming the build and
+     its size is the one that says what the editor is; the other two are decoration here. */
+  .landing__hud--generate,
+  .landing__hud--layers {
+    display: none;
+  }
+
+  .landing__step,
+  .landing__path {
+    padding: 24px;
+  }
+
+  /* Full width rather than shrink-to-fit, so the prompt has every pixel available before it
+     starts clipping. */
+  .landing__prompt {
+    display: flex;
+    width: 100%;
+  }
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  /* The reveals are handled in `useRevealOnScroll`, which shows everything up front rather
+     than transitioning it. This covers the decorative loops — the blinking caret, the pulsing
+     dot, the scanline — which have no JavaScript to turn off. */
+  .landing *,
+  .landing *::before,
+  .landing *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

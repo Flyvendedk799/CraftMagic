@@ -90,7 +90,7 @@ export function GuidePage() {
     const search = new URLSearchParams();
     search.set('build', buildId);
     carrySettings(params, search);
-    return `/?${search.toString()}`;
+    return `/editor?${search.toString()}`;
   }, [buildId, params]);
 
   return (

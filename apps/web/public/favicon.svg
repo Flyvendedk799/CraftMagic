@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="CraftMagic">
+  <title>CraftMagic</title>
+  <!-- The dark tile is the "Mark · dark" avatar from the brand pack, not decoration: the mark
+       is mid-tone mint, and on a white tab strip a transparent version loses its top face. -->
+  <rect width="32" height="32" rx="7.5" fill="#0f1216"/>
+  <g transform="translate(16 16) scale(0.8) translate(-16 -16)">
+    <path d="M16 3 L28 9.5 L16 16 L4 9.5 Z" fill="#6ee7b7"/>
+    <path d="M4 9.5 L16 16 L16 29 L4 22.5 Z" fill="#2f8f6f"/>
+    <path d="M28 9.5 L16 16 L16 29 L28 22.5 Z" fill="#227a5c"/>
+  </g>
+</svg>

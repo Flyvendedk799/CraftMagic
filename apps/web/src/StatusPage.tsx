@@ -86,7 +86,7 @@ export function StatusPage() {
       </section>
 
       <p className="tagline" style={{ marginTop: '2rem' }}>
-        <Link to="/">← Back to the editor</Link>
+        <Link to="/editor">← Back to the editor</Link>
       </p>
     </main>
   );

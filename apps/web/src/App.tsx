@@ -1,15 +1,19 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AdminPage } from './admin/AdminPage.js';
 import { EditorPage } from './editor/EditorPage.js';
 import { GuidePage } from './guide/GuidePage.js';
+import { LandingPage } from './landing/LandingPage.js';
 import { LibraryPage } from './library/LibraryPage.js';
 import { ModPage } from './mod/ModPage.js';
 import { StatusPage } from './StatusPage.js';
 
 /**
- * Four routes, all load-bearing. `/status` keeps the M0 API and WebSocket round-trips
- * reachable — they are the deployment smoke test, not a placeholder page, and the server's
- * SPA fallback means the deep link survives a hard refresh behind the reverse proxy.
+ * Routes, all load-bearing. `/status` keeps the M0 API and WebSocket round-trips reachable —
+ * they are the deployment smoke test, not a placeholder page, and the server's SPA fallback
+ * means the deep link survives a hard refresh behind the reverse proxy.
+ *
+ * `/` is the landing page and `/editor` is the editor. It used to be the other way round,
+ * which was right while the only visitors were people who already knew what this was.
  *
  * `/guide` takes the same `?build=&p.<name>=` query as the editor, so a booklet is just the
  * current view with a different path: no export step, no server round trip, and a link
@@ -25,7 +29,8 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<EditorPage />} />
+        <Route path="/" element={<Home />} />
+        <Route path="/editor" element={<EditorPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/mod" element={<ModPage />} />
@@ -34,4 +39,21 @@ export function App() {
       </Routes>
     </BrowserRouter>
   );
+}
+
+/**
+ * The landing page — unless the URL is carrying a build, in which case it is the editor.
+ *
+ * Every build link shared before the editor moved has the shape `/?build=…&p.floors=2`, and
+ * those links are the product's main way of spreading. Sending them to a marketing page would
+ * break each one silently: the visitor lands somewhere plausible, so nobody reports it.
+ *
+ * Keyed off any query at all rather than `build` specifically, because `?p.<name>=` and
+ * `?s.<axis>=` are meaningful on their own — they open the default build at a chosen size.
+ * A bare `/` has no query and is the only thing that reaches the landing page.
+ */
+function Home() {
+  const { search } = useLocation();
+  if (search.length > 1) return <Navigate replace to={{ pathname: '/editor', search }} />;
+  return <LandingPage />;
 }

@@ -101,15 +101,38 @@ export class VoxelCanvas {
 	readonly size: Size3;
 	readonly voxels: Uint16Array;
 
+	/**
+	 * Which part wrote each voxel, or null when provenance was not asked for.
+	 *
+	 * Allocated up front rather than grown, because it is indexed by the same arithmetic as
+	 * `voxels` and must stay exactly parallel to it.
+	 */
+	readonly origin: Uint16Array | null;
+
 	private readonly palette: string[] = [AIR_BLOCK];
 	private readonly paletteIndex = new Map<string, number>([[AIR_BLOCK, AIR_INDEX]]);
 
 	/** Writes that fell outside the build volume, so the caller can warn about clipping. */
 	private clipped = 0;
 
-	constructor(size: Size3) {
+	/** The part currently drawing. 0 while nothing has claimed the brush. */
+	private part = 0;
+
+	constructor(size: Size3, trackOrigin = false) {
 		this.size = size;
 		this.voxels = new Uint16Array(size.x * size.y * size.z);
+		this.origin = trackOrigin ? new Uint16Array(this.voxels.length) : null;
+	}
+
+	/**
+	 * Attribute every following write to `part`, until the next call.
+	 *
+	 * A plain mutable cursor rather than a parameter threaded through `Brush`: component
+	 * builders write through half a dozen helpers each, and passing an id down all of them
+	 * would be a wide change for something none of them should be able to get wrong.
+	 */
+	beginPart(part: number): void {
+		this.part = part;
 	}
 
 	/** Intern a block reference, returning its palette index. */
@@ -132,7 +155,12 @@ export class VoxelCanvas {
 			this.clipped++;
 			return;
 		}
-		this.voxels[voxelIndex(this.size, x, y, z)] = paletteIdx;
+		const at = voxelIndex(this.size, x, y, z);
+		this.voxels[at] = paletteIdx;
+		// Carving hands the cell back rather than transferring it: a component that writes air
+		// is cutting a doorway, and the hole belongs to nobody. Leaving the previous owner's id
+		// behind would credit a wall with the empty space punched through it.
+		if (this.origin) this.origin[at] = paletteIdx === AIR_INDEX ? 0 : this.part;
 	}
 
 	get(x: number, y: number, z: number): number {

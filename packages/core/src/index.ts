@@ -5,6 +5,7 @@ export * from './registry/registry.js';
 export * from './expand/expander.js';
 export * from './samples/index.js';
 export * from './schem/write.js';
+export * from './guide/design-system.js';
 export * from './guide/steps.js';
 export * from './voxels/codec.js';
 export * from './protocol/agent.js';

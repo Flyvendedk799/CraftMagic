@@ -12,17 +12,20 @@
  */
 
 import type {
+	BuildPart,
 	BuildProgram,
 	Component,
 	Coord,
 	CVec3,
 	DetailOp,
 	ExpandIssue,
+	ExpandOptions,
 	ExpandResult,
+	Face,
 	Transform,
 	Vec3,
 } from '../ir/types.js';
-import { AIR_BLOCK, COMPONENT_TYPES, LIMITS } from '../ir/types.js';
+import { AIR_BLOCK, COMPONENT_TYPES, LIMITS, voxelPosition } from '../ir/types.js';
 import { CoordError, clampParam, resolveCoord } from '../ir/coords.js';
 import { scaleFactors, scaleLen, scalePos, scaledSize, type Size3 } from '../ir/scale.js';
 import { validateBlockRef } from '../registry/registry.js';
@@ -50,9 +53,10 @@ import { buildArch, buildDoor, buildWindowGrid } from './components/openings.js'
 /** Share of a build that may fall outside the volume before it is worth reporting. */
 const CLIP_WARNING_RATIO = 0.05;
 
-export function expand(program: BuildProgram): ExpandResult {
+export function expand(program: BuildProgram, options: ExpandOptions = {}): ExpandResult {
 	const errors: ExpandIssue[] = [];
 	const warnings: ExpandIssue[] = [];
+	const provenance = options.provenance === true;
 
 	// Coordinates resolve against the program's *own* size and are scaled afterwards, so a
 	// resize enlarges the structure rather than only the volume it sits in. At 100% the factors
@@ -61,9 +65,10 @@ export function expand(program: BuildProgram): ExpandResult {
 	const size = scaledSize(base, program.scale);
 	const factor = scaleFactors(base, program.scale);
 
-	const canvas = new VoxelCanvas(size);
+	const canvas = new VoxelCanvas(size, provenance);
 	const palette = new Palette(program.palette ?? {});
 	const params = normalizeParams(program.params);
+	const parts = new PartRegistry(provenance);
 
 	validatePaletteBlocks(program, errors);
 
@@ -78,10 +83,11 @@ export function expand(program: BuildProgram): ExpandResult {
 		});
 	}
 
-	const ctx: ExpandContext = { base, size, factor, palette, params, errors, warnings, canvas };
+	const ctx: ExpandContext = { base, size, factor, palette, params, errors, warnings, canvas, parts };
 
 	components.slice(0, LIMITS.maxComponents).forEach((component, index) => {
-		drawComponent(rootBrush, component, `components[${index}]`, ctx);
+		const path = `components[${index}]`;
+		drawComponent(rootBrush, component, path, path, ctx);
 	});
 
 	applyDetails(rootBrush, program.details ?? [], ctx);
@@ -124,7 +130,79 @@ export function expand(program: BuildProgram): ExpandResult {
 		});
 	}
 
-	return { grid, blockCount, warnings, errors };
+	return {
+		grid,
+		blockCount,
+		warnings,
+		errors,
+		origin: canvas.origin,
+		parts: canvas.origin ? parts.measure(canvas.origin, size) : [],
+	};
+}
+
+/**
+ * Hands out one id per component that draws, and remembers what each one is.
+ *
+ * Keyed by a path that deliberately omits repeat indices, so the ten thousand towers a pair
+ * of nested `repeat`s produces stay one part rather than ten thousand. That is the whole
+ * reason identity is a string key and not a running counter.
+ *
+ * Inert when provenance is off: `claim` returns 0, `beginPart(0)` is what the canvas already
+ * assumes, and nothing is allocated.
+ */
+class PartRegistry {
+	private readonly byKey = new Map<string, BuildPart>();
+	private readonly ordered: BuildPart[] = [];
+
+	constructor(private readonly enabled: boolean) {}
+
+	claim(key: string, type: BuildPart['type'], describe: () => Pick<BuildPart, 'role' | 'face'>): number {
+		if (!this.enabled) return 0;
+
+		const existing = this.byKey.get(key);
+		if (existing) return existing.id;
+		if (this.ordered.length >= LIMITS.maxParts) return 0;
+
+		const part: BuildPart = { id: this.ordered.length + 1, path: key, type, blocks: 0, ...describe() };
+		this.byKey.set(key, part);
+		this.ordered.push(part);
+		return part.id;
+	}
+
+	/**
+	 * Count and bound what each part actually kept.
+	 *
+	 * One pass over the finished origin map, after every component has had its turn — so a
+	 * wall painted over by a later wall is measured at what survived, not at what it drew.
+	 * Parts that kept nothing are dropped: an invisible part is not worth a line in any
+	 * document, and their ids simply never appear in `origin`.
+	 */
+	measure(origin: Uint16Array, size: Size3): BuildPart[] {
+		for (let i = 0; i < origin.length; i++) {
+			const id = origin[i]!;
+			if (id === 0) continue;
+			const part = this.ordered[id - 1];
+			if (!part) continue;
+
+			const [x, y, z] = voxelPosition(size, i);
+			if (part.blocks === 0) {
+				part.min = [x, y, z];
+				part.max = [x, y, z];
+			} else {
+				const min = part.min!;
+				const max = part.max!;
+				if (x < min[0]) min[0] = x;
+				if (y < min[1]) min[1] = y;
+				if (z < min[2]) min[2] = z;
+				if (x > max[0]) max[0] = x;
+				if (y > max[1]) max[1] = y;
+				if (z > max[2]) max[2] = z;
+			}
+			part.blocks++;
+		}
+
+		return this.ordered.filter((part) => part.blocks > 0);
+	}
 }
 
 interface ExpandContext {
@@ -139,6 +217,7 @@ interface ExpandContext {
 	errors: ExpandIssue[];
 	warnings: ExpandIssue[];
 	canvas: VoxelCanvas;
+	parts: PartRegistry;
 }
 
 function clampSize(
@@ -191,13 +270,33 @@ function validatePaletteBlocks(program: BuildProgram, errors: ExpandIssue[]): vo
 
 // --- component dispatch -------------------------------------------------
 
-function drawComponent(brush: Brush, component: Component, path: string, ctx: ExpandContext): void {
+/**
+ * @param path    Where this draw happened, repeat indices and all — what an error message
+ *                must quote so the user can find the component that failed.
+ * @param partKey The same location with repeats collapsed, which is what gives every copy of
+ *                a repeated child one shared identity. Errors want the former, provenance the
+ *                latter, and conflating them was the difference between "Tower walls" and a
+ *                hundred parts called "Tower walls".
+ */
+function drawComponent(
+	brush: Brush,
+	component: Component,
+	path: string,
+	partKey: string,
+	ctx: ExpandContext,
+): void {
 	// Roles are checked up front so a typo reports the component that caused it rather than
 	// surfacing later as a mysteriously empty region.
 	const missingBefore = ctx.palette.missing.size;
 
+	// A group has no geometry of its own — only its leaves write — so it claims nothing and
+	// lets each child own what it draws.
+	if (component.type !== 'group') {
+		ctx.canvas.beginPart(ctx.parts.claim(partKey, component.type, () => describePart(component)));
+	}
+
 	try {
-		draw(brush, component, path, ctx);
+		draw(brush, component, path, partKey, ctx);
 	} catch (err) {
 		if (err instanceof CoordError) {
 			ctx.errors.push({ path, code: 'BAD_COORD_EXPR', message: err.message });
@@ -216,7 +315,48 @@ function drawComponent(brush: Brush, component: Component, path: string, ctx: Ex
 	}
 }
 
-function draw(brush: Brush, component: Component, path: string, ctx: ExpandContext): void {
+/**
+ * The two facts about a component worth carrying into provenance: what it is made of, and
+ * which wall it faces.
+ *
+ * A role only survives when the component draws in exactly one — a checkerboard of
+ * foundation and path is neither, and calling it either would be a lie a document then
+ * repeats. `face` is only ever the component's own declaration; nothing is inferred here.
+ */
+function describePart(component: Exclude<Component, { type: 'group' }>): Pick<BuildPart, 'role' | 'face'> {
+	const only = (roles: string[]): string | undefined => (roles.length === 1 ? roles[0] : undefined);
+	const withFace = (role: string | undefined, face: Face) => ({ ...(role ? { role } : {}), face });
+
+	switch (component.type) {
+		case 'box':
+		case 'hollow_box':
+		case 'cylinder':
+		case 'sphere':
+		case 'pyramid':
+		case 'line':
+		case 'arch': {
+			const role = only(rolesOf(component.fill));
+			return role ? { role } : {};
+		}
+		case 'gable_roof':
+		case 'hip_roof':
+			return { role: component.roofRole };
+		case 'window_grid':
+			return withFace(component.role, component.face);
+		case 'door':
+			return withFace(component.role, component.face);
+		case 'stairs_run':
+			return withFace(component.role, component.direction);
+	}
+}
+
+function draw(
+	brush: Brush,
+	component: Component,
+	path: string,
+	partKey: string,
+	ctx: ExpandContext,
+): void {
 	const pos = (v: CVec3) => resolvePos(v, ctx);
 	const box = (at: CVec3, size: CVec3) => region(at, size, ctx);
 
@@ -403,7 +543,7 @@ function draw(brush: Brush, component: Component, path: string, ctx: ExpandConte
 		}
 
 		case 'group':
-			drawGroup(brush, component, path, ctx);
+			drawGroup(brush, component, path, partKey, ctx);
 			return;
 
 		default: {
@@ -433,6 +573,7 @@ function drawGroup(
 	brush: Brush,
 	group: Extract<Component, { type: 'group' }>,
 	path: string,
+	partKey: string,
 	ctx: ExpandContext,
 ): void {
 	// The pivot is the *scaled* centre of the program's own volume, not the centre of the drawn
@@ -464,10 +605,13 @@ function drawGroup(
 		}
 	}
 
+	// `label` carries the repeat index and `partKey` does not, which is exactly the point:
+	// the hundredth copy of a tower reports its own path in an error and shares the first
+	// copy's part in the guide.
 	const drawChildren = (childFrame: Frame, label: string) => {
 		const childBrush = brush.withFrame(childFrame);
 		group.children.forEach((child, index) => {
-			drawComponent(childBrush, child, `${label}.children[${index}]`, ctx);
+			drawComponent(childBrush, child, `${label}.children[${index}]`, `${partKey}.children[${index}]`, ctx);
 		});
 	};
 
@@ -657,6 +801,12 @@ function requireRole(role: string, path: string, ctx: ExpandContext): void {
 // --- details ------------------------------------------------------------
 
 function applyDetails(brush: Brush, details: DetailOp[], ctx: ExpandContext): void {
+	// Every detail op shares one part. They are accents by definition — the schema caps a
+	// single fill at 512 blocks and calls them "small accents only" — so five thousand parts
+	// named `details[0]`…`details[4999]` would bury the handful of parts that describe the
+	// actual structure. One "Details" part is what a builder would say out loud anyway.
+	ctx.canvas.beginPart(ctx.parts.claim('details', 'details', () => ({})));
+
 	if (details.length > LIMITS.maxDetailOps) {
 		ctx.warnings.push({
 			path: 'details',

@@ -128,17 +128,18 @@ minecraft-common-deobf/26.2/minecraft-common-deobf-26.2.jar net.minecraft.server
 
 ### One-jar install
 
-**Players do not need to install Fabric API separately.** The mod bundles the three modules it
-uses — `fabric-api-base`, `fabric-command-api-v2`, `fabric-lifecycle-events-v1` — via Gradle
-`include` / Jar-in-Jar, so `fabric.mod.json` declares no `fabric-api` dependency. Anyone
+**Players do not need to install Fabric API separately.** The mod bundles the five modules it
+uses — `fabric-api-base`, `fabric-command-api-v2`, `fabric-lifecycle-events-v1`,
+`fabric-events-interaction-v0` and `fabric-networking-api-v1` (the last two for the wand) — via
+Gradle `include` / Jar-in-Jar, so `fabric.mod.json` declares no `fabric-api` dependency. Anyone
 already running the full Fabric API keeps whichever version is higher.
 
 Two rules, each learned from a shipped bug:
 
-**Bundle only what the bytecode uses.** The list once carried `fabric-networking-api-v1`,
-`fabric-rendering-v1` and `fabric-key-mapping-api-v1` for the hologram preview and its
-keybinds — features the roadmap intends but that were never built. Bundling is not free: every
-module injects its mixins into the game whether the mod calls it or not, and on 26.2
+**Bundle only what the bytecode uses.** The list once carried `fabric-rendering-v1` and
+`fabric-key-mapping-api-v1` for the hologram preview and its keybinds — features the roadmap
+intends but that were never built. Bundling is not free: every module injects its mixins into
+the game whether the mod calls it or not, and on 26.2
 `fabric-rendering-v1`'s model-pipeline mixin died with an `IllegalAccessError` during the
 initial resource reload. The client crashed on startup because of a renderer nothing used.
 Check before adding:
@@ -148,9 +149,10 @@ javap -p -c <extracted classes> | grep -oE 'net/fabricmc/fabric/api/[a-zA-Z0-9/]
 ```
 
 **`include` is not transitive.** It bundles exactly the artifact named and nothing that
-artifact depends on. Both modules above declare `"fabric-api-base": "*"` as a hard dependency,
-and shipping without it made the jar refuse to load for anyone who did not already have the
-full Fabric API. Read a module's `depends` block before adding it:
+artifact depends on. Every module above declares `"fabric-api-base": "*"` as a hard
+dependency, and `fabric-events-interaction-v0` also names `fabric-networking-api-v1`; shipping
+without either made the jar refuse to load for anyone who did not already have the full
+Fabric API. Read a module's `depends` block before adding it:
 
 ```bash
 unzip -p <module>.jar fabric.mod.json | grep depends
@@ -258,8 +260,35 @@ guide can never drift from the program it describes.
 Each step shows a top-down layer plan (new blocks outlined, earlier ones in the same layer at
 45%, the layer below ghosted at 20%) beside an isometric render of the build *after* that
 step, so the reader watches it accumulate. Print with Ctrl+P — the print stylesheet flips to
-an ink-friendly light page and keeps step cards off page breaks. The 33-step cottage guide
-renders in ~0.4s.
+an ink-friendly light page and keeps step cards off page breaks. The 43-step cottage guide
+renders in ~0.6s.
+
+**Steps are named, not numbered.** `BuildGuideDesignSystem` (`packages/core/src/guide/
+design-system.ts`) is the policy behind every guide: how big a step may be, whether one may
+mix parts, where the difficulty bands fall, and what each part is *called*. A step reads
+"Step 13 — Walls" rather than "y = 1, part 6 of 6", and the cover carries a bill of parts —
+"Foundation, Walls, Frame (north-west), South windows, Roof" — before the bill of materials.
+
+That needs the expander to say which component drew which block, so `expand(program, {
+provenance: true })` returns an `origin` array parallel to `grid.voxels` plus the `parts` it
+indexes. It is opt-in because the editor re-expands on every frame of a slider drag and would
+pay for something it never reads; on the 200k-block stress build it costs ~6ms of 48ms and a
+second `Uint16Array`. Two properties are worth knowing: a `repeat` transform's children stay
+*one* part, so a hundred identical towers are one line and not a hundred, and a part is
+measured by what survived overpainting, so a wall hidden behind a later wall reports zero
+blocks and is dropped rather than named in a step nobody can see.
+
+Naming deliberately lives in the design system rather than in the expander. What a part *is*
+— a `hollow_box` drawing `wall_primary` — is settled at expansion; what it is *called*
+depends on the build's proportions and on what else shares its name, which is why four
+identical corner posts come out as "Frame (north-west)" and friends. A build with no program
+behind it — a hand-edited grid from the library — has no parts, and the guide falls back to
+naming steps by layer rather than inventing them.
+
+The visual half is `apps/web/src/guide/tokens.css`: colour *roles*, a closed type scale and a
+six-step spacing rhythm, with `print.css` written entirely against them. That is what keeps
+the `@media print` block short — the booklet is repainted for paper by redefining eight
+values, not by restating a hundred rules.
 
 ```bash
 node tools/shot.mjs "http://localhost:3016/guide?build=cottage" guide.png ".guide" "data-ready" "1"
@@ -272,10 +301,11 @@ invisible on screen: a `max-width: 46rem` query that fired on A4 (703px once mar
 removed) and stacked the panels one step per page, and a stylesheet-order problem that
 printed the page black. Route-level CSS is bundled *before* the global stylesheet, so
 `@media print { :root { … } }` loses to the dark `:root`; print overrides live on `.guide`
-instead, where custom properties still inherit. The cottage guide is 19 A4 pages.
+instead — now in `tokens.css`, which redefines the roles there — where custom properties
+still inherit. The cottage guide is 24 A4 pages.
 
 Guides cap at `MAX_PRINTABLE_STEPS = 400`. The 202,700-block stress build segments into
-5,263 steps, so it renders the cover and materials only and says so, rather than opening
+5,423 steps, so it renders the cover and materials only and says so, rather than opening
 thousands of canvases.
 
 `mod/.../build/Schematic.java` is the parser the builder bot will use in M4, and

@@ -4,7 +4,7 @@ import dev.craftmagic.agent.CraftMagicMod;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /**
  * "I swung the wand at nothing."
@@ -21,7 +21,7 @@ import net.minecraft.resources.ResourceLocation;
 public record WandPunchPayload() implements CustomPacketPayload {
 	public static final CustomPacketPayload.Type<WandPunchPayload> TYPE =
 			new CustomPacketPayload.Type<>(
-					ResourceLocation.fromNamespaceAndPath(CraftMagicMod.MOD_ID, "wand_punch"));
+					Identifier.fromNamespaceAndPath(CraftMagicMod.MOD_ID, "wand_punch"));
 
 	/** No fields, so decoding is a constant rather than a read. */
 	public static final StreamCodec<FriendlyByteBuf, WandPunchPayload> CODEC =

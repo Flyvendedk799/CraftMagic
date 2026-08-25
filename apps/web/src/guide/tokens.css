@@ -1,0 +1,123 @@
+/* The build guide's design tokens — the visual half of `BuildGuideDesignSystem`.
+ *
+ * The core package owns what a guide *says*: how steps are grouped, what each one is called,
+ * where the difficulty bands fall. This file owns how that reads on a page. Same idea, same
+ * name, two halves — one has to run in the mod and the server, the other only in a browser.
+ *
+ * Three groups of token, and the layering between them is the whole point:
+ *
+ *   --guide-ink / --guide-paper / --guide-rule …   ROLES. What a colour is *for*. Every rule
+ *                                                  in print.css asks for one of these and
+ *                                                  never for a literal, which is what lets
+ *                                                  the print block below repaint the entire
+ *                                                  booklet by redefining eight values.
+ *   --guide-text-* / --guide-space-* / --guide-radius-*   SCALES. Closed sets. A size that
+ *                                                  is not on the scale is a bug, not a
+ *                                                  decision — that is what makes forty step
+ *                                                  cards look like one document.
+ *   --guide-art-*                                  The two art panels, which are paper-white
+ *                                                  in *both* themes. See below.
+ *
+ * Declared on `.guide` rather than `:root` deliberately. This file is imported from a route
+ * component, so the bundler emits it before `styles.css`, and a `:root` block here would lose
+ * the cascade to the app's dark palette declared later. Custom properties inherit, so
+ * defining them on an ancestor of everything printed sidesteps source order entirely.
+ */
+
+.guide {
+  /* --- ink and paper, on screen ------------------------------------------
+     Aliases of the app's own roles, so the guide follows the product's theme rather than
+     maintaining a second one. Only the four literals below are guide-specific. */
+  --guide-paper: var(--panel);
+  --guide-ground: var(--bg);
+  --guide-ink: var(--text);
+  --guide-ink-muted: var(--muted);
+  --guide-rule: var(--border);
+  /* The lighter rule between rows of a list, where a full-strength rule would stripe the
+     page. On screen the app has only one border colour, so this is the same value. */
+  --guide-rule-faint: var(--border);
+  --guide-accent: var(--accent);
+  --guide-disabled: #212832;
+
+  /* --- the art panels ----------------------------------------------------
+     Always paper-white, in both themes and on paper. The plan canvases draw alpha-blended
+     ghost layers for the courses already placed, so letting the panel background flip
+     between screen and print would blend the same drawing against two different colours and
+     the printed booklet would stop matching the one on screen. That is a correctness
+     constraint, not a preference, which is why these are literals and not roles. */
+  --guide-art-paper: #f6f7f9;
+  --guide-art-rule: rgba(20, 26, 33, 0.18);
+  --guide-art-ink: #5b636d;
+  --guide-art-ink-faint: #79818b;
+  --guide-swatch-rule: rgba(20, 26, 33, 0.35);
+  --guide-swatch-sheen: rgba(255, 255, 255, 0.12);
+
+  /* --- type -------------------------------------------------------------- */
+  --guide-font-mono: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+
+  --guide-text-2xs: 0.6875rem; /* eyebrows, captions, stat notes */
+  --guide-text-xs: 0.75rem; /* status line, footer */
+  --guide-text-sm: 0.8125rem; /* labels, section titles, chips */
+  --guide-text-md: 0.875rem; /* secondary prose */
+  --guide-text-base: 0.9375rem; /* list rows */
+  --guide-text-lg: 1.25rem; /* stat values, step numbers */
+  --guide-text-display: 2.75rem; /* the cover title, once per booklet */
+
+  /* Wide tracking is what makes a small uppercase label read as a label rather than as
+     shouting. One value, so every eyebrow in the booklet matches. */
+  --guide-track-eyebrow: 0.18em;
+  --guide-track-label: 0.09em;
+
+  /* --- rhythm ------------------------------------------------------------
+     A closed set. Every margin and gap in the booklet is one of these six. */
+  --guide-space-1: 0.35rem;
+  --guide-space-2: 0.55rem;
+  --guide-space-3: 0.85rem;
+  --guide-space-4: 1.25rem;
+  --guide-space-5: 1.75rem;
+  --guide-space-6: 2.5rem;
+
+  --guide-radius-sheet: 14px;
+  --guide-radius-panel: 10px;
+  --guide-radius-chip: 8px;
+  --guide-radius-swatch: 4px;
+
+  /* --- measure -----------------------------------------------------------
+     Prose is capped in characters, not pixels: line length is what governs readability, and
+     it should not change because someone widened the window. */
+  --guide-measure-lede: 52ch;
+  --guide-measure-cover: 46ch;
+  --guide-page: 60rem;
+}
+
+/* --- paper ---------------------------------------------------------------
+   The dark theme is a screen affordance; on paper it is a toner bill. Redefining the roles
+   rather than each rule is what keeps screen and print one stylesheet — nothing below this
+   comment needs a print-specific counterpart, because every rule already asks for a role.
+
+   The art tokens are deliberately absent: they are the same on paper as on screen, by the
+   constraint described above. */
+@media print {
+  .guide {
+    --guide-paper: #ffffff;
+    --guide-ground: #ffffff;
+    --guide-ink: #14181d;
+    --guide-ink-muted: #59616b;
+    --guide-rule: #d3d8de;
+    --guide-rule-faint: #e2e6ea;
+    /* Dark enough to stay legible in greyscale, which is how most of these will be printed. */
+    --guide-accent: #0f6f52;
+
+    /* The app tokens too: `body` is not inside `.guide`, and a few shared components
+       (buttons, links) reach for them from within the booklet. */
+    --bg: #ffffff;
+    --panel: #ffffff;
+    --border: #d3d8de;
+    --text: #14181d;
+    --muted: #59616b;
+    --accent: #0f6f52;
+
+    color-scheme: light;
+    color: var(--guide-ink);
+  }
+}

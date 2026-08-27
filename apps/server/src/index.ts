@@ -19,7 +19,9 @@ import { adminRoutes } from './admin/routes.js';
 import { SettingsStore, maskKey, type AiSettings } from './settings/store.js';
 import { isSubscription } from './generate/pricing.js';
 import { claudeCodeProvider, codexProvider } from './generate/providers.js';
+import { ClaudeAccountStore } from './generate/subscription/accountStore.js';
 import { ClaudeCodeCredential } from './generate/subscription/claudeCode.js';
+import { claudeCodeRoutes } from './generate/subscription/routes.js';
 import { CodexCredential } from './generate/subscription/codex.js';
 import { GenerationQuota } from './generate/quota.js';
 import { SpendLedger } from './generate/spend.js';
@@ -183,6 +185,15 @@ const settings = db ? new SettingsStore(db, config.sessionSecret) : null;
 const claudeCode = new ClaudeCodeCredential();
 const codex = new CodexCredential();
 
+/**
+ * Per-account Claude subscriptions, when there is somewhere to keep them.
+ *
+ * Without a database this is null and the machine-local login is the only path — which is
+ * exactly right for a self-hosted single-user instance, and exactly wrong for a hosted one,
+ * which is why a hosted one has a database.
+ */
+const claudeAccounts = db && settings ? new ClaudeAccountStore(db, config.sessionSecret) : null;
+
 const resolveAi = async (): Promise<AiSettings> => {
   const env = {
     ...(config.anthropicApiKey ? { anthropicKey: config.anthropicApiKey } : {}),
@@ -223,13 +234,33 @@ await app.register(
     // Built per request rather than once: each closes over a credential reader that re-reads
     // the CLI's own store, so signing in or out of  takes effect on the next
     // generation instead of on the next restart.
-    subscriptionProvider: (id) =>
-      id === 'claude-code'
-        ? claudeCodeProvider(() => claudeCode.token())
-        : id === 'codex'
-          ? codexProvider(() => codex.identity(), config.codexBaseUrl)
-          : null,
+    /**
+     * Whose plan pays.
+     *
+     * The account's own connected subscription first, and the server's machine login only as
+     * a fallback. That order is the entire point of the per-account credential: without it,
+     * every visitor's generation comes out of whoever set the server up, which is fine for a
+     * laptop and unacceptable for anything with more than one user on it.
+     */
+    subscriptionProvider: async (id, userId) => {
+      if (id === 'codex') return codexProvider(() => codex.identity(), config.codexBaseUrl);
+      if (id !== 'claude-code') return null;
+
+      if (claudeAccounts) {
+        const status = await claudeAccounts.status(userId);
+        if (status.connected) return claudeCodeProvider(() => claudeAccounts.token(userId));
+      }
+
+      // Nothing connected for this account. The machine login is the fallback, and it is only
+      // a fallback: it is checked here rather than assumed so an unconnected account on a
+      // server with no login gets "connect one" instead of a 401 from Anthropic.
+      const machine = await claudeCode.status();
+      return machine.connected ? claudeCodeProvider(() => claudeCode.token()) : null;
+    },
   }),
+);
+await app.register(
+  claudeCodeRoutes({ auth, store: claudeAccounts }),
 );
 await app.register(
   adminRoutes({

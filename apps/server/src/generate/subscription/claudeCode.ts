@@ -48,7 +48,9 @@ const KEYCHAIN_SERVICE = 'Claude Code-credentials';
  */
 const DEFAULT_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
-const OAUTH_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
+// Read out of the installed CLI rather than guessed. `console.anthropic.com` also answers,
+// but this is the host the client itself posts to and the one that will keep working.
+const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 
 /** Treat a token as spent this long before it really expires, so a call cannot race it. */
 const EXPIRY_BUFFER_MS = 60_000;

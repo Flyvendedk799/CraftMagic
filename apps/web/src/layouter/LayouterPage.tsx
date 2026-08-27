@@ -31,13 +31,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { expand, paletteColors, paletteFlags, type VoxelGrid } from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorCanvas.js';
 import { ExportBar } from '../editor/ExportBar.js';
 import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild } from '../editor/builds.js';
 import { AccountPanel } from '../library/AccountPanel.js';
+import { AppNav } from '../shell/AppNav.js';
 import { compilePlan } from './compile.js';
 import { FloorStack } from './FloorStack.js';
 import { Inspector } from './Inspector.js';
@@ -309,6 +310,12 @@ export function LayouterPage() {
 
   return (
     <div className="layouter">
+      {/* The same bar the editor wears, for the same reason: this is a full-viewport tool, and
+          without it the only way back out is whatever links its own panel happens to carry.
+          The bar already lists this page as a destination, so arriving here and losing it was
+          the one place the chrome contradicted itself. */}
+      <AppNav current="layouter" />
+
       <section className="hud layouter__panel">
         <h1 className="hud__title">Layouter</h1>
         <p className="hud__sub">Floorplans, storey by storey</p>
@@ -506,15 +513,8 @@ export function LayouterPage() {
           <AccountPanel />
         </div>
 
-        <p className="hud__sub" style={{ marginTop: '0.875rem' }}>
-          <Link className="hud__link" to="/editor">
-            Voxel editor →
-          </Link>
-          <br />
-          <Link className="hud__link" to="/dashboard">
-            Dashboard →
-          </Link>
-        </p>
+        {/* The editor and the dashboard were listed here. Both are one click away in the bar
+            above now, and a link that repeats one already on screen is furniture. */}
       </section>
 
       <div className="layouter__plan">

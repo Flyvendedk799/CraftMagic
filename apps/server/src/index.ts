@@ -17,6 +17,10 @@ import { initDb } from './db/pool.js';
 import { generateRoutes } from './generate/routes.js';
 import { adminRoutes } from './admin/routes.js';
 import { SettingsStore, maskKey, type AiSettings } from './settings/store.js';
+import { isSubscription } from './generate/pricing.js';
+import { claudeCodeProvider, codexProvider } from './generate/providers.js';
+import { ClaudeCodeCredential } from './generate/subscription/claudeCode.js';
+import { CodexCredential } from './generate/subscription/codex.js';
 import { GenerationQuota } from './generate/quota.js';
 import { SpendLedger } from './generate/spend.js';
 
@@ -169,33 +173,80 @@ const settings = db ? new SettingsStore(db, config.sessionSecret) : null;
  * immediately. Without a database there are no settings, so the environment is the whole
  * answer — which is also what a fresh install has before anyone has registered.
  */
+/**
+ * The two subscription logins on this machine.
+ *
+ * Built once and reused, but they hold no credential of their own: each re-reads the CLI's
+ * own store on every call. See `generate/subscription/` for why that is the whole design
+ * rather than a missed caching opportunity.
+ */
+const claudeCode = new ClaudeCodeCredential();
+const codex = new CodexCredential();
+
 const resolveAi = async (): Promise<AiSettings> => {
   const env = {
     ...(config.anthropicApiKey ? { anthropicKey: config.anthropicApiKey } : {}),
     ...(config.openaiApiKey ? { openaiKey: config.openaiApiKey } : {}),
     model: config.anthropicModel,
   };
-  if (!settings) {
-    const apiKey = env.anthropicKey ?? null;
-    return {
-      provider: 'anthropic',
-      model: env.model,
-      apiKey,
-      keySource: apiKey ? 'environment' : 'none',
-      anthropicKeyHint: apiKey ? maskKey(apiKey) : null,
-      openaiKeyHint: env.openaiKey ? maskKey(env.openaiKey) : null,
-    };
-  }
-  return settings.effective(env);
+
+  const base: AiSettings = settings
+    ? await settings.effective(env)
+    : {
+        provider: 'anthropic',
+        model: env.model,
+        apiKey: env.anthropicKey ?? null,
+        keySource: env.anthropicKey ? 'environment' : 'none',
+        ready: env.anthropicKey !== undefined,
+        anthropicKeyHint: env.anthropicKey ? maskKey(env.anthropicKey) : null,
+        openaiKeyHint: env.openaiKey ? maskKey(env.openaiKey) : null,
+      };
+
+  // The settings table cannot answer "is there a login on this box" — only a keychain read
+  // can — so readiness for a subscription provider is resolved here, where the credential
+  // readers live. It is the one field the store deliberately leaves false.
+  if (!isSubscription(base.provider)) return base;
+  const status = base.provider === 'claude-code' ? await claudeCode.status() : await codex.status();
+  // Connected-but-expired still counts as ready for Claude Code, whose token can be refreshed
+  // on the way out; Codex cannot refresh without breaking the CLI's own session, so an expired
+  // one is genuinely not ready and says so.
+  const usable = base.provider === 'claude-code' ? status.connected : status.connected && !status.expired;
+  return { ...base, ready: usable };
 };
 
-await app.register(generateRoutes({ ledger, resolveAi, auth, quota }));
 await app.register(
-  adminRoutes({ auth, authStore, settings, ledger, resolveAi }),
+  generateRoutes({
+    ledger,
+    resolveAi,
+    auth,
+    quota,
+    // Built per request rather than once: each closes over a credential reader that re-reads
+    // the CLI's own store, so signing in or out of  takes effect on the next
+    // generation instead of on the next restart.
+    subscriptionProvider: (id) =>
+      id === 'claude-code'
+        ? claudeCodeProvider(() => claudeCode.token())
+        : id === 'codex'
+          ? codexProvider(() => codex.identity(), config.codexBaseUrl)
+          : null,
+  }),
+);
+await app.register(
+  adminRoutes({
+    auth,
+    authStore,
+    settings,
+    ledger,
+    resolveAi,
+    subscriptions: async () => ({
+      claudeCode: await claudeCode.status(),
+      codex: await codex.status(),
+    }),
+  }),
 );
 
 const startupAi = await resolveAi();
-if (!startupAi.apiKey) {
+if (!startupAi.ready) {
   app.log.warn(
     'no AI key configured — generation returns 503 until one is set in /admin or the environment',
   );

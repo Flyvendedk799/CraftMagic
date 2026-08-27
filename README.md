@@ -428,6 +428,46 @@ node tools/verify-ui.mjs out/stone-watchtower.program.json shot.png   # free
 node tools/drive-generate.mjs "a round stone watchtower" shot.png     # costs one generation
 ```
 
+### Who pays for a generation
+
+Four providers, in two kinds, chosen on `/admin`. The split is by **billing**, not by vendor:
+
+| Provider | Credential | Billed to |
+|---|---|---|
+| Claude API key | `sk-ant-…`, in settings or `ANTHROPIC_API_KEY` | this deployment, per token |
+| OpenAI API key | `sk-…`, in settings or `OPENAI_API_KEY` | this deployment, per token |
+| Claude subscription | the `claude` login already on the server | that plan |
+| ChatGPT subscription | the `codex` login already on the server | that plan |
+
+The two subscription providers are the interesting ones, and they need no key pasted
+anywhere. If `claude` or `codex` is signed in on the machine the server runs on, there is
+already an OAuth credential sitting there that bills to a plan rather than to a metered key —
+so the server reads it at call time and uses it. `~/.claude/.credentials.json` (or the macOS
+keychain) and `~/.codex/auth.json` respectively. Nothing is copied into the database and no
+token is ever sent to the browser; `/admin` is told only that a login exists, which plan it is
+on, and whether it has gone stale.
+
+Two rules keep that from breaking the CLI whose credential it is:
+
+- **Re-read, never own.** Every call re-reads the CLI's own store, so signing in or out of
+  `claude` takes effect on the next generation rather than on the next restart.
+- **Refresh only what is already dead.** Both CLIs refresh their own tokens, and the provider
+  may rotate the refresh token on exchange — so a refresh here while the CLI's token is live
+  would spend a credential the CLI still thinks it holds. Claude Code's is refreshed only once
+  it has actually expired; Codex's is never refreshed at all, because the CLI does it on start
+  and re-running `codex` costs the user nothing.
+
+Subscription calls are recorded in the ledger with their real token counts and `costUsd: 0`,
+and the budget ceiling below does not apply to them — there is no per-token amount to charge,
+so a guard that refused them would be protecting a balance nothing was going to draw on.
+
+One detail worth knowing if you touch the Anthropic client: a subscription token goes in
+`authToken` and `apiKey` must be **explicitly null**. Anthropic validates `x-api-key` whenever
+that header is present — its value being wrong is enough — so a placeholder key alongside a
+valid bearer token fails with `invalid x-api-key` while carrying a perfectly good credential.
+Verified against `api.anthropic.com`: bearer alone → 200, bearer + any `x-api-key` → 401.
+
+
 ### Cost control
 
 The API key on this project holds a small fixed balance meant to last a month, so spend

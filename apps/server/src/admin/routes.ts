@@ -18,7 +18,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import type { AuthStore } from '../auth/store.js';
-import { isPricingKnown, pricingFor, PRICING, type ProviderId } from '../generate/pricing.js';
+import { isPricingKnown, isSubscription, pricingFor, PRICING, type ProviderId } from '../generate/pricing.js';
 import type { SpendLedger } from '../generate/spend.js';
 import { SETTING_KEYS, type SettingsStore } from '../settings/store.js';
 
@@ -31,13 +31,43 @@ export interface AdminRoutesOptions {
   resolveAi: () => Promise<{
     provider: ProviderId;
     model: string;
-    keySource: 'settings' | 'environment' | 'none';
+    keySource: 'settings' | 'environment' | 'subscription' | 'none';
+    ready: boolean;
     anthropicKeyHint: string | null;
     openaiKeyHint: string | null;
   }>;
+  /**
+   * Whether the two CLI logins exist on this machine, and on whose plan.
+   *
+   * Read fresh on every request rather than cached: the whole point of harvesting a local
+   * login is that signing in or out of `claude` takes effect without touching this server,
+   * and a cached answer would make the admin page the one place that had not noticed.
+   *
+   * Nothing here is a credential. The page is told that a login exists, which plan it is on
+   * and when it expires — never the token, which has no route out of this process at all.
+   */
+  subscriptions: () => Promise<SubscriptionStatus>;
 }
 
-const PROVIDERS: ProviderId[] = ['anthropic', 'openai'];
+export interface SubscriptionStatus {
+  claudeCode: {
+    connected: boolean;
+    subscriptionType: string | null;
+    source: 'keychain' | 'file' | null;
+    expiresAt: number | null;
+    expired: boolean;
+  };
+  codex: {
+    connected: boolean;
+    planType: string | null;
+    email: string | null;
+    accountId: string | null;
+    expiresAt: number | null;
+    expired: boolean;
+  };
+}
+
+const PROVIDERS: ProviderId[] = ['anthropic', 'openai', 'claude-code', 'codex'];
 
 /** Long enough for any real key, short enough that nobody pastes a file into it. */
 const MAX_KEY_LENGTH = 512;
@@ -69,18 +99,23 @@ export function adminRoutes(options: AdminRoutesOptions): FastifyPluginAsync {
       const user = await requireAdmin(request, reply);
       if (!user) return;
 
-      const ai = await options.resolveAi();
+      const [ai, subscriptions] = await Promise.all([options.resolveAi(), options.subscriptions()]);
       return {
         provider: ai.provider,
         model: ai.model,
         keySource: ai.keySource,
+        ready: ai.ready,
+        subscriptions,
         anthropicKeyHint: ai.anthropicKeyHint,
         openaiKeyHint: ai.openaiKeyHint,
         providers: PROVIDERS,
         // So the page can warn when a typed model has no published rate and the budget guard
         // is falling back to its pessimistic assumption.
         knownModels: Object.keys(PRICING),
-        pricingKnown: isPricingKnown(ai.model),
+        // A subscription has no per-token rate, so "we do not know this model's price" is not
+        // a warning worth showing: nothing is going to be charged either way.
+        pricingKnown: isSubscription(ai.provider) || isPricingKnown(ai.model),
+        metered: !isSubscription(ai.provider),
         pricing: pricingFor(ai.model),
         spend: options.ledger.summary(),
       };
@@ -140,9 +175,10 @@ export function adminRoutes(options: AdminRoutesOptions): FastifyPluginAsync {
         provider: ai.provider,
         model: ai.model,
         keySource: ai.keySource,
+        ready: ai.ready,
         anthropicKeyHint: ai.anthropicKeyHint,
         openaiKeyHint: ai.openaiKeyHint,
-        pricingKnown: isPricingKnown(ai.model),
+        pricingKnown: isSubscription(ai.provider) || isPricingKnown(ai.model),
       };
     });
   };

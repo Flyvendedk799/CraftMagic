@@ -13,7 +13,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { costOf, formatUsd, worstCaseCost, type ModelId, type TokenUsage } from './pricing.js';
+import {
+	costOf,
+	formatUsd,
+	worstCaseCost,
+	type ModelId,
+	type ProviderId,
+	type TokenUsage,
+} from './pricing.js';
 
 export interface SpendEntry {
 	at: string;
@@ -24,6 +31,15 @@ export interface SpendEntry {
 	cacheReadTokens: number;
 	cacheWriteTokens: number;
 	costUsd: number;
+	/**
+	 * Who served it, when the writer knew.
+	 *
+	 * Optional because the ledger is a file that outlives its schema: entries written before
+	 * there was more than one provider have none, and a reader must not need one. It is what
+	 * distinguishes a zero-cost row that was a subscription call from a zero-cost row that was
+	 * a metered call which somehow cost nothing.
+	 */
+	provider?: ProviderId;
 }
 
 export interface SpendSummary {
@@ -136,16 +152,27 @@ export class SpendLedger {
 	 * Called before the request, never after — the point is to refuse to spend, not to
 	 * report having spent.
 	 */
-	assertCanAfford(model: ModelId, estimatedInputTokens: number, maxTokens: number): void {
+	assertCanAfford(
+		model: ModelId,
+		estimatedInputTokens: number,
+		maxTokens: number,
+		provider?: ProviderId,
+	): void {
 		const spent = this.spentThisMonth();
-		const ceiling = worstCaseCost(model, estimatedInputTokens, maxTokens);
+		// A subscription call has no ceiling to breach: the plan is bought, the deployment's
+		// card is not touched, and refusing the work would be the budget guard protecting a
+		// balance nothing is going to draw on.
+		const ceiling = worstCaseCost(model, estimatedInputTokens, maxTokens, provider);
 		if (spent + ceiling > this.monthlyBudgetUsd) {
 			throw new BudgetExceededError(spent, this.monthlyBudgetUsd, ceiling);
 		}
 	}
 
-	record(model: ModelId, purpose: string, usage: TokenUsage): SpendEntry {
-		const cost = costOf(model, usage);
+	record(model: ModelId, purpose: string, usage: TokenUsage, provider?: ProviderId): SpendEntry {
+		// Recorded at zero rather than not recorded at all: the token counts are still the
+		// truthful measure of what a generation took, and a ledger that silently omitted every
+		// subscription call would make "how much work has this deployment done" unanswerable.
+		const cost = costOf(model, usage, provider);
 		const entry: SpendEntry = {
 			at: new Date().toISOString(),
 			model,
@@ -155,6 +182,7 @@ export class SpendLedger {
 			cacheReadTokens: usage.cache_read_input_tokens ?? 0,
 			cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
 			costUsd: cost.totalUsd,
+			...(provider ? { provider } : {}),
 		};
 		this.entries.push(entry);
 		this.save();

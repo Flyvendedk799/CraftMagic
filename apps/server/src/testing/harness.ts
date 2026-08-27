@@ -131,6 +131,7 @@ export async function buildTestApp(db: Db, options: BuildTestAppOptions = {}): P
 				model: 'claude-sonnet-5',
 				apiKey: options.apiKey ?? null,
 				keySource: options.apiKey ? 'environment' : 'none',
+				ready: options.apiKey !== undefined && options.apiKey !== null,
 				anthropicKeyHint: options.apiKey ? maskKey(options.apiKey) : null,
 				openaiKeyHint: null,
 			}),

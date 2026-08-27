@@ -18,7 +18,7 @@
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import type { Db } from '../db/pool.js';
-import type { ProviderId } from '../generate/pricing.js';
+import { isSubscription, wireOf, type ProviderId } from '../generate/pricing.js';
 
 export const SETTING_KEYS = {
   provider: 'ai.provider',
@@ -30,13 +30,47 @@ export const SETTING_KEYS = {
 export interface AiSettings {
   provider: ProviderId;
   model: string;
-  /** The key for the selected provider, or null when neither settings nor env supply one. */
+  /**
+   * The key for the selected provider.
+   *
+   * Null for the two subscription providers, and that is not "unset": their credential is the
+   * local `claude` or `codex` login, which is read at call time and never stored here. A
+   * caller deciding whether generation can run has to ask `ready` rather than this.
+   */
   apiKey: string | null;
   /** Where that key came from, so the admin page can say so rather than implying it is unset. */
-  keySource: 'settings' | 'environment' | 'none';
+  keySource: 'settings' | 'environment' | 'subscription' | 'none';
+  /**
+   * Whether the selected provider has everything it needs.
+   *
+   * A metered provider needs a key; a subscription provider needs a login on this machine.
+   * One question, because every caller asks the same one and none of them should have to
+   * know which kind of provider is selected to ask it.
+   */
+  ready: boolean;
   /** Masked for display: enough to recognise a key, never enough to use one. */
   anthropicKeyHint: string | null;
   openaiKeyHint: string | null;
+}
+
+/**
+ * What a provider runs by default.
+ *
+ * A subscription is bound to a plan rather than to a rate card, so the default is the model
+ * that plan is actually good for: the Claude Code plan bills Opus and Sonnet the same way, and
+ * Codex is a ChatGPT plan whose model list is its own.
+ */
+export function defaultModelFor(provider: ProviderId): string {
+  switch (provider) {
+    case 'openai':
+      return 'gpt-5';
+    case 'codex':
+      return 'gpt-5-codex';
+    case 'claude-code':
+      return 'claude-sonnet-5';
+    default:
+      return 'claude-sonnet-5';
+  }
 }
 
 /** Recognisable but useless: first 7 characters and last 4. */
@@ -110,19 +144,33 @@ export class SettingsStore {
     const openaiKey = storedOpenai ?? env.openaiKey ?? null;
 
     const provider = (this.plain(all, SETTING_KEYS.provider) as ProviderId | null) ?? 'anthropic';
-    const model =
-      this.plain(all, SETTING_KEYS.model) ??
-      env.model ??
-      (provider === 'openai' ? 'gpt-5' : 'claude-sonnet-5');
+    const model = this.plain(all, SETTING_KEYS.model) ?? env.model ?? defaultModelFor(provider);
 
-    const apiKey = provider === 'openai' ? openaiKey : anthropicKey;
-    const stored = provider === 'openai' ? storedOpenai : storedAnthropic;
+    // A subscription provider has no key of its own: its credential is the local CLI login,
+    // and whether that exists is a question for the credential reader, not for this table.
+    if (isSubscription(provider)) {
+      return {
+        provider,
+        model,
+        apiKey: null,
+        keySource: 'subscription',
+        // Resolved by the caller, which is the only place that can read a keychain. Reported
+        // as not-ready here so a caller that forgets to overlay it fails closed.
+        ready: false,
+        anthropicKeyHint: anthropicKey ? maskKey(anthropicKey) : null,
+        openaiKeyHint: openaiKey ? maskKey(openaiKey) : null,
+      };
+    }
+
+    const apiKey = wireOf(provider) === 'openai' ? openaiKey : anthropicKey;
+    const stored = wireOf(provider) === 'openai' ? storedOpenai : storedAnthropic;
 
     return {
       provider,
       model,
       apiKey,
       keySource: stored ? 'settings' : apiKey ? 'environment' : 'none',
+      ready: apiKey !== null,
       anthropicKeyHint: anthropicKey ? maskKey(anthropicKey) : null,
       openaiKeyHint: openaiKey ? maskKey(openaiKey) : null,
     };

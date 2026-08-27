@@ -192,3 +192,30 @@
     padding: 2rem 1rem 3rem;
   }
 }
+
+/* --- provider cards, with four of them ----------------------------------- */
+
+/* A one-line description under each name. Four providers in two kinds is one more distinction
+   than a label can carry, and "which of these costs me money" is the distinction. */
+.admin__provider-blurb {
+  grid-column: 2;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* The bottom line of a card: a key hint, or whether the CLI login is there. Coloured only
+   when it is load-bearing — a green dot on every card would say nothing. */
+.admin__provider-key--on {
+  color: var(--ok);
+}
+
+.admin__provider-key--off {
+  color: var(--pending);
+}
+
+/* A note that introduces the section under it rather than qualifying the line above. */
+.admin__note--lead {
+  margin-top: 0;
+  margin-bottom: 0.875rem;
+}

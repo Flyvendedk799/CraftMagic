@@ -4,6 +4,7 @@ import { DashboardPage } from './dashboard/DashboardPage.js';
 import { EditorPage } from './editor/EditorPage.js';
 import { GuidePage } from './guide/GuidePage.js';
 import { LandingPage } from './landing/LandingPage.js';
+import { LayouterPage } from './layouter/LayouterPage.js';
 import { LibraryPage } from './library/LibraryPage.js';
 import { ModPage } from './mod/ModPage.js';
 import { StatusPage } from './StatusPage.js';
@@ -29,6 +30,11 @@ import { StatusPage } from './StatusPage.js';
  *
  * `/mod` is where "Send to game" sends anyone who does not have the mod yet. Without it the
  * pairing instructions name a command that cannot exist on their machine.
+ *
+ * `/layouter` is the editor's counterpart for interiors: a floorplan tool that compiles to the
+ * same `BuildProgram` and therefore reaches the same exports. It takes no query at all — a
+ * plan lives in the browser rather than in the URL, because a floorplan is far too big to put
+ * in a link and, unlike a build, it is a document someone keeps working on.
  */
 export function App() {
   return (
@@ -37,6 +43,7 @@ export function App() {
         <Route path="/" element={<Home />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/editor" element={<EditorPage />} />
+        <Route path="/layouter" element={<LayouterPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/mod" element={<ModPage />} />

@@ -34,7 +34,7 @@ export interface AppNavProps {
 }
 
 interface Destination {
-  key: NonNullable<AppNavProps['current']> | 'editor';
+  key: NonNullable<AppNavProps['current']> | 'editor' | 'layouter';
   to: string;
   label: string;
   /** Signed-out visitors get the tour, not the filing cabinet. */
@@ -49,6 +49,9 @@ const DESTINATIONS: Destination[] = [
     requiresAccount: false,
   },
   { key: 'editor', to: '/editor', label: 'Editor', requiresAccount: false },
+  // Two ways to make the same thing, so they sit next to each other: blocks in the editor,
+  // rooms in the layouter. Neither needs an account, and both end at the same exports.
+  { key: 'layouter', to: '/layouter', label: 'Layouter', requiresAccount: false },
   { key: 'library', to: '/library', label: 'Library', requiresAccount: true },
   { key: 'mod', to: '/mod', label: 'Minecraft mod', requiresAccount: false },
 ];

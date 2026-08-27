@@ -954,6 +954,12 @@ export function EditorPage() {
             Dashboard →
           </Link>
           <br />
+          {/* The tool to reach for when the inside is the point: rooms, doors and stairs
+              instead of blocks, compiling to a program this editor can open. */}
+          <Link className="hud__link" to="/layouter">
+            Lay out a floorplan →
+          </Link>
+          <br />
           <Link className="hud__link" to="/mod">
             Get the Minecraft mod →
           </Link>

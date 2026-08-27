@@ -84,8 +84,8 @@ export function DashboardPage() {
                 {account ? `Welcome back, ${handleOf(account.email)}` : 'Welcome back'}
               </h1>
               <p className="dash__sub">
-                Describe a structure, shape it in the editor, then send it out as a schematic, a
-                printable guide, or blocks in your own world.
+                Describe a structure or lay out its floorplan, shape it in the editor, then send
+                it out as a schematic, a printable guide, or blocks in your own world.
               </p>
             </div>
           </header>
@@ -261,6 +261,16 @@ function Launcher({
             {sample.label}
           </Link>
         ))}
+      </div>
+
+      {/* The other door into the same engine. It belongs on the launcher rather than only in
+          the nav because "describe it" and "draw the floorplan" are the two ways to start, and
+          nobody looks for a second tool they have not been told exists. */}
+      <div className="launcher__chips">
+        <span className="launcher__chip-label">Or draw a floorplan</span>
+        <Link className="launcher__chip" to="/layouter">
+          Open the layouter
+        </Link>
       </div>
 
       <p className="launcher__note">

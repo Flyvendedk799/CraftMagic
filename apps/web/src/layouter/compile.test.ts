@@ -1,0 +1,192 @@
+import { describe, expect, it } from 'vitest';
+import { expand, voxelIndex, type VoxelGrid } from '@craftmagic/core';
+import { compilePlan } from './compile.js';
+import {
+  createDoor,
+  createFloor,
+  createOpening,
+  createPlan,
+  createRoom,
+  createStair,
+  createWindow,
+  floorName,
+  type LayoutPlan,
+} from './plan.js';
+
+function blockAt(grid: VoxelGrid, x: number, y: number, z: number): string {
+  const index = grid.voxels[voxelIndex(grid.size, x, y, z)] ?? 0;
+  return grid.palette[index] ?? 'minecraft:air';
+}
+
+function build(plan: LayoutPlan) {
+  const compiled = compilePlan(plan);
+  const result = expand(compiled.program);
+  return { ...compiled, ...result };
+}
+
+/** One 7×7 room at (10,10) with a south door — the smallest plan that exercises every pass. */
+function cottage(overrides: Partial<LayoutPlan> = {}): LayoutPlan {
+  return createPlan({
+    name: 'Test',
+    roof: 'flat',
+    foundation: 1,
+    storeyHeight: 5,
+    wallThickness: 1,
+    kitId: 'oak-cottage',
+    floors: [
+      createFloor(floorName(0), [
+        createRoom({ x: 10, z: 10, w: 7, d: 7 }, { label: 'Room' }),
+        createDoor(13, 16, 'south'),
+      ]),
+    ],
+    ...overrides,
+  });
+}
+
+describe('compilePlan', () => {
+  it('crops the program to the building rather than to the site', () => {
+    const { program, origin } = compilePlan(cottage());
+
+    // A flat roof needs one block of margin; the site is 48×48 and contributes nothing.
+    expect(origin).toEqual({ x: 9, z: 9 });
+    expect(program.size.x).toBe(9);
+    expect(program.size.z).toBe(9);
+    // Foundation 1 + one storey of 5 + the deck + the parapet.
+    expect(program.size.y).toBe(8);
+  });
+
+  it('builds a foundation, a slab, a wall ring and a ceiling at the right heights', () => {
+    const { grid, errors } = build(cottage());
+    expect(errors).toEqual([]);
+
+    // The room's min corner sits at build (1,1) once the margin is taken off.
+    expect(blockAt(grid, 1, 0, 1)).toBe('minecraft:cobblestone');
+    expect(blockAt(grid, 1, 1, 1)).toBe('minecraft:spruce_planks');
+    expect(blockAt(grid, 1, 2, 1)).toBe('minecraft:oak_planks');
+    // The inside is empty for the full clear height, which is what a storey is for.
+    for (let y = 2; y <= 5; y++) expect(blockAt(grid, 4, y, 4)).toBe('minecraft:air');
+    // The top storey's lid is the roof deck.
+    expect(blockAt(grid, 4, 6, 4)).toBe('minecraft:bricks');
+  });
+
+  it('cuts a doorway through the wall and hangs a door in it', () => {
+    const { grid } = build(cottage());
+
+    // The door sits in the south wall at build x 4, z 7.
+    expect(blockAt(grid, 4, 2, 7)).toContain('minecraft:oak_door');
+    expect(blockAt(grid, 4, 3, 7)).toContain('minecraft:oak_door');
+    // Its neighbours in the same wall are untouched.
+    expect(blockAt(grid, 3, 2, 7)).toBe('minecraft:oak_planks');
+  });
+
+  it('leaves an open archway as a hole, with no door in it', () => {
+    const plan = cottage({
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 7, d: 7 }),
+          createDoor(13, 16, 'south', { open: true }),
+        ]),
+      ],
+    });
+    const { grid } = build(plan);
+
+    expect(blockAt(grid, 4, 2, 7)).toBe('minecraft:air');
+    expect(blockAt(grid, 4, 3, 7)).toBe('minecraft:air');
+  });
+
+  it('glazes a window at its sill height and nowhere else', () => {
+    const plan = cottage({
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 7, d: 7 }),
+          createWindow('x', 12, 10, { length: 3, sill: 1, height: 2 }),
+        ]),
+      ],
+    });
+    const { grid } = build(plan);
+
+    // North wall is build z 0; the window starts at build x 3.
+    expect(blockAt(grid, 3, 2, 1)).toBe('minecraft:oak_planks');
+    expect(blockAt(grid, 3, 3, 1)).toBe('minecraft:glass');
+    expect(blockAt(grid, 5, 4, 1)).toBe('minecraft:glass');
+    expect(blockAt(grid, 3, 5, 1)).toBe('minecraft:oak_planks');
+  });
+
+  it('carves a floor void through the slab it sits on', () => {
+    const plan = cottage({
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 7, d: 7 }),
+          createOpening({ x: 12, z: 12, w: 2, d: 2 }),
+        ]),
+      ],
+    });
+    const { grid } = build(plan);
+
+    expect(blockAt(grid, 3, 1, 3)).toBe('minecraft:air');
+    // And only the slab: the foundation under it is still there to fall onto.
+    expect(blockAt(grid, 3, 0, 3)).toBe('minecraft:cobblestone');
+  });
+
+  it('runs a staircase up through a well it cuts in the floor above', () => {
+    const plan = createPlan({
+      name: 'Two up',
+      roof: 'flat',
+      foundation: 0,
+      storeyHeight: 5,
+      wallThickness: 1,
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 9, d: 9 }),
+          createStair(12, 12, 'south', { width: 2 }),
+        ]),
+        createFloor(floorName(1), [createRoom({ x: 10, z: 10, w: 9, d: 9 })]),
+      ],
+    });
+    const { grid, errors } = build(plan);
+    expect(errors).toEqual([]);
+
+    // The run starts at build (3,3) and climbs one block per step going south.
+    expect(blockAt(grid, 3, 1, 3)).toContain('minecraft:oak_stairs');
+    expect(blockAt(grid, 3, 2, 4)).toContain('minecraft:oak_stairs');
+    // The last step is at the upper slab's own level, which means the well had to be cut
+    // there first — if the pass order were wrong this would be the slab instead.
+    expect(blockAt(grid, 3, 5, 7)).toContain('minecraft:oak_stairs');
+    // Beside the run, the upper slab is intact.
+    expect(blockAt(grid, 7, 5, 7)).toBe('minecraft:spruce_planks');
+  });
+
+  it('re-skins the whole building when the kit changes, without touching the plan', () => {
+    const oak = build(cottage());
+    const stone = build(cottage({ kitId: 'stone-keep' }));
+
+    expect(blockAt(oak.grid, 1, 2, 1)).toBe('minecraft:oak_planks');
+    expect(blockAt(stone.grid, 1, 2, 1)).toBe('minecraft:stone_bricks');
+    expect(stone.grid.size).toEqual(oak.grid.size);
+  });
+
+  it('leaves the top storey open to the sky when the roof is set to none', () => {
+    const { grid } = build(cottage({ roof: 'none' }));
+
+    // No deck, so the program stops at the top of the storey.
+    expect(grid.size.y).toBe(6);
+    expect(blockAt(grid, 4, 5, 4)).toBe('minecraft:air');
+  });
+
+  it('compiles an empty plan to an empty build rather than failing', () => {
+    const { grid, blockCount, errors } = build(createPlan({ name: 'Nothing' }));
+
+    expect(errors).toEqual([]);
+    expect(blockCount).toBe(0);
+    expect(grid.size.y).toBeGreaterThan(0);
+  });
+
+  it('warns rather than throws when the building is taller than the engine allows', () => {
+    const floors = Array.from({ length: 12 }, (_, index) =>
+      createFloor(floorName(index), [createRoom({ x: 10, z: 10, w: 7, d: 7 })]),
+    );
+    const { warnings } = compilePlan(createPlan({ name: 'Tall', storeyHeight: 16, floors }));
+
+    expect(warnings.join(' ')).toMatch(/tops out/);
+  });
+});

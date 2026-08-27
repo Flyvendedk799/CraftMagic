@@ -29,6 +29,7 @@ import type { Auth } from '../auth/session.js';
 import { generateBuild, GenerationError, TOOL_NAME } from './pipeline.js';
 import { systemPrompt } from './prompt.js';
 import { costOf, isPricingKnown, isSubscription, worstCaseCost, type ProviderId } from './pricing.js';
+import { describeProviderError } from './providerError.js';
 import { providerFor, type Provider } from './providers.js';
 import type { GenerationQuota } from './quota.js';
 import type { AiSettings } from '../settings/store.js';
@@ -339,10 +340,17 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 						remainingUsd: spend.remainingUsd,
 					});
 				} catch (err) {
+					// A provider failure is described in terms of the credential that was used, not
+					// in terms of the protocol: the remedy for a 429 on a plan is nothing like the
+					// remedy for a 429 on a key, and the raw body says neither.
+					const described =
+						err instanceof GenerationError || err instanceof BudgetExceededError
+							? null
+							: describeProviderError(err, ai.provider, ai.model);
 					const message =
 						err instanceof GenerationError || err instanceof BudgetExceededError
 							? err.message
-							: `generation failed: ${(err as Error).message}`;
+							: (described ?? `generation failed: ${(err as Error).message}`);
 					app.log.error({ err }, 'generation failed');
 
 					if (recordId) {

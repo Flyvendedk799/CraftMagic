@@ -70,6 +70,14 @@ function describe(phase: GenerationPhase): string {
   }
 }
 
+/** The four providers, as a person would name them. Matches the settings page. */
+const PROVIDER_LABEL: Record<string, string> = {
+  anthropic: 'Claude API key',
+  openai: 'OpenAI API key',
+  'claude-code': 'Claude subscription',
+  codex: 'ChatGPT subscription',
+};
+
 export function PromptPanel({
   phase,
   spend,
@@ -196,17 +204,36 @@ export function PromptPanel({
 
       {estimate && !running && (
         <dl className="prompt__estimate">
+          {/* Who is serving, and who is paying. There are four providers now and two of them
+              are subscriptions, so "what will this cost me" has two very different answers and
+              the estimate is meaningless without knowing which one is in force. */}
+          <dt>Using</dt>
+          <dd>
+            {PROVIDER_LABEL[estimate.provider]}
+            <span className="prompt__muted"> · {estimate.model}</span>
+          </dd>
           <dt>This build</dt>
           <dd>
-            ~{usd(estimate.cachedCallUsd)}
-            <span className="prompt__muted"> · up to {usd(estimate.worstCaseUsd)}</span>
+            {estimate.metered ? (
+              <>
+                ~{usd(estimate.cachedCallUsd)}
+                <span className="prompt__muted"> · up to {usd(estimate.worstCaseUsd)}</span>
+              </>
+            ) : (
+              <>
+                free
+                <span className="prompt__muted"> · billed to the plan</span>
+              </>
+            )}
           </dd>
           <dt>Prompt size</dt>
           <dd>{estimate.inputTokens.toLocaleString()} tokens in</dd>
         </dl>
       )}
 
-      {spend && (
+      {/* The ceiling is about this deployment's card, so it is not the thing to show while a
+          subscription is serving: it would be a number that cannot move. */}
+      {spend && estimate?.metered !== false && (
         <p className="prompt__budget">
           <span className="prompt__muted">Budget</span> {usd(spend.remainingUsd)} left of{' '}
           {usd(spend.monthlyBudgetUsd)}

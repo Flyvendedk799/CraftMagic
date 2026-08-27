@@ -17,6 +17,10 @@ export interface SpendSummary {
 }
 
 export interface Estimate {
+  /** Which of the four is serving, so the panel can say who is paying for this. */
+  provider: 'anthropic' | 'openai' | 'claude-code' | 'codex';
+  /** False on a subscription: the plan is bought, so every figure below is zero. */
+  metered: boolean;
   model: string;
   inputTokens: number;
   firstCallUsd: number;

@@ -108,7 +108,7 @@ export function validatePlan(plan: LayoutPlan): ValidationResult {
 
     for (const item of items) {
       if (item.kind === 'door' || item.kind === 'window') {
-        const footprint = itemFootprint(item, plan.wallThickness);
+        const footprint = itemFootprint(item, plan.wallThickness, plan.storeyHeight);
         if (!runs.some((run) => overlapArea(runFootprint(run), footprint) > 0)) {
           issues.push({
             level: 'error',
@@ -242,7 +242,7 @@ function reachabilityCheck(plan: LayoutPlan): FoundRoom[] {
   let seeds: { x: number; z: number }[] = [];
   for (const item of plan.floors[0]!.items) {
     if (item.kind !== 'door') continue;
-    const footprint = itemFootprint(item, plan.wallThickness);
+    const footprint = itemFootprint(item, plan.wallThickness, plan.storeyHeight);
     // Both sides of the doorway, so an entrance seeds the inside as well as the street.
     for (let z = footprint.z; z < rectBottom(footprint); z++) {
       for (let x = footprint.x; x < rectRight(footprint); x++) seeds.push({ x, z });
@@ -330,9 +330,9 @@ function occupancy(
   };
 
   for (const run of wallRuns(items, plan.wallThickness)) paint(runFootprint(run), 1);
-  for (const item of items) if (item.kind === 'column') paint(itemFootprint(item, plan.wallThickness), 1);
+  for (const item of items) if (item.kind === 'column') paint(itemFootprint(item, plan.wallThickness, plan.storeyHeight), 1);
   // Last, so a doorway always wins over the wall it was cut into.
-  for (const item of items) if (item.kind === 'door') paint(itemFootprint(item, plan.wallThickness), 0);
+  for (const item of items) if (item.kind === 'door') paint(itemFootprint(item, plan.wallThickness, plan.storeyHeight), 0);
 
   return blocked;
 }

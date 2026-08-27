@@ -1,65 +1,50 @@
 /**
  * The keyboard sheet.
  *
- * Every shortcut in this editor was already discoverable in exactly one way: hovering the
- * one control that happens to mention it. That is fine for the five tool digits, which are
- * printed on the buttons, and useless for the ones with no button at all — Alt-click to
- * pick, Shift-drag to paint, the bracket keys on the layer cut. Those are the shortcuts
- * worth having and the ones nobody would ever find.
+ * Every shortcut in this product was discoverable in exactly one way: hovering the one
+ * control that happens to mention it. That is fine for the tool digits, which are printed on
+ * the buttons, and useless for the ones with no button at all — Alt-click to pick, Shift-drag
+ * to paint, the bracket keys on the layer cut. Those are the shortcuts worth having and the
+ * ones nobody would ever find.
  *
- * The list is written out here rather than derived from the handlers. Deriving it would
- * guarantee the keys match and still leave the descriptions to be written by hand, and the
+ * The dialog is here; the lists are not. There are two keyboard-heavy tools in this product
+ * and they share nothing but the dialog — the layouter has no brush and the editor has no
+ * storeys. One sheet with a `tool` flag would be a switch statement wearing a component, and
+ * two sheets would be two dialogs to keep in step. So each tool brings its own list, from
+ * `editor/shortcuts.ts` and `layouter/shortcuts.ts`.
+ *
+ * Those lists are written out by hand rather than derived from the key handlers. Deriving
+ * them would guarantee the keys match and still leave the descriptions to be written, and the
  * descriptions are the part that has to be right — "R" is not a useful thing to know about
  * the clipboard.
  */
 
-import { useEffect, useRef } from 'react';
-import { TOOLS } from './toolset.js';
+import { useEffect, useRef, type ReactNode } from 'react';
 
-export interface ShortcutHelpProps {
-  onClose: () => void;
-}
-
-interface Shortcut {
+export interface Shortcut {
   keys: string;
   what: string;
 }
 
-const EDITING: readonly Shortcut[] = [
-  { keys: 'Alt + click', what: 'Pick the block under the pointer, from any tool' },
-  { keys: 'Shift + drag', what: 'Keep placing or erasing along the drag, as one undo step' },
-  { keys: 'Esc', what: 'Cancel the corner in progress' },
-  { keys: 'Ctrl + Z', what: 'Undo' },
-  { keys: 'Ctrl + Shift + Z', what: 'Redo' },
-];
+export interface ShortcutGroup {
+  title: string;
+  rows: readonly Shortcut[];
+}
 
-const BRUSH: readonly Shortcut[] = [
-  { keys: '− / +', what: 'Smaller or larger brush' },
-  { keys: 'B', what: 'Switch the brush between round and square' },
-];
+export interface ShortcutHelpProps {
+  groups: readonly ShortcutGroup[];
+  /** The line under the columns. Each tool has something different to say there. */
+  foot?: string;
+  onClose: () => void;
+}
 
-const CLIPBOARD: readonly Shortcut[] = [
-  { keys: 'Box tool → Copy', what: 'Copy the region between two corners' },
-  { keys: 'R', what: 'Rotate the clipboard 90°, block states and all' },
-  { keys: 'M', what: 'Mirror the clipboard' },
-];
-
-const VIEW: readonly Shortcut[] = [
-  { keys: '[ / ]', what: 'Lower or raise the layer cut' },
-  { keys: '\\', what: 'Show every layer again' },
-  { keys: 'I', what: 'Isolate the cut layer — show that slice alone' },
-  { keys: 'F', what: 'Frame the whole build' },
-  { keys: 'Drag / scroll', what: 'Orbit and zoom' },
-  { keys: '?', what: 'This list' },
-];
-
-export function ShortcutHelp({ onClose }: ShortcutHelpProps) {
+export function ShortcutHelp({ groups, foot, onClose }: ShortcutHelpProps) {
   const close = useRef(onClose);
   close.current = onClose;
 
   /**
-   * Escape closes it from anywhere, including from inside the prompt box — the sheet covers
-   * the screen, so there is nothing else a keypress could sensibly be meant for.
+   * Escape closes it from anywhere, including from inside a text field — the sheet covers the
+   * screen, so there is nothing else a keypress could sensibly be meant for.
    *
    * Bound once, through a ref, and that is not a micro-optimisation: the page has its own
    * window listener that runs first and sets state. React flushes that update in a microtask
@@ -93,42 +78,22 @@ export function ShortcutHelp({ onClose }: ShortcutHelpProps) {
         </div>
 
         <div className="sheet__cols">
-          <Group title="Tools">
-            {TOOLS.map((tool) => (
-              <Row key={tool.id} keys={tool.key} what={tool.label} />
-            ))}
-          </Group>
-          <Group title="Editing">
-            {EDITING.map((entry) => (
-              <Row key={entry.keys} {...entry} />
-            ))}
-          </Group>
-          <Group title="Brush">
-            {BRUSH.map((entry) => (
-              <Row key={entry.keys} {...entry} />
-            ))}
-          </Group>
-          <Group title="Clipboard">
-            {CLIPBOARD.map((entry) => (
-              <Row key={entry.keys} {...entry} />
-            ))}
-          </Group>
-          <Group title="View">
-            {VIEW.map((entry) => (
-              <Row key={entry.keys} {...entry} />
-            ))}
-          </Group>
+          {groups.map((group) => (
+            <Group key={group.title} title={group.title}>
+              {group.rows.map((entry) => (
+                <Row key={entry.keys} {...entry} />
+              ))}
+            </Group>
+          ))}
         </div>
 
-        <p className="sheet__foot">
-          Shortcuts are ignored while you are typing, so the prompt box keeps its own keys.
-        </p>
+        {foot && <p className="sheet__foot">{foot}</p>}
       </div>
     </div>
   );
 }
 
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="sheet__group">
       <h3 className="sheet__group-title">{title}</h3>

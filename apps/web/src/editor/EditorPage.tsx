@@ -51,6 +51,7 @@ import { ExportBar } from './ExportBar.js';
 import { ScalePanel } from './ScalePanel.js';
 import { Section } from './Section.js';
 import { ShortcutHelp } from './ShortcutHelp.js';
+import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
 import { ToolPalette, type BoxAction } from './ToolPalette.js';
 import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor } from './preview.js';
@@ -1050,7 +1051,13 @@ export function EditorPage() {
         </span>
       </section>
 
-      {help && <ShortcutHelp onClose={() => setHelp(false)} />}
+      {help && (
+        <ShortcutHelp
+          groups={EDITOR_SHORTCUTS}
+          foot={EDITOR_SHORTCUT_FOOT}
+          onClose={() => setHelp(false)}
+        />
+      )}
     </div>
   );
 }

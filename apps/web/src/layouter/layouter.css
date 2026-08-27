@@ -96,6 +96,11 @@
   width: 100%;
   height: 100%;
   touch-action: none;
+  /* The dimension figures and room names are real text, which means a drag across the drawing
+     selects them and paints the browser's highlight over the numbers you are dragging to
+     read. Nothing on this surface is text anyone wants to copy. */
+  user-select: none;
+  -webkit-user-select: none;
   cursor: crosshair;
   background: var(--sunken);
 }
@@ -163,6 +168,13 @@
   pointer-events: none;
 }
 
+/* The measurement under a room name: present, subordinate, and never the thing you read
+   first when scanning for a room by name. */
+.plan__label--size {
+  fill: color-mix(in srgb, var(--muted) 70%, transparent);
+  font-family: var(--font-mono);
+}
+
 .plan__door {
   fill: var(--brand-amber);
 }
@@ -226,6 +238,129 @@
   fill: var(--accent);
   stroke: var(--bg);
   stroke-width: 1.5;
+}
+
+/* --- dimensions --------------------------------------------------------- */
+
+/* A dimension is annotation, not structure, so it sits a step below the walls it measures and
+   a step above the grid. Only the figure is at full strength: the lines exist to say which
+   edge the figure belongs to, and once that is clear they have no further job. */
+
+.plan__dim {
+  pointer-events: none;
+}
+
+.plan__dim-line,
+.plan__dim-witness,
+.plan__dim-tick {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 70%, transparent);
+  stroke-width: 1;
+}
+
+.plan__dim-witness {
+  stroke: color-mix(in srgb, var(--muted) 40%, transparent);
+}
+
+.plan__dim-tick {
+  stroke-width: 1.5;
+}
+
+.plan__dim-text {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  /* No `font-size` rule, for the same reason `.plan__label` has none: the size is computed
+     against the live zoom and set as a presentation attribute, which a stylesheet would beat. */
+}
+
+/* The figures for whatever is moving under the pointer. Brighter, because during a gesture
+   they are the only thing on the drawing anyone is reading. */
+.plan__dim--live .plan__dim-line,
+.plan__dim--live .plan__dim-tick {
+  stroke: var(--accent);
+}
+
+.plan__dim--live .plan__dim-witness {
+  stroke: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.plan__dim--live .plan__dim-text {
+  fill: var(--accent);
+}
+
+/* --- the pointer readout ------------------------------------------------ */
+
+.plan__badge-box {
+  fill: color-mix(in srgb, var(--bg) 92%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 50%, transparent);
+  stroke-width: 1;
+}
+
+.plan__badge-text {
+  fill: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.plan__badge-text--dim {
+  fill: var(--muted);
+}
+
+/* --- zoom controls ------------------------------------------------------ */
+
+/* Top-left. The bottom edge is spoken for: the hover readout is centred there and grows
+   with what it is saying, so anything sharing that edge collides with it at some width. */
+.plan-zoom {
+  position: absolute;
+  left: 0.6rem;
+  top: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(8px);
+}
+
+.plan-zoom button {
+  min-width: 1.75rem;
+  padding: 0.2rem 0.45rem;
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.plan-zoom button:hover {
+  background: var(--raised);
+  filter: none;
+}
+
+.plan-zoom__level {
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.plan-zoom__fit {
+  font-weight: 600;
+}
+
+/* Alignment guides. Dashed and thin: they are a claim about the drawing, not part of it,
+   and they vanish the moment the pointer lifts. */
+.plan__guide {
+  stroke: color-mix(in srgb, var(--brand-amber) 75%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+  pointer-events: none;
 }
 
 .plan__draft {
@@ -557,5 +692,106 @@
 
 .plans__empty {
   font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+/* --- room schedule ------------------------------------------------------- */
+
+/* A real table, because it is one: three columns of numbers that have to line up down the
+   page, which is the whole reason a schedule is read as a block rather than as rows. */
+.schedule {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-2xs);
+}
+
+.schedule th,
+.schedule td {
+  padding: 0.3rem 0.25rem;
+  text-align: right;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.schedule thead th,
+.schedule tbody th {
+  text-align: left;
+}
+
+.schedule thead th {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.schedule tbody td {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.schedule tbody th {
+  min-width: 0;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schedule tbody th button {
+  max-width: 100%;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.schedule tbody th button:hover {
+  color: var(--accent);
+  filter: none;
+}
+
+.schedule tbody tr[data-selected='1'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.schedule tbody tr[data-selected='1'] th button {
+  color: var(--accent);
+}
+
+/* The totals are the reason anyone opened this, so they get the rule above them and the
+   weight that a sum is owed. */
+.schedule tfoot th,
+.schedule tfoot td {
+  padding-top: 0.45rem;
+  font-weight: 600;
+  color: var(--text);
+  border-top: 1px solid var(--border);
+}
+
+.schedule tfoot td {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule tfoot tr:last-child th,
+.schedule tfoot tr:last-child td {
+  color: var(--muted);
+  font-weight: 400;
+  border-top: 0;
+  padding-top: 0.15rem;
+}
+
+.schedule__empty {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
   color: var(--muted);
 }

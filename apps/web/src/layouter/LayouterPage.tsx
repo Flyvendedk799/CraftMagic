@@ -44,6 +44,7 @@ import { FloorStack } from './FloorStack.js';
 import { Inspector } from './Inspector.js';
 import { IssuesPanel, issueSummary } from './IssuesPanel.js';
 import { PlanCanvas } from './PlanCanvas.js';
+import { RoomSchedule, scheduleSummary } from './RoomSchedule.js';
 import { SitePanel } from './SitePanel.js';
 import {
   addItem,
@@ -60,6 +61,8 @@ import { TEMPLATES, templateById } from './templates.js';
 import { LAYOUT_TOOLS, LAYOUT_TOOL_BY_ID, layoutToolForKey, type LayoutToolId } from './toolset.js';
 import { usePlanSession } from './usePlanSession.js';
 import { validatePlan } from './validate.js';
+import { ShortcutHelp } from '../editor/ShortcutHelp.js';
+import { LAYOUTER_SHORTCUTS, LAYOUTER_SHORTCUT_FOOT } from './shortcuts.js';
 import '../editor/editor.css';
 import './layouter.css';
 
@@ -101,6 +104,17 @@ export function LayouterPage() {
   const [view, setView] = useState<ViewRequest | null>(null);
   const [hover, setHover] = useState<{ x: number; z: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [help, setHelp] = useState(false);
+  /** Bumped to ask the plan to re-frame; see `PlanCanvas`'s `fitNonce`. */
+  const [fitNonce, setFitNonce] = useState(0);
+  /**
+   * The item on the clipboard.
+   *
+   * A plain item rather than a serialized string: the clipboard never leaves the page, and a
+   * plan item is already JSON. It survives a storey change and a template load on purpose —
+   * copying a bathroom to paste onto the floor above is most of what a clipboard is for here.
+   */
+  const [clip, setClip] = useState<PlanItem | null>(null);
 
   /**
    * Re-frame the model.
@@ -190,11 +204,35 @@ export function LayouterPage() {
     [selected, change],
   );
 
+  const copy = useCallback(() => {
+    if (!selected) return;
+    setClip(selected.item);
+    setNotice(`Copied the ${selected.item.kind}. Ctrl+V drops a copy on the storey you are on.`);
+  }, [selected]);
+
+  /**
+   * Paste onto the storey being edited, offset by two blocks.
+   *
+   * Offset rather than in place, and that is not politeness: pasted exactly on top of its
+   * original, a copy is invisible, unselectable except by moving the thing above it, and
+   * indistinguishable from a paste that silently failed.
+   */
+  const paste = useCallback(() => {
+    if (!clip) return;
+    const copied = offset({ ...clip, id: planId(clip.kind) }, 2, 2);
+    session.commit((current) => addItem(current, activeFloor, copied));
+    setSelectedId(copied.id);
+    setNotice(null);
+  }, [clip, session, activeFloor]);
+
   // --- keyboard ----------------------------------------------------------
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTextEntry(event.target)) return;
+      // While the sheet is up it is the only thing on screen, so a key that would change the
+      // tool behind it is not what anyone meant. Escape is the exception, and the sheet owns it.
+      if (help) return;
 
       if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         const key = event.key.toLowerCase();
@@ -207,6 +245,21 @@ export function LayouterPage() {
         if (key === 'y') {
           event.preventDefault();
           session.redo();
+          return;
+        }
+        if (key === 'c') {
+          event.preventDefault();
+          copy();
+          return;
+        }
+        if (key === 'v') {
+          event.preventDefault();
+          paste();
+          return;
+        }
+        if (key === 'd') {
+          event.preventDefault();
+          duplicate();
           return;
         }
         return;
@@ -224,6 +277,15 @@ export function LayouterPage() {
         case 'Escape':
           setSelectedId(null);
           setNotice(null);
+          break;
+        case 'f':
+        case 'F':
+          event.preventDefault();
+          setFitNonce((nonce) => nonce + 1);
+          break;
+        case '?':
+          event.preventDefault();
+          setHelp(true);
           break;
         case 'Delete':
         case 'Backspace':
@@ -271,7 +333,7 @@ export function LayouterPage() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [session, selectedId, remove, nudge, plan.floors.length]);
+  }, [session, selectedId, remove, nudge, copy, paste, duplicate, help, plan.floors.length]);
 
   // --- hand-off ----------------------------------------------------------
 
@@ -351,7 +413,15 @@ export function LayouterPage() {
               </button>
             ))}
           </div>
-          <p className="tool-rail__hint">{LAYOUT_TOOL_BY_ID[tool].hint}</p>
+          {/* The hint and the way to the rest of the keys, on one line. A sheet reachable
+              only by pressing `?` is a sheet nobody opens, and `?` is exactly the kind of key
+              you have to already know about to try. */}
+          <p className="tool-rail__hint">
+            {LAYOUT_TOOL_BY_ID[tool].hint}{' '}
+            <button type="button" className="tools__inline" onClick={() => setHelp(true)}>
+              shortcuts
+            </button>
+          </p>
 
           <div className="tool-rail__history">
             <button type="button" onClick={session.undo} disabled={!session.canUndo}>
@@ -388,6 +458,23 @@ export function LayouterPage() {
             onDelete={remove}
             onDuplicate={duplicate}
             onSendToFloor={sendToFloor}
+          />
+        </Section>
+
+        {/* Between the selection and the building settings: it is a reading of what has been
+            drawn, so it belongs after the thing that draws it and before the thing that
+            re-skins it. */}
+        <Section
+          id="layouter-schedule"
+          title="Rooms"
+          summary={scheduleSummary(plan, activeFloor)}
+          defaultOpen={false}
+        >
+          <RoomSchedule
+            plan={plan}
+            floorIndex={activeFloor}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
           />
         </Section>
 
@@ -525,6 +612,7 @@ export function LayouterPage() {
           selectedId={selectedId}
           unreachable={validation.unreachable}
           showBelow={showBelow}
+          fitNonce={fitNonce}
           onSelect={setSelectedId}
           onBeginGesture={session.mark}
           onCreate={create}
@@ -578,6 +666,14 @@ export function LayouterPage() {
           </span>
         </div>
       </div>
+
+      {help && (
+        <ShortcutHelp
+          groups={LAYOUTER_SHORTCUTS}
+          foot={LAYOUTER_SHORTCUT_FOOT}
+          onClose={() => setHelp(false)}
+        />
+      )}
     </div>
   );
 }

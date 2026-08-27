@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  alignmentGuides,
   containsRect,
+  itemFootprint,
   hitTest,
   intersectRect,
   rectFromPoints,
@@ -9,7 +11,7 @@ import {
   stairFootprint,
   wallRuns,
 } from './geometry.js';
-import { createColumn, createDoor, createRoom, type PlanItem } from './plan.js';
+import { createColumn, createDoor, createRoom, createStair, type PlanItem } from './plan.js';
 
 describe('rectFromPoints', () => {
   it('includes both ends, so a single-cell drag is a 1×1', () => {
@@ -105,20 +107,20 @@ describe('hitTest', () => {
     const door = createDoor(14, 18, 'south');
     const items: PlanItem[] = [room, door];
 
-    expect(hitTest(items, 14, 18, 1)?.id).toBe(door.id);
+    expect(hitTest(items, 14, 18, 1, 5)?.id).toBe(door.id);
     // And still finds the room everywhere else.
-    expect(hitTest(items, 14, 14, 1)?.id).toBe(room.id);
+    expect(hitTest(items, 14, 14, 1, 5)?.id).toBe(room.id);
   });
 
   it('prefers a column to the room it stands in', () => {
     const room = createRoom({ x: 10, z: 10, w: 9, d: 9 });
     const column = createColumn(14, 14);
 
-    expect(hitTest([room, column], 14, 14, 1)?.id).toBe(column.id);
+    expect(hitTest([room, column], 14, 14, 1, 5)?.id).toBe(column.id);
   });
 
   it('reports nothing on empty ground', () => {
-    expect(hitTest([createRoom({ x: 10, z: 10, w: 4, d: 4 })], 30, 30, 1)).toBeNull();
+    expect(hitTest([createRoom({ x: 10, z: 10, w: 4, d: 4 })], 30, 30, 1, 5)).toBeNull();
   });
 });
 
@@ -134,5 +136,61 @@ describe('stairFootprint', () => {
   it('swaps the axes for an east-west run', () => {
     expect(stairFootprint(5, 5, 'east', 3, 4)).toEqual({ x: 5, z: 5, w: 4, d: 3 });
     expect(stairFootprint(10, 5, 'west', 3, 4)).toEqual({ x: 7, z: 5, w: 4, d: 3 });
+  });
+});
+
+describe('alignmentGuides', () => {
+  it('finds a guide where two left edges agree', () => {
+    const guides = alignmentGuides({ x: 4, z: 20, w: 6, d: 5 }, [{ x: 4, z: 2, w: 3, d: 4 }]);
+    expect(guides).toEqual([{ axis: 'x', at: 4, from: 2, to: 25 }]);
+  });
+
+  it('finds one where a right edge meets a left edge, which is what sharing a wall looks like', () => {
+    const guides = alignmentGuides({ x: 10, z: 0, w: 5, d: 5 }, [{ x: 4, z: 0, w: 6, d: 5 }]);
+    // The subject starts at 10 and the neighbour ends at 10.
+    expect(guides.some((guide) => guide.axis === 'x' && guide.at === 10)).toBe(true);
+  });
+
+  it('spans both rectangles, so the line reaches the thing it is claiming alignment with', () => {
+    const [guide] = alignmentGuides({ x: 0, z: 40, w: 4, d: 4 }, [{ x: 0, z: 0, w: 4, d: 4 }]);
+    expect(guide).toEqual({ axis: 'x', at: 0, from: 0, to: 44 });
+  });
+
+  it('is exact — a block out is not aligned, and pretending otherwise teaches the wrong lesson', () => {
+    expect(alignmentGuides({ x: 5, z: 20, w: 4, d: 4 }, [{ x: 4, z: 0, w: 4, d: 4 }])).toEqual([]);
+  });
+
+  it('reports both axes when a corner lands on a corner', () => {
+    const guides = alignmentGuides({ x: 8, z: 8, w: 4, d: 4 }, [{ x: 0, z: 0, w: 8, d: 8 }]);
+    expect(guides.map((guide) => guide.axis).sort()).toEqual(['x', 'z']);
+  });
+
+  it('merges duplicates rather than stacking one line per neighbour', () => {
+    const guides = alignmentGuides({ x: 4, z: 20, w: 6, d: 5 }, [
+      { x: 4, z: 0, w: 3, d: 4 },
+      { x: 4, z: 8, w: 3, d: 4 },
+    ]);
+    expect(guides).toHaveLength(1);
+    // ...and the merged line reaches the further of the two.
+    expect(guides[0]).toEqual({ axis: 'x', at: 4, from: 0, to: 25 });
+  });
+
+  it('caps how many it will draw, so a dense storey does not become a lattice', () => {
+    const others = Array.from({ length: 40 }, (_, i) => ({ x: i, z: i, w: 1, d: 1 }));
+    expect(alignmentGuides({ x: 0, z: 0, w: 40, d: 40 }, others).length).toBeLessThanOrEqual(6);
+  });
+});
+
+describe('itemFootprint', () => {
+  it('covers a staircase for its whole climb, not just its width', () => {
+    const stair = createStair(5, 5, 'south', { width: 2 });
+    // Five blocks of storey means five treads, which is what the canvas draws — and what has
+    // to be clickable. It used to report 2×2 and leave four fifths of the flight inert.
+    expect(itemFootprint(stair, 1, 5)).toEqual({ x: 5, z: 5, w: 2, d: 5 });
+  });
+
+  it('so a click anywhere along a flight selects it', () => {
+    const stair = createStair(5, 5, 'south', { width: 2 });
+    expect(hitTest([stair], 5, 8, 1, 5)?.id).toBe(stair.id);
   });
 });

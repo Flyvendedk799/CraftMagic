@@ -25,9 +25,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Face } from '@craftmagic/core';
 import {
+  alignmentGuides,
   clampRectToSite,
   hitTest,
   itemFootprint,
+  planFootprint,
   rectBottom,
   rectFromPoints,
   rectRight,
@@ -38,6 +40,7 @@ import {
   wallRuns,
   type Point,
 } from './geometry.js';
+import { Dimensions, SizeBadge } from './Dimensions.js';
 import {
   createColumn,
   createDoor,
@@ -50,6 +53,7 @@ import {
   type LayoutPlan,
   type PlanItem,
   type Rect,
+  type RoomItem,
 } from './plan.js';
 import type { LayoutToolId } from './toolset.js';
 
@@ -75,6 +79,11 @@ export interface PlanCanvasProps {
   onNotice: (message: string | null) => void;
   /** Reported so the page's readout can say what is under the pointer. */
   onHover?: (at: Point | null) => void;
+  /**
+   * Bumped by the page to re-frame the drawing — the same nonce convention the 3D canvas uses
+   * for its view presets, because pressing "Fit" twice has to work and a boolean cannot say so.
+   */
+  fitNonce?: number;
 }
 
 type Drag =
@@ -107,6 +116,7 @@ export function PlanCanvas({
   onPreview,
   onNotice,
   onHover,
+  fitNonce = 0,
 }: PlanCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState(() => ({ scale: 14, ox: 0, oz: 0 }));
@@ -131,22 +141,63 @@ export function PlanCanvas({
     [view],
   );
 
-  // Fit the site into the viewport once, and again whenever the site itself changes. Opening
-  // on a corner of a 48-block plot at whatever zoom was left over is disorienting; opening on
-  // the whole plot is the only framing that needs no explanation.
-  useEffect(() => {
+  /**
+   * Frame a rectangle, with a margin, and centre it.
+   *
+   * `margin` is in blocks, so the padding grows with the drawing rather than with the zoom —
+   * which is what stops a two-room cottage from ending up with the same slack as a 40-room
+   * office block.
+   */
+  const fitTo = useCallback((rect: Rect, margin: number) => {
     const bounds = svgRef.current?.getBoundingClientRect();
     if (!bounds || bounds.width === 0) return;
-    const scale = Math.max(
-      MIN_SCALE,
-      Math.min(MAX_SCALE, Math.min(bounds.width / (plan.site.x + 4), bounds.height / (plan.site.z + 4))),
-    );
+    const w = rect.w + margin * 2;
+    const d = rect.d + margin * 2;
+    const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(bounds.width / w, bounds.height / d)));
     setView({
       scale,
-      ox: plan.site.x / 2 - bounds.width / (2 * scale),
-      oz: plan.site.z / 2 - bounds.height / (2 * scale),
+      ox: rect.x + rect.w / 2 - bounds.width / (2 * scale),
+      oz: rect.z + rect.d / 2 - bounds.height / (2 * scale),
     });
-  }, [plan.site.x, plan.site.z]);
+  }, []);
+
+  /**
+   * Frame the drawing, or the site when there is nothing drawn yet.
+   *
+   * It used to always frame the site, which meant a cottage on a 48-block plot opened as a
+   * postage stamp in a field of empty grid: the thing you came to work on was the smallest
+   * feature on screen. A plot is only the subject before anything is on it.
+   */
+  const fitToContent = useCallback(() => {
+    const drawn = planFootprint(plan);
+    if (drawn) fitTo(drawn, Math.max(3, Math.round(Math.max(drawn.w, drawn.d) * 0.12)));
+    else fitTo({ x: 0, z: 0, w: plan.site.x, d: plan.site.z }, 2);
+  }, [plan, fitTo]);
+
+  // Framed on mount and whenever the site changes shape — not on every edit, which would
+  // yank the view out from under a drag. `planId` catches loading a different plan entirely.
+  //
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  useEffect(fitToContent, [plan.id, plan.site.x, plan.site.z]);
+
+  // The page asks for a re-frame by bumping a nonce, the same convention the 3D canvas uses
+  // for its view presets: pressing "Fit" twice has to work, and a boolean cannot say that.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  useEffect(() => { if (fitNonce > 0) fitToContent(); }, [fitNonce]);
+
+  const zoomBy = useCallback((factor: number) => {
+    const bounds = svgRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    setView((prev) => {
+      const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, prev.scale * factor));
+      // About the middle of the viewport, which is where the eye is when a button is pressed.
+      return {
+        scale,
+        ox: prev.ox + bounds.width / 2 / prev.scale - bounds.width / 2 / scale,
+        oz: prev.oz + bounds.height / 2 / prev.scale - bounds.height / 2 / scale,
+      };
+    });
+  }, []);
 
   const onWheel = useCallback((event: React.WheelEvent<SVGSVGElement>) => {
     const bounds = svgRef.current?.getBoundingClientRect();
@@ -186,7 +237,7 @@ export function PlanCanvas({
       (event.currentTarget as Element).setPointerCapture(event.pointerId);
 
       if (tool === 'select') {
-        const handle = handleUnder(items, selectedId, at, plan.wallThickness, view.scale);
+        const handle = handleUnder(items, selectedId, at, plan.wallThickness, plan.storeyHeight, view.scale);
         if (handle) {
           setDrag({
             kind: 'resize',
@@ -199,7 +250,7 @@ export function PlanCanvas({
           return;
         }
 
-        const hit = hitTest(items, at.x, at.z, plan.wallThickness);
+        const hit = hitTest(items, at.x, at.z, plan.wallThickness, plan.storeyHeight);
         onSelect(hit?.id ?? null);
         if (hit) setDrag({ kind: 'move', id: hit.id, origin: hit, from: at, to: at, marked: false });
         return;
@@ -375,7 +426,48 @@ export function PlanCanvas({
   const draft = drag?.kind === 'draw' ? clampRectToSite(rectFromPoints(drag.from, drag.to), plan.site) : null;
   const ghost = cursor && !drag ? ghostFor(tool, cursor, plan, runs) : null;
 
+  const selectedItem = selectedId ? items.find((entry) => entry.id === selectedId) ?? null : null;
+
+  /**
+   * The rectangle the dimensions describe, and which of its edges are worth measuring.
+   *
+   * A dimensioned drawing is one where the figure you want is already on the paper, so this
+   * follows the gesture: whatever is being drawn, then whatever is being dragged, and only
+   * then the standing selection. Never more than one at a time — two sets of figures over the
+   * same corner is worse than none.
+   */
+  const measured = draft
+    ? { rect: draft, axes: draftAxes(tool, draft), live: true }
+    : selectedItem
+      ? { rect: itemFootprint(selectedItem, plan.wallThickness, plan.storeyHeight), axes: measuredAxes(selectedItem), live: drag !== null }
+      : null;
+
+  const badge = drag ? badgeFor(drag, items, plan) : null;
+
+  /**
+   * Lines showing what the thing being dragged has lined up with.
+   *
+   * Only while a gesture is running — alignment is a fact about a move, and a plan that drew
+   * every coincidence in a finished drawing would be unreadable. Compared against every other
+   * item's footprint rather than only rooms, because a wall or a platform lined up with a room
+   * edge is exactly the alignment you cannot check by eye.
+   */
+  const guides = useMemo(() => {
+    if (!drag || drag.kind === 'pan') return [];
+    const subject =
+      drag.kind === 'draw'
+        ? clampRectToSite(rectFromPoints(drag.from, drag.to), plan.site)
+        : items.find((entry) => entry.id === drag.id);
+    if (!subject) return [];
+    const rect = 'kind' in subject ? itemFootprint(subject, plan.wallThickness, plan.storeyHeight) : subject;
+    const others = items
+      .filter((entry) => !('kind' in subject) || entry.id !== subject.id)
+      .map((entry) => itemFootprint(entry, plan.wallThickness, plan.storeyHeight));
+    return alignmentGuides(rect, others);
+  }, [drag, items, plan.site, plan.wallThickness]);
+
   return (
+    <>
     <svg
       ref={svgRef}
       className="plan"
@@ -466,9 +558,97 @@ export function PlanCanvas({
             vectorEffect="non-scaling-stroke"
           />
         )}
+
+        {guides.map((guide) => (
+          <line
+            key={`${guide.axis}${guide.at}`}
+            x1={guide.axis === 'x' ? guide.at : guide.from}
+            y1={guide.axis === 'x' ? guide.from : guide.at}
+            x2={guide.axis === 'x' ? guide.at : guide.to}
+            y2={guide.axis === 'x' ? guide.to : guide.at}
+            className="plan__guide"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+
+        {measured && (
+          <Dimensions rect={measured.rect} scale={view.scale} axes={measured.axes} live={measured.live} />
+        )}
+
+        {badge && cursor && <SizeBadge at={cursor} scale={view.scale} lines={badge} />}
       </g>
     </svg>
+
+    {/* Outside the SVG rather than drawn into it: these are controls, and a control made of
+        SVG has to reinvent focus rings, hover states and hit areas that a button already has.
+        The plan panel is `position: relative`, so it floats over the corner of the drawing. */}
+    <div className="plan-zoom">
+      <button type="button" onClick={() => zoomBy(1 / 1.3)} title="Zoom out" aria-label="Zoom out">
+        −
+      </button>
+      <span className="plan-zoom__level" title="Screen pixels per block">
+        {Math.round(view.scale)} px/blk
+      </span>
+      <button type="button" onClick={() => zoomBy(1.3)} title="Zoom in" aria-label="Zoom in">
+        +
+      </button>
+      <button type="button" className="plan-zoom__fit" onClick={fitToContent} title="Frame the drawing  (F)">
+        Fit
+      </button>
+    </div>
+    </>
   );
+}
+
+/**
+ * Which edges of a draft to measure.
+ *
+ * A wall is drawn as a rectangle but is a *run*: measuring its one-block thickness while you
+ * drag it out tells you nothing you did not already decide in the site panel, and the figure
+ * competes with the length, which is the one you are actually setting.
+ */
+function draftAxes(tool: LayoutToolId, rect: Rect): 'both' | 'x' | 'z' {
+  if (tool !== 'wall') return 'both';
+  return rect.w >= rect.d ? 'x' : 'z';
+}
+
+/** Same rule for a standing selection, keyed off the item rather than the tool. */
+function measuredAxes(item: PlanItem): 'both' | 'x' | 'z' {
+  if (item.kind === 'wall' || item.kind === 'window') return item.axis === 'x' ? 'x' : 'z';
+  if (item.kind === 'door' || item.kind === 'column') return 'both';
+  return 'both';
+}
+
+/**
+ * The lines of the pointer readout, for whatever gesture is running.
+ *
+ * Deliberately different per gesture, because the useful number is different: drawing a room
+ * is about its area, moving one is about how far it has come, and resizing is about the size
+ * it is heading for. A single "w × d" for all three would answer the question only once.
+ */
+function badgeFor(drag: Drag, items: readonly PlanItem[], plan: LayoutPlan): string[] | null {
+  if (drag.kind === 'draw') {
+    const rect = clampRectToSite(rectFromPoints(drag.from, drag.to), plan.site);
+    const inner = Math.max(0, rect.w - plan.wallThickness * 2) * Math.max(0, rect.d - plan.wallThickness * 2);
+    return inner > 0
+      ? [`${rect.w} × ${rect.d}`, `${inner} blocks inside`]
+      : [`${rect.w} × ${rect.d}`];
+  }
+
+  if (drag.kind === 'move' && drag.marked) {
+    const dx = drag.to.x - drag.from.x;
+    const dz = drag.to.z - drag.from.z;
+    if (dx === 0 && dz === 0) return null;
+    return [`${dx >= 0 ? '+' : ''}${dx} x, ${dz >= 0 ? '+' : ''}${dz} z`];
+  }
+
+  if (drag.kind === 'resize' && drag.marked) {
+    const item = items.find((entry) => entry.id === drag.id);
+    if (!item || !hasRect(item)) return null;
+    return [`${item.rect.w} × ${item.rect.d}`];
+  }
+
+  return null;
 }
 
 function isDragTool(tool: LayoutToolId): boolean {
@@ -533,13 +713,14 @@ function handleUnder(
   selectedId: string | null,
   at: Point,
   wallThickness: number,
+  storeyHeight: number,
   scale: number,
 ): HandleHit | null {
   if (!selectedId) return null;
   const item = items.find((entry) => entry.id === selectedId);
   if (!item || !hasRect(item)) return null;
 
-  const rect = itemFootprint(item, wallThickness);
+  const rect = itemFootprint(item, wallThickness, storeyHeight);
   const reach = Math.max(1, Math.round(8 / scale));
   const corners: [Corner, Point][] = [
     ['nw', { x: rect.x, z: rect.z }],
@@ -657,33 +838,20 @@ function ItemShape({
           <rect x={rect.x} y={rectBottom(rect) - wall} width={rect.w} height={wall} className="plan__wall" />
           <rect x={rect.x} y={rect.z} width={wall} height={rect.d} className="plan__wall" />
           <rect x={rectRight(rect) - wall} y={rect.z} width={wall} height={rect.d} className="plan__wall" />
-          {!faded && rect.w >= 5 && rect.d >= 3 && (
-            <text
-              x={rect.x + rect.w / 2}
-              y={rect.z + rect.d / 2}
-              className="plan__label"
-              textAnchor="middle"
-              dominantBaseline="middle"
-              // Sized to the room rather than fixed, so a long name in a small room shrinks to
-              // fit instead of spilling across the wall into its neighbour.
-              fontSize={labelSize(item.label || `${rect.w}×${rect.d}`, rect)}
-            >
-              {item.label || `${rect.w}×${rect.d}`}
-            </text>
-          )}
+          {!faded && rect.w >= 5 && rect.d >= 3 && <RoomLabel item={item} rect={rect} wall={wall} />}
         </g>
       );
     }
 
     case 'wall': {
-      const rect = itemFootprint(item, t);
+      const rect = itemFootprint(item, t, plan.storeyHeight);
       return (
         <rect x={rect.x} y={rect.z} width={rect.w} height={rect.d} className={`${className} plan__wall`} />
       );
     }
 
     case 'door': {
-      const rect = itemFootprint(item, t);
+      const rect = itemFootprint(item, t, plan.storeyHeight);
       return (
         <g className={className}>
           <rect x={rect.x} y={rect.z} width={rect.w} height={rect.d} className="plan__door" />
@@ -693,7 +861,7 @@ function ItemShape({
     }
 
     case 'window': {
-      const rect = itemFootprint(item, t);
+      const rect = itemFootprint(item, t, plan.storeyHeight);
       return (
         <rect x={rect.x} y={rect.z} width={rect.w} height={rect.d} className={`${className} plan__window`} />
       );
@@ -761,6 +929,60 @@ function ItemShape({
 }
 
 /**
+ * A room's name, with its inside measurement under it.
+ *
+ * The size line is the reason this is a component rather than a `<text>`. Dimension lines
+ * appear on selection and during a drag, which is right — a drawing with every edge dimensioned
+ * at once is unreadable — but it left the resting state of the plan with no numbers on it at
+ * all, and "how big is that room" is the question you ask about a room you are *not* currently
+ * touching. Two lines in the middle of the room answer it permanently and cost no clutter,
+ * because the space was empty anyway.
+ *
+ * Interior, not the outer rect: it is the floor you can stand on, and it is the number the
+ * schedule in the panel reports, so the two must not disagree.
+ */
+function RoomLabel({ item, rect, wall }: { item: RoomItem; rect: Rect; wall: number }) {
+  const name = item.label.trim();
+  const inner = { w: rect.w - wall * 2, d: rect.d - wall * 2 };
+  const size = inner.w > 0 && inner.d > 0 ? `${inner.w} × ${inner.d}` : null;
+
+  // Sized against whichever string is longer, so neither line spills across the wall into the
+  // neighbouring room.
+  const scale = labelSize(name.length >= (size?.length ?? 0) ? name || 'Room' : size ?? 'Room', rect);
+  const gap = scale * 0.75;
+  const cx = rect.x + rect.w / 2;
+  const cz = rect.z + rect.d / 2;
+
+  // One line when there is only one thing to say, and it goes on the centre line. Two lines
+  // straddle it, or the pair sits low in the room and reads as belonging to the wall below.
+  if (!name || !size) {
+    return (
+      <text x={cx} y={cz} className="plan__label" textAnchor="middle" dominantBaseline="middle" fontSize={scale}>
+        {name || size}
+      </text>
+    );
+  }
+
+  return (
+    <>
+      <text x={cx} y={cz - gap / 2} className="plan__label" textAnchor="middle" dominantBaseline="middle" fontSize={scale}>
+        {name}
+      </text>
+      <text
+        x={cx}
+        y={cz + gap}
+        className="plan__label plan__label--size"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize={scale * 0.66}
+      >
+        {size}
+      </text>
+    </>
+  );
+}
+
+/**
  * A label size, in blocks, that keeps the text inside the room it names.
  *
  * A glyph in the display face averages about 0.6 of its height in width — measured off a
@@ -777,8 +999,13 @@ const GLYPH_ASPECT = 0.62;
 
 function labelSize(text: string, rect: Rect): number {
   const byWidth = (rect.w - 2) / (Math.max(1, text.length) * GLYPH_ASPECT);
-  const byHeight = (rect.d - 2) * 0.5;
-  return Math.max(0.8, Math.min(2.2, byWidth, byHeight));
+  // A third of the depth rather than half: the label is two lines now, and the pair has to sit
+  // inside the room without the descenders of the first touching the second.
+  const byHeight = (rect.d - 2) * 0.3;
+  // The cap came down from 2.2 blocks with the fit-to-drawing change. Framing the site made
+  // every plan small on screen, which hid how large the ceiling was; framing the drawing made
+  // a name in a big room render at forty pixels and read as a heading rather than a label.
+  return Math.max(0.7, Math.min(1.4, byWidth, byHeight));
 }
 
 /** The quarter-circle a door leaf sweeps — the symbol, not the geometry. */

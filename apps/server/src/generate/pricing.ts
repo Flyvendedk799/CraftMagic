@@ -13,7 +13,36 @@
  */
 export type ModelId = string;
 
-export type ProviderId = 'anthropic' | 'openai';
+/**
+ * Who to call and how the call is paid for.
+ *
+ * Four, and the split is by *billing*, not by vendor. `anthropic` and `openai` are metered
+ * API keys: every token has a published price, the ledger adds it up and the monthly budget
+ * guard can refuse a call before it is made. `claude-code` and `codex` are subscriptions —
+ * the same wires, the same endpoints, but paid for by a plan that has already been bought.
+ * There is no per-token price to charge, so the ledger records them at zero and the budget
+ * guard has nothing to guard. Modelling them as a *provider* rather than as a flag on one is
+ * what keeps that distinction in one place instead of in every call site.
+ */
+export type ProviderId = 'anthropic' | 'openai' | 'claude-code' | 'codex';
+
+/**
+ * Providers billed to a plan rather than by the token.
+ *
+ * A call still costs the user something — a slice of their plan's rate limit — but it costs
+ * this *deployment* nothing, and the ledger exists to protect the deployment's card. Charging
+ * a subscription call the API rate would make the budget guard refuse work that is free to it.
+ */
+export const SUBSCRIPTION_PROVIDERS: readonly ProviderId[] = ['claude-code', 'codex'];
+
+export function isSubscription(provider: ProviderId): boolean {
+	return SUBSCRIPTION_PROVIDERS.includes(provider);
+}
+
+/** The wire a provider speaks, which is not the same question as who bills for it. */
+export function wireOf(provider: ProviderId): 'anthropic' | 'openai' {
+	return provider === 'anthropic' || provider === 'claude-code' ? 'anthropic' : 'openai';
+}
 
 export interface ModelPricing {
 	/** USD per million input tokens. */
@@ -55,7 +84,14 @@ export function isPricingKnown(model: ModelId): boolean {
 	return PRICING[model] !== undefined;
 }
 
-/** Which provider a model belongs to, inferred from its name. */
+/**
+ * Which provider a model belongs to, inferred from its name.
+ *
+ * Answers with a metered provider on purpose. It is used where only a model name is in hand —
+ * a ledger row read back from disk — and the metered rate is the conservative reading: a
+ * subscription call recorded at zero stays at zero because its *cost* is stored, not
+ * recomputed, while an unknown row is better over-counted than under-counted.
+ */
 export function providerOf(model: ModelId): ProviderId {
 	return model.startsWith('claude') ? 'anthropic' : 'openai';
 }
@@ -79,7 +115,22 @@ export interface CostBreakdown {
 	totalUsd: number;
 }
 
-export function costOf(model: ModelId, usage: TokenUsage): CostBreakdown {
+/** Nothing was spent, and every field says so. Used for the subscription providers. */
+export const FREE: CostBreakdown = {
+	inputUsd: 0,
+	outputUsd: 0,
+	cacheWriteUsd: 0,
+	cacheReadUsd: 0,
+	totalUsd: 0,
+};
+
+export function costOf(model: ModelId, usage: TokenUsage, provider?: ProviderId): CostBreakdown {
+	// A plan has already been paid for, so there is no per-token amount to attribute and
+	// nothing for the budget to subtract. The token counts are still reported to the caller —
+	// they are the honest measure of what a generation took — but they cost this deployment
+	// nothing and the ledger must not pretend otherwise.
+	if (provider && isSubscription(provider)) return FREE;
+
 	const rates = pricingFor(model);
 	const perToken = (perMillion: number) => perMillion / 1_000_000;
 
@@ -105,7 +156,13 @@ export function costOf(model: ModelId, usage: TokenUsage): CostBreakdown {
  * Assumes `max_tokens` are all produced, because the guard has to reason about what a call
  * *could* cost, not what a typical one does.
  */
-export function worstCaseCost(model: ModelId, estimatedInputTokens: number, maxTokens: number): number {
+export function worstCaseCost(
+	model: ModelId,
+	estimatedInputTokens: number,
+	maxTokens: number,
+	provider?: ProviderId,
+): number {
+	if (provider && isSubscription(provider)) return 0;
 	const rates = pricingFor(model);
 	return (estimatedInputTokens * rates.input + maxTokens * rates.output) / 1_000_000;
 }

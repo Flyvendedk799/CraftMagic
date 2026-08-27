@@ -28,7 +28,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import { generateBuild, GenerationError, TOOL_NAME } from './pipeline.js';
 import { systemPrompt } from './prompt.js';
-import { costOf, isPricingKnown, worstCaseCost } from './pricing.js';
+import { costOf, isPricingKnown, isSubscription, worstCaseCost, type ProviderId } from './pricing.js';
 import { providerFor, type Provider } from './providers.js';
 import type { GenerationQuota } from './quota.js';
 import type { AiSettings } from '../settings/store.js';
@@ -48,6 +48,13 @@ export interface GenerateRoutesOptions {
 	 */
 	resolveAi: () => Promise<AiSettings>;
 	maxTokens?: number;
+	/**
+	 * Builds the provider for a subscription, or null when that login is not on this machine.
+	 *
+	 * Injected rather than imported because it reads a keychain: the routes should not know
+	 * where a credential lives, and the tests should not need one to exist.
+	 */
+	subscriptionProvider?: (id: ProviderId) => Provider | null;
 	auth: Auth;
 	/** Null when there is no database: the quota is off, the ledger is not. */
 	quota: GenerationQuota | null;
@@ -67,6 +74,10 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 		// needing a restart.
 		let cachedClient: { key: string; provider: Provider } | null = null;
 		const providerFor_ = (ai: AiSettings): Provider | null => {
+			// A subscription carries no key to cache on, and its client is rebuilt per session
+			// anyway — the token behind it is refreshed by somebody else's CLI, so a pooled
+			// client would go on presenting a stale one.
+			if (isSubscription(ai.provider)) return options.subscriptionProvider?.(ai.provider) ?? null;
 			if (!ai.apiKey) return null;
 			const key = `${ai.provider}:${ai.apiKey}`;
 			if (cachedClient?.key !== key) {
@@ -141,7 +152,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 
 		app.post('/api/generations/estimate', async (request, reply) => {
 			const ai = await options.resolveAi();
-			if (!ai.apiKey) return reply.code(503).send({ error: 'no_api_key' });
+			if (!ai.ready) return reply.code(503).send({ error: 'no_api_key' });
 			// Free to the caller, but it still reaches the provider and consumes a rate limit
 			// shared with the paid path.
 			if (!(await payingUser(request, reply))) return;
@@ -155,7 +166,9 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			let inputTokens: number;
 			let exact: boolean;
 
-			if (ai.provider === 'anthropic') {
+			// The free token counter needs an API key, which a subscription does not have. Rather
+			// than spend a subscription call to price a call that costs nothing, estimate locally.
+			if (ai.provider === 'anthropic' && ai.apiKey) {
 				// count_tokens is not billed, so the UI can price every prompt for free.
 				const counted = await new Anthropic({ apiKey: ai.apiKey }).messages.countTokens({
 					model: ai.model,
@@ -186,17 +199,20 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 				inputTokens,
 				/** False when the count is a local approximation rather than the provider's own. */
 				exact,
-				pricingKnown: isPricingKnown(ai.model),
-				firstCallUsd: costOf(ai.model, {
-					input_tokens: inputTokens,
-					output_tokens: typicalOutput,
-				}).totalUsd,
-				cachedCallUsd: costOf(ai.model, {
-					input_tokens: 120,
-					output_tokens: typicalOutput,
-					cache_read_input_tokens: inputTokens,
-				}).totalUsd,
-				worstCaseUsd: worstCaseCost(ai.model, inputTokens, maxTokens),
+				pricingKnown: isSubscription(ai.provider) || isPricingKnown(ai.model),
+				/** False on a subscription: the plan is already paid for, so every figure is zero. */
+				metered: !isSubscription(ai.provider),
+				firstCallUsd: costOf(
+					ai.model,
+					{ input_tokens: inputTokens, output_tokens: typicalOutput },
+					ai.provider,
+				).totalUsd,
+				cachedCallUsd: costOf(
+					ai.model,
+					{ input_tokens: 120, output_tokens: typicalOutput, cache_read_input_tokens: inputTokens },
+					ai.provider,
+				).totalUsd,
+				worstCaseUsd: worstCaseCost(ai.model, inputTokens, maxTokens, ai.provider),
 				spend: spendSummary(),
 			};
 		});
@@ -228,7 +244,10 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			// Refuse before creating a generation, so an over-budget request fails loudly
 			// here rather than as an error event moments later.
 			try {
-				options.ledger.assertCanAfford(ai.model, refineOf ? 20_000 : 12_000, maxTokens);
+				// The provider matters as much as the model: a subscription call has no worst case
+				// to compare against the ceiling, and without passing it this guard refuses free work
+				// on the grounds that a metered call would have been expensive.
+				options.ledger.assertCanAfford(ai.model, refineOf ? 20_000 : 12_000, maxTokens, ai.provider);
 			} catch (err) {
 				if (err instanceof BudgetExceededError) {
 					return reply.code(402).send({ error: 'budget_exceeded', message: err.message, spend: spendSummary() });

@@ -1,16 +1,33 @@
 /**
- * Admin settings: the AI provider, its model, and the keys.
+ * Admin settings: which AI serves generation, on which model, and paid for how.
+ *
+ * Four providers in two kinds, and the split that matters is who pays rather than who serves.
+ * Two are metered API keys, which the deployment's card settles and the monthly budget guard
+ * polices. Two are subscriptions — the `claude` and `codex` logins already on the server's
+ * machine — which cost this deployment nothing because a plan has already been bought.
+ *
+ * That difference drives the form. A metered provider shows a key field, a rate and a spend
+ * ceiling. A subscription shows none of those, because they would all be zero or a lie, and
+ * shows instead the one thing that decides whether it will work: is there a login on that
+ * machine, whose plan is it, and has its token gone stale.
  *
  * The key fields start empty and stay empty, because the server never sends a key back — only
- * a masked hint of the one installed. That shapes the whole form: leaving a field blank means
- * "keep what is there", and the page says so rather than letting someone assume an empty box
- * means no key is set and that saving will not disturb it.
+ * a masked hint of the one installed. That shapes the rest of the form: leaving a field blank
+ * means "keep what is there", and the page says so rather than letting someone assume an empty
+ * box means no key is set and that saving will not disturb it.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../library/auth.js';
-import { loadSettings, saveSettings, type AdminSettings, type ProviderId } from './admin.js';
+import {
+  isSubscription,
+  loadSettings,
+  saveSettings,
+  type AdminSettings,
+  type ProviderId,
+  type SubscriptionStatus,
+} from './admin.js';
 import './admin.css';
 
 type Load =
@@ -19,13 +36,33 @@ type Load =
   | { status: 'error'; message: string };
 
 const PROVIDER_LABEL: Record<ProviderId, string> = {
-  anthropic: 'Claude (Anthropic)',
-  openai: 'OpenAI',
+  anthropic: 'Claude API key',
+  openai: 'OpenAI API key',
+  'claude-code': 'Claude subscription',
+  codex: 'ChatGPT subscription',
+};
+
+/** What each one is, in the one line the radio has room for. */
+const PROVIDER_BLURB: Record<ProviderId, string> = {
+  anthropic: 'Metered. Billed per token to this deployment.',
+  openai: 'Metered. Billed per token to this deployment.',
+  'claude-code': 'Uses the claude login on this server. Billed to that plan.',
+  codex: 'Uses the codex login on this server. Billed to that plan.',
 };
 
 const KEY_PLACEHOLDER: Record<ProviderId, string> = {
   anthropic: 'sk-ant-…',
   openai: 'sk-…',
+  'claude-code': '',
+  codex: '',
+};
+
+/** The default model for a provider. Must agree with `defaultModelFor` on the server. */
+const DEFAULT_MODEL: Record<ProviderId, string> = {
+  anthropic: 'claude-sonnet-5',
+  openai: 'gpt-5',
+  'claude-code': 'claude-sonnet-5',
+  codex: 'gpt-5-codex',
 };
 
 export function AdminPage() {
@@ -96,7 +133,7 @@ export function AdminPage() {
       <header className="admin__head">
         <div>
           <h1 className="admin__title">Settings</h1>
-          <p className="admin__sub">Which model generates builds, and the key it uses.</p>
+          <p className="admin__sub">Which AI generates builds, on which model, and who pays for it.</p>
         </div>
         <Link className="admin__back" to="/editor">
           ← Back to the editor
@@ -130,14 +167,22 @@ export function AdminPage() {
                       setProvider(id);
                       // The default model belongs to the provider, so switching without this
                       // leaves a Claude model selected against OpenAI.
-                      setModel(id === 'openai' ? 'gpt-5' : 'claude-sonnet-5');
+                      setModel(DEFAULT_MODEL[id]);
                       setKey('');
                     }}
                   />
                   <span>{PROVIDER_LABEL[id]}</span>
-                  <span className="admin__provider-key">
-                    {(id === 'openai' ? settings.openaiKeyHint : settings.anthropicKeyHint) ?? 'no key'}
-                  </span>
+                  <span className="admin__provider-blurb">{PROVIDER_BLURB[id]}</span>
+                  {/* The bottom line of each card is the one thing that decides whether it
+                      will work: a key hint for the metered pair, a connection for the two
+                      subscriptions. Same slot, because it is the same question. */}
+                  {isSubscription(id) ? (
+                    <ConnectionLine id={id} status={settings.subscriptions} />
+                  ) : (
+                    <span className="admin__provider-key">
+                      {(id === 'openai' ? settings.openaiKeyHint : settings.anthropicKeyHint) ?? 'no key'}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>
@@ -159,7 +204,7 @@ export function AdminPage() {
               </datalist>
             </label>
 
-            {!settings.pricingKnown && (
+            {!isSubscription(provider) && !settings.pricingKnown && (
               <p className="admin__warn">
                 No published rate is known for <code>{settings.model}</code>, so the budget guard
                 assumes ${settings.pricing.input}/M in and ${settings.pricing.output}/M out. That is
@@ -167,28 +212,34 @@ export function AdminPage() {
               </p>
             )}
 
-            <label className="admin__field">
-              <span className="admin__label">
-                API key {hint && <span className="admin__hint">currently {hint}</span>}
-              </span>
-              <input
-                className="admin__input"
-                type="password"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder={hint ? 'leave blank to keep the current key' : KEY_PLACEHOLDER[provider]}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
+            {isSubscription(provider) ? (
+              <SubscriptionNote provider={provider} status={settings.subscriptions} />
+            ) : (
+              <>
+                <label className="admin__field">
+                  <span className="admin__label">
+                    API key {hint && <span className="admin__hint">currently {hint}</span>}
+                  </span>
+                  <input
+                    className="admin__input"
+                    type="password"
+                    value={key}
+                    onChange={(e) => setKey(e.target.value)}
+                    placeholder={hint ? 'leave blank to keep the current key' : KEY_PLACEHOLDER[provider]}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </label>
 
-            <p className="admin__note">
-              Keys are encrypted before they are stored and are never sent back to this page —
-              that is why the field is blank even when one is set.
-              {settings.keySource === 'environment' && (
-                <> The key in use right now comes from the server’s environment.</>
-              )}
-            </p>
+                <p className="admin__note">
+                  Keys are encrypted before they are stored and are never sent back to this page —
+                  that is why the field is blank even when one is set.
+                  {settings.keySource === 'environment' && (
+                    <> The key in use right now comes from the server’s environment.</>
+                  )}
+                </p>
+              </>
+            )}
 
             <div className="admin__actions">
               <button type="submit" disabled={saving || !model.trim()}>
@@ -205,6 +256,13 @@ export function AdminPage() {
 
           <section className="panel">
             <h2>Spend this month</h2>
+            {!settings.metered && (
+              <p className="admin__note admin__note--lead">
+                Nothing is being charged right now: generation runs on a subscription, so the
+                figures below are the history of what metered providers have cost, not what
+                today’s calls are costing. Subscription calls are recorded at zero.
+              </p>
+            )}
             <dl className="admin__spend">
               <div>
                 <dt>Used</dt>
@@ -232,5 +290,83 @@ export function AdminPage() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Whether the CLI login this provider needs is on the server's machine.
+ *
+ * Three states, and the middle one is the reason this is not a boolean: a login can be there
+ * and stale. Claude Code's can be refreshed on the way out so a stale one still works and is
+ * only worth mentioning; Codex's cannot be refreshed without breaking the CLI's own session,
+ * so a stale one genuinely does not work and has to say so.
+ */
+function ConnectionLine({ id, status }: { id: ProviderId; status: SubscriptionStatus }) {
+  const entry = id === 'claude-code' ? status.claudeCode : status.codex;
+  if (!entry.connected) {
+    return <span className="admin__provider-key admin__provider-key--off">not signed in here</span>;
+  }
+
+  const plan = id === 'claude-code' ? status.claudeCode.subscriptionType : status.codex.planType;
+  const blocked = id === 'codex' && entry.expired;
+
+  return (
+    <span className={`admin__provider-key ${blocked ? 'admin__provider-key--off' : 'admin__provider-key--on'}`}>
+      {blocked ? 'token expired' : plan ? `${plan} plan` : 'connected'}
+    </span>
+  );
+}
+
+/**
+ * What to do about a subscription, in place of the key field.
+ *
+ * The whole of "connecting" is signing in to a CLI on the server, which is a thing that
+ * happens in a terminal and cannot be done from a web page — so this does not pretend to
+ * offer a button. It says what state the login is in and what command changes it, which is
+ * the only honest help a browser can give here.
+ */
+function SubscriptionNote({ provider, status }: { provider: ProviderId; status: SubscriptionStatus }) {
+  const claude = provider === 'claude-code';
+  const entry = claude ? status.claudeCode : status.codex;
+  const command = claude ? 'claude' : 'codex';
+
+  if (!entry.connected) {
+    return (
+      <p className="admin__warn">
+        No <code>{command}</code> login was found on the server’s machine, so generation will
+        refuse until there is one. Run <code>{command}</code> there, sign in, and reload this
+        page — nothing needs to be pasted here, and no token is ever stored by this app.
+      </p>
+    );
+  }
+
+  // Only Codex is blocked by an expired token: Claude Code's can be refreshed on the way out.
+  if (entry.expired && !claude) {
+    return (
+      <p className="admin__warn">
+        The <code>codex</code> login on the server has expired. Run <code>codex</code> once on
+        that machine to refresh it — the CLI keeps its own token current, and this app
+        deliberately does not refresh it, because doing so would rotate the token out from
+        under the CLI and break its session.
+      </p>
+    );
+  }
+
+  const plan = claude ? status.claudeCode.subscriptionType : status.codex.planType;
+  const where = claude
+    ? status.claudeCode.source === 'keychain'
+      ? 'the macOS keychain'
+      : '~/.claude/.credentials.json'
+    : '~/.codex/auth.json';
+
+  return (
+    <p className="admin__note">
+      Signed in{plan ? ` on a ${plan} plan` : ''}, read from {where} on the server. Calls are
+      billed to that subscription rather than to this deployment, so the budget ceiling below
+      does not apply to them and they are recorded at zero.
+      {claude && entry.expired && (
+        <> The stored token has expired; it will be refreshed automatically on the next call.</>
+      )}
+    </p>
   );
 }

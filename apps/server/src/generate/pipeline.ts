@@ -116,7 +116,7 @@ export async function generateBuild(
 	// Rough token estimate for the guard: ~3.8 chars per token is close enough, and the
 	// guard's job is to be conservative rather than exact.
 	const estimatedInput = Math.ceil((system.length + userContent.length) / 3.8) + 500;
-	deps.ledger.assertCanAfford(model, estimatedInput, maxTokens);
+	deps.ledger.assertCanAfford(model, estimatedInput, maxTokens, deps.provider.id);
 
 	const session = deps.provider.session({
 		model,
@@ -131,7 +131,7 @@ export async function generateBuild(
 	let totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 
 	const record = (reply: ProviderReplyLike, purpose: string) => {
-		const entry = deps.ledger.record(model, purpose, reply.usage);
+		const entry = deps.ledger.record(model, purpose, reply.usage, deps.provider.id);
 		totals = {
 			input: totals.input + reply.usage.input_tokens,
 			output: totals.output + reply.usage.output_tokens,
@@ -164,7 +164,7 @@ export async function generateBuild(
 	if (problems.length > 0) {
 		options.onProgress?.({ stage: 'repairing', issues: problems.length });
 
-		deps.ledger.assertCanAfford(model, estimatedInput * 2, maxTokens);
+		deps.ledger.assertCanAfford(model, estimatedInput * 2, maxTokens, deps.provider.id);
 		options.onProgress?.({ stage: 'thinking' });
 		const second = await session.repair(repairPrompt(problems));
 		record(second, 'repair');

@@ -21,6 +21,13 @@ export interface Config {
   monthlyBudgetUsd: number;
   spendLedgerPath: string;
   /** Force this account to be an admin at boot. See index.ts for why. */
+  /**
+   * Where Codex subscription calls go.
+   *
+   * A setting because this endpoint belongs to a client rather than to a published API, so it
+   * can move — and a moved endpoint should be a config change, not a release.
+   */
+  codexBaseUrl: string | undefined;
   adminEmail: string | undefined;
   sessionSecret: string;
   isProduction: boolean;
@@ -62,6 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Defaults low on purpose. A missing or unparseable value must not mean "unlimited".
     monthlyBudgetUsd: parsePositive(env.ANTHROPIC_MONTHLY_BUDGET_USD, 1),
     spendLedgerPath: resolveLedgerPath(env),
+    codexBaseUrl: env.CODEX_BASE_URL?.trim() || undefined,
     adminEmail: env.ADMIN_EMAIL?.trim().toLowerCase() || undefined,
     sessionSecret: requiredInProduction('SESSION_SECRET', env.SESSION_SECRET, isProduction),
     isProduction,

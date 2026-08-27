@@ -16,6 +16,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { ProviderId, TokenUsage } from './pricing.js';
+import type { CodexIdentity } from './subscription/codex.js';
 
 export const TOOL_NAME = 'emit_build_program';
 
@@ -53,6 +54,18 @@ export interface SessionOptions {
 export interface Provider {
   readonly id: ProviderId;
   session(options: SessionOptions): ProviderSession;
+}
+
+/**
+ * Whether a model takes `output_config.effort`.
+ *
+ * A prefix allowlist rather than a denylist, and deliberately so: the model is a free-text
+ * setting now, so the unknown case is the common one, and the safe reading of "unknown" is to
+ * omit an optional parameter rather than to send one that might 400. Being wrong here costs a
+ * default effort level; being wrong the other way costs every generation.
+ */
+function supportsEffort(model: string): boolean {
+  return model.startsWith('claude-opus-5') || model.startsWith('claude-sonnet-5');
 }
 
 /** Count components as their JSON streams in, so a UI can show assembly rather than a spinner. */
@@ -95,7 +108,13 @@ class AnthropicSession implements ProviderSession {
         // Marking the system prompt cacheable is the single biggest cost lever here: it is
         // identical on every generation, so after the first call it bills at a tenth.
         system: [{ type: 'text', text: this.options.system, cache_control: { type: 'ephemeral' } }],
-        output_config: { effort: this.options.effort ?? 'medium' },
+        // Only where it is accepted. `output_config` is an adaptive-thinking feature, and a
+        // model without it rejects the whole request with a 400 rather than ignoring the
+        // field — which turned typing a model name into the settings box into a way to break
+        // generation with an error that names a parameter nobody chose.
+        ...(supportsEffort(this.options.model)
+          ? { output_config: { effort: this.options.effort ?? 'medium' } }
+          : {}),
         tools: [
           {
             name: TOOL_NAME,
@@ -142,6 +161,78 @@ export function anthropicProvider(apiKey: string): Provider {
   return {
     id: 'anthropic',
     session: (options) => new AnthropicSession(client, options),
+  };
+}
+
+/**
+ * Claude Code's pinned CLI version, and the beta flags that go with it.
+ *
+ * A subscription token is only honoured for requests that identify themselves as Claude Code:
+ * `oauth-2025-04-20` is the flag that says "this Authorization header is an OAuth token, not
+ * a key", and the user-agent and `x-app` are what community Anthropic gateways gate on. The
+ * version pin is cosmetic to Anthropic and load-bearing to those gateways.
+ */
+const CLAUDE_CODE_VERSION = '2.1.75';
+const CLAUDE_CODE_BETA = [
+  'claude-code-20250219',
+  'oauth-2025-04-20',
+  'fine-grained-tool-streaming-2025-05-14',
+  'interleaved-thinking-2025-05-14',
+].join(',');
+
+/**
+ * The same Anthropic wire, paid for by a subscription instead of a key.
+ *
+ * The session is `AnthropicSession` unchanged, and that is the whole point: the endpoint, the
+ * Messages API, the tool call, the streaming and the repair round are identical, and the only
+ * thing that differs is who is billed. Abstracting anything else would have been inventing a
+ * difference that is not there.
+ *
+ * `authToken` rather than `apiKey`, and this is the one detail that has to be exactly right:
+ * the SDK sends `Authorization: Bearer` for the former and `x-api-key` for the latter, and
+ * Anthropic validates `x-api-key` whenever the header is *present*. A placeholder key
+ * alongside a valid bearer token does not get ignored — it gets rejected, and the request
+ * fails with "invalid x-api-key" while carrying a perfectly good credential. So the key is
+ * left unset and only the bearer goes on the wire.
+ *
+ * The token is fetched per session rather than held, because it is refreshed behind our back:
+ * see `subscription/claudeCode.ts`.
+ */
+export function claudeCodeProvider(getToken: () => Promise<string>): Provider {
+  return {
+    id: 'claude-code',
+    session: (options) => {
+      // Built lazily, once, on the first call of the session: the repair round has to run
+      // against the same client, and asking for a token before anyone has asked for a
+      // generation would read the credential store on every page load.
+      let client: Promise<Anthropic> | null = null;
+      const clientFor = () => {
+        client ??= getToken().then(
+          (authToken) =>
+            new Anthropic({
+              authToken,
+              // Explicit, not merely omitted: the SDK otherwise falls back to
+              // ANTHROPIC_API_KEY from the environment, and a deployment that has both a key
+              // and a subscription would send the key alongside the bearer and 401.
+              apiKey: null,
+              defaultHeaders: {
+                'anthropic-beta': CLAUDE_CODE_BETA,
+                'user-agent': `claude-cli/${CLAUDE_CODE_VERSION}`,
+                'x-app': 'cli',
+              },
+            }),
+        );
+        return client;
+      };
+
+      let inner: ProviderSession | null = null;
+      const sessionFor = async () => (inner ??= new AnthropicSession(await clientFor(), options));
+
+      return {
+        emit: async (userContent) => (await sessionFor()).emit(userContent),
+        repair: async (problems) => (await sessionFor()).repair(problems),
+      };
+    },
   };
 }
 
@@ -263,6 +354,200 @@ export function openAiProvider(apiKey: string): Provider {
     session: (options) => new OpenAiSession(client, options),
   };
 }
+
+
+// --- Codex / ChatGPT subscription -----------------------------------------------------------
+
+/**
+ * Where a ChatGPT subscription's Codex calls go.
+ *
+ * Not `api.openai.com`: a subscription token is not an API key and the metered API will not
+ * accept one. The CLI talks to the ChatGPT backend instead, which speaks the **Responses**
+ * API rather than Chat Completions — a different request shape, which is why this cannot
+ * simply reuse `OpenAiSession` the way the Claude Code provider reuses `AnthropicSession`.
+ *
+ * Overridable, and that is not hypothetical: this endpoint belongs to a client, not to a
+ * published API, so it can move. A setting means a moved endpoint is a config change rather
+ * than a release.
+ */
+const CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+
+/**
+ * The Responses API, driven for one forced tool call.
+ *
+ * Three things differ from Chat Completions and each fails loudly if missed:
+ *
+ *   - The system prompt is `instructions` at the top level, **not** a message in `input`.
+ *     Strict Responses endpoints reject a request that carries a system-role entry in `input`
+ *     while leaving `instructions` empty.
+ *   - A tool is flat — `{ type, name, parameters }` — rather than nested under `function`.
+ *   - The reply is an output *array*, and the tool call is an item in it with its arguments
+ *     as a JSON string, rather than a `tool_calls` array hanging off a message.
+ *
+ * The repair round threads by `previous_response_id` instead of resending the conversation:
+ * the backend already has the turn, and re-uploading a rejected 40kB program to ask for a fix
+ * would be paying twice for the same context.
+ */
+class CodexSession implements ProviderSession {
+  private previousResponseId: string | null = null;
+  private lastCallId: string | null = null;
+
+  constructor(
+    private readonly client: OpenAI,
+    private readonly options: SessionOptions,
+  ) {}
+
+  async emit(userContent: string): Promise<ProviderReply> {
+    return this.call([{ role: 'user', content: userContent }]);
+  }
+
+  async repair(problems: string): Promise<ProviderReply> {
+    if (!this.lastCallId) throw new Error('repair() called before emit()');
+    // The Responses equivalent of Anthropic's `tool_result` block: an output item answering
+    // the call by id, which is what lets the model see what it got wrong.
+    return this.call([{ type: 'function_call_output', call_id: this.lastCallId, output: problems }]);
+  }
+
+  private async call(input: unknown[]): Promise<ProviderReply> {
+    const stream = await this.client.responses.create(
+      {
+        model: this.options.model,
+        instructions: this.options.system,
+        input: input as never,
+        max_output_tokens: this.options.maxTokens,
+        tools: [
+          {
+            type: 'function',
+            name: TOOL_NAME,
+            description: TOOL_DESCRIPTION,
+            parameters: this.options.schema as Record<string, unknown>,
+            // Same reason as both other providers: `group` children are components, a
+            // circular `$ref` that strict mode rejects outright.
+            strict: false,
+          },
+        ],
+        tool_choice: { type: 'function', name: TOOL_NAME },
+        ...(this.previousResponseId ? { previous_response_id: this.previousResponseId } : {}),
+        stream: true,
+      } as never,
+      this.options.signal ? { signal: this.options.signal } : undefined,
+    );
+
+    let argsJson = '';
+    let seen = 0;
+    let usage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
+    let status: string | null = null;
+
+    // Double cast: the overload picked for a hand-built `as never` params object returns the
+    // non-streaming shape, and `stream: true` is what actually decides. The event shape is
+    // narrowed by `CodexStreamEvent` below rather than trusted.
+    for await (const raw of stream as unknown as AsyncIterable<unknown>) {
+      const event = raw as CodexStreamEvent;
+
+      if (event.type === 'response.function_call_arguments.delta' && typeof event.delta === 'string') {
+        argsJson += event.delta;
+        const count = countComponents(argsJson);
+        if (count > seen) {
+          seen = count;
+          this.options.onComponents?.(count);
+        }
+        continue;
+      }
+
+      if (event.type === 'response.output_item.added' && event.item?.type === 'function_call') {
+        this.lastCallId = event.item.call_id ?? event.item.id ?? this.lastCallId;
+        continue;
+      }
+
+      // The terminal events carry the id the next turn threads from, and the usage.
+      if (event.response?.id) this.previousResponseId = event.response.id;
+      if (event.response?.status) status = event.response.status;
+      if (event.response?.usage) {
+        usage = {
+          input_tokens: event.response.usage.input_tokens ?? 0,
+          output_tokens: event.response.usage.output_tokens ?? 0,
+          cache_read_input_tokens: event.response.usage.input_tokens_details?.cached_tokens ?? 0,
+        };
+      }
+    }
+
+    if (!argsJson) {
+      return { input: undefined, usage, noToolCallReason: `status: ${status ?? 'unknown'}` };
+    }
+
+    // Arguments arrive as a JSON string. A malformed one is not fatal: the pipeline's
+    // unwrapping already copes with a stringified program, and the repair round exists for
+    // exactly this.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(argsJson);
+    } catch {
+      parsed = argsJson;
+    }
+    return { input: parsed, usage };
+  }
+}
+
+/** The subset of the Responses stream this reads. Narrowed by hand because the shape is the */
+/** ChatGPT backend's rather than the published SDK's, and only these fields are load-bearing. */
+interface CodexStreamEvent {
+  type?: string;
+  delta?: string;
+  item?: { type?: string; call_id?: string; id?: string };
+  response?: {
+    id?: string;
+    status?: string;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      input_tokens_details?: { cached_tokens?: number };
+    };
+  };
+}
+
+/**
+ * Codex, on a ChatGPT subscription.
+ *
+ * The identity is read per session for the same reason the Claude Code token is: the `codex`
+ * CLI owns the credential and refreshes it on its own schedule, so a client built once from
+ * one would go on presenting a stale token until this process restarted.
+ */
+export function codexProvider(
+  getIdentity: () => Promise<CodexIdentity>,
+  baseUrl = CODEX_BASE_URL,
+): Provider {
+  return {
+    id: 'codex',
+    session: (options) => {
+      let client: Promise<OpenAI> | null = null;
+      const clientFor = () => {
+        client ??= getIdentity().then(
+          (identity) =>
+            new OpenAI({
+              apiKey: identity.accessToken,
+              baseURL: baseUrl,
+              defaultHeaders: {
+                // Which subscription to bill. Without it the backend cannot attribute the
+                // call and refuses it.
+                ...(identity.accountId ? { 'chatgpt-account-id': identity.accountId } : {}),
+                originator: 'codex_cli_ts',
+              },
+            }),
+        );
+        return client;
+      };
+
+      let inner: ProviderSession | null = null;
+      const sessionFor = async () => (inner ??= new CodexSession(await clientFor(), options));
+
+      return {
+        emit: async (userContent) => (await sessionFor()).emit(userContent),
+        repair: async (problems) => (await sessionFor()).repair(problems),
+      };
+    },
+  };
+}
+
 
 export function providerFor(id: ProviderId, apiKey: string): Provider {
   return id === 'openai' ? openAiProvider(apiKey) : anthropicProvider(apiKey);

@@ -16,27 +16,50 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { VoxelGrid } from '@craftmagic/core';
-import { VoxelWorld } from './VoxelWorld.js';
+import { VoxelWorld, type ClipBox } from './VoxelWorld.js';
 import type { Preview } from './preview.js';
 import { raycastVoxel, type VoxelHit } from './raycast.js';
 
 /** Camera presets. `iso` is the framing a build opens on. */
 export type ViewKind = 'iso' | 'top' | 'front' | 'side';
 
+/** An inclusive block-coordinate box, for framing part of a build rather than all of it. */
+export interface FocusBox {
+  min: { x: number; y: number; z: number };
+  max: { x: number; y: number; z: number };
+}
+
 /** A view request. The nonce is what makes pressing the same preset twice re-frame. */
 export interface ViewRequest {
   kind: ViewKind;
   nonce: number;
+  /**
+   * Frame this box instead of the whole build.
+   *
+   * What makes "show me that room" mean anything: clipping the model to one room leaves the
+   * camera still framed on a building that is now mostly missing, so the room ends up a
+   * fingernail in the corner of an empty viewport.
+   */
+  focus?: FocusBox | null;
 }
 
 export interface EditorCanvasProps {
   grid: VoxelGrid;
   paletteColors: Uint8Array;
   paletteFlags: Uint8Array;
-  /** Highest visible layer; `null` shows the whole structure. */
-  layerClip: number | null;
+  /** Highest visible layer; `null` shows the whole structure. Omit it entirely when passing `clip`. */
+  layerClip?: number | null;
   /** Lowest visible layer, for the isolate mode that shows one slice at a time. */
   layerFloor?: number;
+  /**
+   * Hide everything outside this box.
+   *
+   * Takes over from `layerClip`/`layerFloor` entirely when given, rather than intersecting
+   * with them: two ways of saying where the top cut is would eventually disagree, and the
+   * caller that wants a box is not also operating a layer slider. The editor passes layers,
+   * the layouter passes a box.
+   */
+  clip?: ClipBox | null;
   onHover?: (hit: VoxelHit | null) => void;
   /**
    * A click that was not a drag. The canvas only reports where it landed — which tool that
@@ -100,8 +123,9 @@ function Scene({
   grid,
   paletteColors,
   paletteFlags,
-  layerClip,
+  layerClip = null,
   layerFloor = 0,
+  clip,
   onHover,
   onClick,
   onStroke,
@@ -114,8 +138,11 @@ function Scene({
 }: EditorCanvasProps) {
   const scene = useThree((state) => state.scene);
   const worldRef = useRef<VoxelWorld | null>(null);
-  const clipRef = useRef({ top: layerClip, floor: layerFloor });
-  clipRef.current = { top: layerClip, floor: layerFloor };
+  // Resolved once, here, so the mount effect and the update effect cannot disagree about
+  // which of the two ways of expressing a cut is in force.
+  const box: ClipBox | null = clip ?? (layerClip === null ? null : { maxY: layerClip, minY: layerFloor > 0 ? layerFloor : null });
+  const clipRef = useRef(box);
+  clipRef.current = box;
   const progressRef = useRef(onProgress);
   progressRef.current = onProgress;
   const worldCallback = useRef(onWorld);
@@ -140,7 +167,7 @@ function Scene({
     worldRef.current = world;
     scene.add(world.group);
     world.load(grid, paletteColors, paletteFlags);
-    world.setLayerClip(clipRef.current.top, clipRef.current.floor);
+    world.setClip(clipRef.current);
     worldCallback.current?.(world);
     return () => {
       worldCallback.current?.(null);
@@ -151,9 +178,11 @@ function Scene({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [scene, grid]);
 
+  // Keyed on the resolved faces rather than on the object, which is rebuilt every render.
+  const boxKey = JSON.stringify(box);
   useEffect(() => {
-    worldRef.current?.setLayerClip(layerClip, layerFloor);
-  }, [layerClip, layerFloor]);
+    worldRef.current?.setClip(clipRef.current);
+  }, [boxKey]);
 
   useFrame(() => {
     const world = worldRef.current;
@@ -210,17 +239,29 @@ function Framing({
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
 
+  // Read by the auto-frame below without being a dependency of it: a re-frame provoked by the
+  // build changing shape must keep whatever the camera was pointed at, and taking the focus
+  // as a dependency would instead make every change of focus re-run the *automatic* framing
+  // as well as the requested one.
+  const focus = useRef(view?.focus ?? null);
+  focus.current = view?.focus ?? null;
+
+  // On the build changing *shape* — a new structure, a resize — and on nothing else. Keyed on
+  // the three numbers rather than on the size object, which the layouter rebuilds on every
+  // recompile: an object identity here meant the camera snapped back to the whole building
+  // every time a wall moved, which is unusable once it is pointed at one room.
   useEffect(() => {
-    frameCamera(camera, controls, size, 'iso', empty);
-  }, [camera, controls, size, empty]);
+    frameCamera(camera, controls, size, 'iso', empty, focus.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [camera, controls, size.x, size.y, size.z, empty]);
 
   useEffect(() => {
     if (!view) return;
-    frameCamera(camera, controls, size, view.kind, empty);
+    frameCamera(camera, controls, size, view.kind, empty, view.focus ?? null);
     // `view.nonce` rather than `view`: pressing the same preset twice must re-frame, and the
     // page hands over a new object either way.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
-  }, [camera, controls, size, empty, view?.nonce]);
+  }, [camera, controls, size.x, size.y, size.z, empty, view?.nonce]);
 
   return null;
 }
@@ -245,7 +286,12 @@ function frameCamera(
   size: VoxelGrid['size'],
   kind: ViewKind,
   empty = false,
+  focus: FocusBox | null = null,
 ): void {
+  if (focus) {
+    frameBox(camera, controls, focus, kind);
+    return;
+  }
   // An empty plot is framed on its floor, not on the middle of the volume it could grow
   // into. Aimed at mid-height it shows thirty courses of nothing with the ground squeezed
   // into a strip along the bottom edge — and the ground is the only surface a first click
@@ -271,6 +317,62 @@ function frameCamera(
     camera.far = Math.max(2000, radius * 12);
     camera.updateProjectionMatrix();
   }
+  if (controls) {
+    controls.target.copy(target);
+    controls.update();
+  } else {
+    camera.lookAt(target);
+  }
+}
+
+/** Breathing room around a framed box, as a fraction of its bounding sphere. */
+const FOCUS_MARGIN = 1.25;
+
+/**
+ * Point the camera at a box, close enough that the box fills the frame.
+ *
+ * The distance is solved against the camera's own field of view rather than taken as a
+ * multiple of the box, and specifically against the *narrower* of the two: the layouter's
+ * model sits in a tall, narrow column, where the horizontal field is barely half the vertical
+ * one, and a distance chosen from the vertical field alone puts the near walls of a room off
+ * both sides of the panel. Solving it means the framing is right in a column, in a wide panel
+ * and on a phone, with no multiplier to re-tune per layout.
+ */
+function frameBox(camera: THREE.Camera, controls: OrbitLike | null, box: FocusBox, kind: ViewKind): void {
+  // `max` is inclusive, so the far face is one block past it.
+  const target = new THREE.Vector3(
+    (box.min.x + box.max.x + 1) / 2,
+    (box.min.y + box.max.y + 1) / 2,
+    (box.min.z + box.max.z + 1) / 2,
+  );
+  const half = new THREE.Vector3(
+    (box.max.x - box.min.x + 1) / 2,
+    (box.max.y - box.min.y + 1) / 2,
+    (box.max.z - box.min.z + 1) / 2,
+  );
+  const radius = Math.max(1, half.length()) * FOCUS_MARGIN;
+
+  const direction = (
+    kind === 'top'
+      ? new THREE.Vector3(0.001, 1, 0.001)
+      : kind === 'front'
+        ? new THREE.Vector3(0, 0.35, 1)
+        : kind === 'side'
+          ? new THREE.Vector3(1, 0.35, 0)
+          : new THREE.Vector3(0.85, 0.8, 1)
+  ).normalize();
+
+  let distance = radius * 2.4;
+  if (camera instanceof THREE.PerspectiveCamera) {
+    const vertical = THREE.MathUtils.degToRad(camera.fov);
+    const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
+    distance = radius / Math.sin(Math.min(vertical, horizontal) / 2);
+    camera.near = Math.max(0.05, distance / 500);
+    camera.far = Math.max(2000, distance * 8);
+    camera.updateProjectionMatrix();
+  }
+
+  camera.position.copy(target).addScaledVector(direction, distance);
   if (controls) {
     controls.target.copy(target);
     controls.update();

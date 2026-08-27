@@ -145,7 +145,7 @@ export function unionRect(rects: Rect[]): Rect | null {
  * asked by hit testing, by the bounds the compiler crops to, by validation and by the canvas
  * — and four copies of the same switch is four places to forget a new item kind.
  */
-export function itemFootprint(item: PlanItem, wallThickness: number): Rect {
+export function itemFootprint(item: PlanItem, wallThickness: number, storeyHeight: number): Rect {
   switch (item.kind) {
     case 'room':
     case 'opening':
@@ -169,8 +169,13 @@ export function itemFootprint(item: PlanItem, wallThickness: number): Rect {
         ? { x: item.x, z: item.z, w: item.length, d: wallThickness }
         : { x: item.x, z: item.z, w: wallThickness, d: item.length };
 
+    // A staircase covers the whole run it takes to climb a storey, which is the storey height
+    // in blocks — not its width. It used to pass `width` as the number of steps, so a stair
+    // drawn as a five-block run had a two-block hit box: you could see the whole flight and
+    // only click its bottom step, and `planFootprint` had to special-case stairs to stop the
+    // compiler cropping the top of one off.
     case 'stair':
-      return stairFootprint(item.x, item.z, item.facing, item.width, item.width);
+      return stairFootprint(item.x, item.z, item.facing, item.width, storeyHeight);
 
     case 'column':
       return { x: item.x, z: item.z, w: item.size, d: item.size };
@@ -211,7 +216,13 @@ export function stairFootprint(
  * before large ones: a door sits inside a room's wall, so testing in plain z-order would
  * always select the room and a door could never be picked up again.
  */
-export function hitTest(items: readonly PlanItem[], x: number, z: number, wallThickness: number): PlanItem | null {
+export function hitTest(
+  items: readonly PlanItem[],
+  x: number,
+  z: number,
+  wallThickness: number,
+  storeyHeight: number,
+): PlanItem | null {
   const order: Record<PlanItem['kind'], number> = {
     door: 0,
     window: 0,
@@ -228,7 +239,7 @@ export function hitTest(items: readonly PlanItem[], x: number, z: number, wallTh
 
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i]!;
-    if (!rectContains(itemFootprint(item, wallThickness), x, z)) continue;
+    if (!rectContains(itemFootprint(item, wallThickness, storeyHeight), x, z)) continue;
     const rank = order[item.kind];
     if (rank < bestRank) {
       best = item;
@@ -448,6 +459,71 @@ export function snapRoomRect(
   return out;
 }
 
+/** A line drawn while dragging, to show what the thing being dragged has lined up with. */
+export interface Guide {
+  /** `x` for a vertical line at a constant x; `z` for a horizontal one. */
+  axis: 'x' | 'z';
+  at: number;
+  /** The span the line covers, along the other axis — both rects plus the gap between them. */
+  from: number;
+  to: number;
+}
+
+/** How many guides one gesture may draw. Past this the drawing is a lattice, not a hint. */
+const MAX_GUIDES = 6;
+
+/**
+ * Where the rectangle being dragged lines up with everything else on the storey.
+ *
+ * Exact equality rather than a tolerance, and that is not a shortcut: every coordinate in a
+ * plan is a whole block and every gesture lands on one, so "nearly aligned" is not a state
+ * this document can be in. A tolerance would draw a guide for a wall one block out and quietly
+ * teach people that the guide means "close enough".
+ *
+ * The guides do not move anything. Rooms already snap to their neighbours in `snapRoomRect`,
+ * which is what makes two rooms share a wall; this is the other half of that — it says what
+ * the snap did, and it covers walls, platforms and voids, which do not snap at all and which
+ * you therefore have to line up by eye.
+ */
+export function alignmentGuides(subject: Rect, others: readonly Rect[]): Guide[] {
+  const found = new Map<string, Guide>();
+
+  // / are the span along the *other* axis, so a vertical guide is measured in z.
+  const consider = (axis: 'x' | 'z', at: number, lo: number, hi: number) => {
+    const key = `${axis}:${at}`;
+    const existing = found.get(key);
+    if (existing) {
+      existing.from = Math.min(existing.from, lo);
+      existing.to = Math.max(existing.to, hi);
+      return;
+    }
+    if (found.size >= MAX_GUIDES) return;
+    found.set(key, { axis, at, from: lo, to: hi });
+  };
+
+  for (const other of others) {
+    const xs: number[] = [subject.x, rectRight(subject)];
+    const otherXs: number[] = [other.x, rectRight(other)];
+    for (const a of xs) {
+      for (const b of otherXs) {
+        if (a !== b) continue;
+        consider('x', a, Math.min(subject.z, other.z), Math.max(rectBottom(subject), rectBottom(other)));
+      }
+    }
+
+    const zs: number[] = [subject.z, rectBottom(subject)];
+    const otherZs: number[] = [other.z, rectBottom(other)];
+    for (const a of zs) {
+      for (const b of otherZs) {
+        if (a !== b) continue;
+        consider('z', a, Math.min(subject.x, other.x), Math.max(rectRight(subject), rectRight(other)));
+      }
+    }
+  }
+
+  return [...found.values()];
+}
+
 /** Every room rect on a storey, for snapping a drag against. */
 export function roomRects(items: readonly PlanItem[], exceptId?: string): Rect[] {
   return items
@@ -460,12 +536,9 @@ export function planFootprint(plan: LayoutPlan): Rect | null {
   const rects: Rect[] = [];
   for (const floor of plan.floors) {
     for (const item of floor.items) {
-      // Stairs travel a whole storey, so their run is longer than a naive footprint suggests.
-      rects.push(
-        item.kind === 'stair'
-          ? stairFootprint(item.x, item.z, item.facing, item.width, plan.storeyHeight)
-          : itemFootprint(item, plan.wallThickness),
-      );
+      // No stair special case any more:  is told the storey height and gets
+      // the whole run right, which is the only reason this needed one.
+      rects.push(itemFootprint(item, plan.wallThickness, plan.storeyHeight));
     }
   }
   return unionRect(rects);

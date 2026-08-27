@@ -36,6 +36,23 @@ const CLIP_EPSILON = 0.001;
 /** Half-diagonal of a 16³ cube; every chunk shares it, so the bounding sphere is free. */
 const CHUNK_RADIUS = (CHUNK_SIZE * Math.sqrt(3)) / 2;
 
+/**
+ * A box to show and hide everything outside of, in inclusive block coordinates.
+ *
+ * Every face is optional and an absent one is *uncut*, not "cut at the edge of the build".
+ * That distinction is the whole ergonomics of the type: a layer slider wants two faces and
+ * pays for two planes, and only a caller that actually wants a room-shaped hole in a building
+ * pays for six.
+ */
+export interface ClipBox {
+  minX?: number | null;
+  maxX?: number | null;
+  minY?: number | null;
+  maxY?: number | null;
+  minZ?: number | null;
+  maxZ?: number | null;
+}
+
 interface ChunkEntry {
   opaque?: THREE.Mesh;
   transparent?: THREE.Mesh;
@@ -68,10 +85,26 @@ export class VoxelWorld {
   /** Batches issued before the current `load()`; their results are dropped on arrival. */
   private generation = 0;
 
-  private readonly topPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
-  private readonly bottomPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  /** How many planes the materials are currently compiled for: 0, 1 (top) or 2 (a slice). */
-  private clipCount = 0;
+  /**
+   * One plane per face of the clip box, in a fixed order, with fixed normals.
+   *
+   * Persistent objects whose constants are rewritten in place: the plane *count* is what
+   * recompiles the shader, so moving a cut costs one uniform and only adding or removing a
+   * face pays for a recompile. That is why an unused face is dropped from the array entirely
+   * rather than parked outside the build — a slice that had once been a box would otherwise
+   * keep the six-plane shader for the rest of the session.
+   */
+  private readonly clipPlanes = [
+    new THREE.Plane(new THREE.Vector3(1, 0, 0), 0), // minX: keep x above
+    new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0), // maxX: keep x below
+    new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), // minY
+    new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), // maxY
+    new THREE.Plane(new THREE.Vector3(0, 0, 1), 0), // minZ
+    new THREE.Plane(new THREE.Vector3(0, 0, -1), 0), // maxZ
+  ] as const;
+
+  /** Which faces are active, as a bitmask over `clipPlanes`. Zero means no clipping. */
+  private clipMask = 0;
 
   constructor() {
     this.group.name = 'voxel-world';
@@ -168,34 +201,41 @@ export class VoxelWorld {
   }
 
   /**
-   * Show only layers `bottom` to `top`. `top === null` shows everything.
+   * Show only the blocks inside a box. `null` shows everything.
    *
-   * Clipping planes rather than a re-mesh: scrubbing the layer slider would otherwise
-   * rebuild every chunk on every pixel of drag. This costs one uniform per plane and stays
-   * exact, because the planes cut on the block boundaries — above y+1 and below y.
+   * Clipping planes rather than a re-mesh: scrubbing the layer slider, or sliding a section
+   * through a building, would otherwise rebuild every chunk on every pixel of drag. This
+   * costs one uniform per face and stays exact, because the planes cut on block boundaries.
    *
-   * The plane *count* is what recompiles the shader, so a scrub costs nothing and only
-   * turning isolate on or off pays for it. That is why the bottom plane is dropped entirely
-   * at layer 0 rather than parked at the floor: an isolated ground floor would otherwise
-   * keep the two-plane shader for the rest of the session.
+   * It used to be a Y band only, which is all the voxel editor's layer slider needs. The
+   * layouter needs the other four faces: isolating one room of one storey is how you look
+   * inside a building that has more than one room in it, and no amount of cutting
+   * horizontally gets you there.
    */
-  setLayerClip(top: number | null, bottom = 0): void {
-    const wantsTop = top !== null;
-    const wantsBottom = wantsTop && bottom > 0;
+  setClip(box: ClipBox | null): void {
     // The cuts are nudged a thousandth of a block past the boundary they mean. Landing a
     // clipping plane exactly on a face makes the two coplanar, and the depth precision left
     // over decides per pixel whether that face survives — which reads as a speckled slice
     // rather than a clean one.
-    if (wantsTop) this.topPlane.constant = top + 1 + CLIP_EPSILON;
-    // `normal·p + constant > 0` is the kept side, so -bottom keeps everything above it.
-    if (wantsBottom) this.bottomPlane.constant = -bottom + CLIP_EPSILON;
+    const faces: (number | null | undefined)[] = box
+      ? [box.minX, box.maxX, box.minY, box.maxY, box.minZ, box.maxZ]
+      : [null, null, null, null, null, null];
 
-    const count = wantsTop ? (wantsBottom ? 2 : 1) : 0;
-    if (count === this.clipCount) return;
-    this.clipCount = count;
+    let mask = 0;
+    for (let i = 0; i < faces.length; i++) {
+      const value = faces[i];
+      if (value === null || value === undefined) continue;
+      mask |= 1 << i;
+      // Even indices are minimum faces, whose normal points along the axis: `normal·p +
+      // constant > 0` keeps what is above the cut, so the constant is the negated bound.
+      // Odd indices are maximum faces, and keep the far side of the block they name.
+      this.clipPlanes[i]!.constant = i % 2 === 0 ? -value + CLIP_EPSILON : value + 1 + CLIP_EPSILON;
+    }
 
-    const planes =
-      count === 0 ? null : count === 1 ? [this.topPlane] : [this.topPlane, this.bottomPlane];
+    if (mask === this.clipMask) return;
+    this.clipMask = mask;
+
+    const planes = mask === 0 ? null : this.clipPlanes.filter((_, i) => (mask & (1 << i)) !== 0);
     for (const material of [this.opaqueMaterial, this.transparentMaterial]) {
       material.clippingPlanes = planes;
       material.needsUpdate = true;

@@ -47,6 +47,7 @@ export const LAYOUTER_SHORTCUTS: readonly ShortcutGroup[] = [
     title: 'View',
     rows: [
       { keys: 'F', what: 'Frame the drawing' },
+      { keys: 'V', what: 'Cycle the model: whole building, one storey, one room' },
       { keys: 'Scroll', what: 'Zoom about the pointer' },
       { keys: 'Middle / right drag', what: 'Pan' },
       { keys: '?', what: 'This list' },

@@ -17,8 +17,9 @@
  * printable guide all work because a compiled plan is not a special kind of build.
  *
  * **Two views, one of which you draw in.** The plan on the left is where the work happens; the
- * model on the right is where you check it. The model can be cut at the storey being edited,
- * which is the only way to look inside a finished building.
+ * model on the right is where you check it — and a finished building is opaque, so the model
+ * cuts: the whole thing, one storey with its ceiling off, or one room boxed in and framed.
+ * Without those, every room you drew is behind a wall and half the building is behind a floor.
  *
  * **No prompt box.** Deliberately. The editor has generation and refinement, and neither
  * belongs on a tool whose entire premise is that you know what you want and the fastest way to
@@ -61,6 +62,7 @@ import { TEMPLATES, templateById } from './templates.js';
 import { LAYOUT_TOOLS, LAYOUT_TOOL_BY_ID, layoutToolForKey, type LayoutToolId } from './toolset.js';
 import { usePlanSession } from './usePlanSession.js';
 import { validatePlan } from './validate.js';
+import { MODEL_MODES, modelView, type ModelMode } from './modelView.js';
 import { ShortcutHelp } from '../editor/ShortcutHelp.js';
 import { LAYOUTER_SHORTCUTS, LAYOUTER_SHORTCUT_FOOT } from './shortcuts.js';
 import '../editor/editor.css';
@@ -100,7 +102,7 @@ export function LayouterPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [showBelow, setShowBelow] = useState(true);
-  const [cutToStorey, setCutToStorey] = useState(true);
+  const [modelMode, setModelMode] = useState<ModelMode>('storey');
   const [view, setView] = useState<ViewRequest | null>(null);
   const [hover, setHover] = useState<{ x: number; z: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -283,6 +285,15 @@ export function LayouterPage() {
           event.preventDefault();
           setFitNonce((nonce) => nonce + 1);
           break;
+        // One key that cycles, not three that select. The three modes are a progression from
+        // the whole building to one room, so "again" is the only thing anyone means by it.
+        case 'v':
+        case 'V': {
+          event.preventDefault();
+          const order = MODEL_MODES.map((entry) => entry.id);
+          setModelMode((current) => order[(order.indexOf(current) + 1) % order.length]!);
+          break;
+        }
         case '?':
           event.preventDefault();
           setHelp(true);
@@ -367,8 +378,30 @@ export function LayouterPage() {
     [load],
   );
 
-  const storeyTop = plan.foundation + (activeFloor + 1) * plan.storeyHeight - 1;
-  const layerClip = cutToStorey ? Math.min(storeyTop, built.grid.size.y - 1) : null;
+  // What the model shows, as a cut and a camera framing. Recomputed from the deferred build
+  // rather than the live plan so the cut and the geometry it is cutting are the same age — a
+  // clip against a grid one keystroke ahead flickers a slab in and out during a drag.
+  const shown = useMemo(
+    () =>
+      modelView({
+        plan,
+        mode: modelMode,
+        floorIndex: activeFloor,
+        selected: selected?.floorIndex === activeFloor ? selected.item : null,
+        grid: built.grid.size,
+        origin: built.origin,
+      }),
+    [plan, modelMode, activeFloor, selected, built.grid.size, built.origin],
+  );
+
+  // Re-frame whenever the thing being framed changes: switching to Room mode, or picking a
+  // different room while in it. Keyed on the box rather than on the selection, so selecting
+  // the same room twice does not fight the camera the user has since moved.
+  const focusKey = shown.focus ? JSON.stringify(shown.focus) : '';
+  useEffect(() => {
+    if (!focusKey) return;
+    setView((prev) => ({ kind: 'iso', nonce: (prev?.nonce ?? 0) + 1, focus: JSON.parse(focusKey) }));
+  }, [focusKey]);
 
   return (
     <div className="layouter">
@@ -640,18 +673,41 @@ export function LayouterPage() {
           grid={built.grid}
           paletteColors={built.paletteColors}
           paletteFlags={built.paletteFlags}
-          layerClip={layerClip}
+          clip={shown.clip}
           view={view}
         />
+
+        {/* Says which storey you are looking at, because every mode but Whole shows one and
+            the plan beside it is the only other thing that knows which. */}
+        <p className="model-caption">
+          {modelMode === 'whole' ? (
+            <>Whole building · {plan.floors.length} storey{plan.floors.length === 1 ? '' : 's'}</>
+          ) : shown.fallback ? (
+            <em>{shown.fallback}</em>
+          ) : modelMode === 'room' && selected?.item.kind === 'room' ? (
+            <>{selected.item.label.trim() || 'Room'} · {plan.floors[activeFloor]?.name}</>
+          ) : (
+            <>{plan.floors[activeFloor]?.name} · ceiling off</>
+          )}
+        </p>
+
         <div className="layouter__model-bar">
-          <label className="field field--toggle">
-            <input
-              type="checkbox"
-              checked={cutToStorey}
-              onChange={(event) => setCutToStorey(event.target.checked)}
-            />
-            <span className="field__label">Cut at this storey</span>
-          </label>
+          {/* Three ways to look at the same building, not a checkbox: "cut at this storey"
+              only ever answered one of the three questions people actually have, and the two
+              it did not answer are the ones a plan with more than one room raises. */}
+          <span className="model-modes" role="group" aria-label="How much of the building to show">
+            {MODEL_MODES.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                aria-pressed={modelMode === entry.id}
+                title={entry.hint}
+                onClick={() => setModelMode(entry.id)}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </span>
           <span className="layers__views">
             {VIEWS.map((entry) => (
               <button
@@ -680,6 +736,15 @@ export function LayouterPage() {
 
 interface Built {
   program: ReturnType<typeof compilePlan>['program'];
+  /**
+   * Plan coordinate of the grid's (0,0).
+   *
+   * The compiler crops the build to what is drawn plus an eave, so a room at plan x=30 can be
+   * at grid x=2. Anything that talks about the model in plan terms — the clip box, the camera
+   * focus — has to subtract this first, and forgetting to is silent: you get a clip box over
+   * empty air and a viewport that renders nothing.
+   */
+  origin: { x: number; z: number };
   grid: VoxelGrid;
   paletteColors: Uint8Array;
   paletteFlags: Uint8Array;
@@ -701,6 +766,7 @@ function buildFrom(plan: LayoutPlan): Built {
     const result = expand(compiled.program);
     return {
       program: compiled.program,
+      origin: compiled.origin,
       grid: result.grid,
       paletteColors: paletteColors(result.grid.palette),
       paletteFlags: paletteFlags(result.grid.palette),
@@ -714,6 +780,7 @@ function buildFrom(plan: LayoutPlan): Built {
   } catch (error) {
     return {
       program: compiled.program,
+      origin: compiled.origin,
       grid: EMPTY_GRID,
       paletteColors: paletteColors(EMPTY_GRID.palette),
       paletteFlags: paletteFlags(EMPTY_GRID.palette),

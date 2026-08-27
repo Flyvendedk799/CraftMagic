@@ -795,3 +795,66 @@
   line-height: 1.5;
   color: var(--muted);
 }
+
+/* --- the model's view modes ---------------------------------------------- */
+
+/* A segmented control, like the plan's sort buttons and the editor's view presets: three
+   mutually exclusive states, so radio behaviour drawn as one object rather than as three
+   buttons that happen to disagree. */
+.model-modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.model-modes button {
+  padding: 0.2rem var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.model-modes button:hover {
+  color: var(--text);
+  filter: none;
+}
+
+.model-modes button[aria-pressed='true'] {
+  color: var(--bg);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+/* Top-left of the model, mirroring the plan's zoom bar on the other side of the gutter: the
+   two panels then have their captions at the same height, and neither is over the middle of
+   the thing it describes. */
+.model-caption {
+  position: absolute;
+  left: 0.6rem;
+  top: 0.6rem;
+  margin: 0;
+  max-width: calc(100% - 1.2rem);
+  padding: 0.25rem var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A mode that could not be honoured explains itself rather than looking broken. */
+.model-caption em {
+  font-style: normal;
+  color: var(--pending);
+}

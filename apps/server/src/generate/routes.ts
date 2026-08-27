@@ -50,12 +50,15 @@ export interface GenerateRoutesOptions {
 	resolveAi: () => Promise<AiSettings>;
 	maxTokens?: number;
 	/**
-	 * Builds the provider for a subscription, or null when that login is not on this machine.
+	 * Builds the provider for a subscription, for a given account.
 	 *
-	 * Injected rather than imported because it reads a keychain: the routes should not know
-	 * where a credential lives, and the tests should not need one to exist.
+	 * Takes the user because a subscription is *theirs*: an account that has connected its own
+	 * Claude plan generates on that plan, and only an account that has not falls back to
+	 * whatever login the server's machine happens to have. Injected rather than imported
+	 * because it reads a keychain and a database, neither of which the routes should know
+	 * about and neither of which a test should need.
 	 */
-	subscriptionProvider?: (id: ProviderId) => Provider | null;
+	subscriptionProvider?: (id: ProviderId, userId: string) => Promise<Provider | null>;
 	auth: Auth;
 	/** Null when there is no database: the quota is off, the ledger is not. */
 	quota: GenerationQuota | null;
@@ -74,11 +77,13 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 		// credential means a settings change swaps the client on the next request instead of
 		// needing a restart.
 		let cachedClient: { key: string; provider: Provider } | null = null;
-		const providerFor_ = (ai: AiSettings): Provider | null => {
-			// A subscription carries no key to cache on, and its client is rebuilt per session
-			// anyway — the token behind it is refreshed by somebody else's CLI, so a pooled
-			// client would go on presenting a stale one.
-			if (isSubscription(ai.provider)) return options.subscriptionProvider?.(ai.provider) ?? null;
+		const providerFor_ = async (ai: AiSettings, userId: string): Promise<Provider | null> => {
+			// A subscription is never cached: it is per account, and the token behind it is
+			// refreshed out from under us, so a pooled client would go on presenting a stale one
+			// and would hand one person's plan to the next person to ask.
+			if (isSubscription(ai.provider)) {
+				return (await options.subscriptionProvider?.(ai.provider, userId)) ?? null;
+			}
 			if (!ai.apiKey) return null;
 			const key = `${ai.provider}:${ai.apiKey}`;
 			if (cachedClient?.key !== key) {
@@ -220,11 +225,21 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 
 		app.post('/api/generations', async (request, reply) => {
 			const ai = await options.resolveAi();
-			const provider = providerFor_(ai);
-			if (!provider) return reply.code(503).send({ error: 'no_api_key' });
 
+			// The account comes first now, because for a subscription provider it *is* the
+			// credential: which plan pays is a fact about who is asking.
 			const user = await payingUser(request, reply);
 			if (!user) return;
+
+			const provider = await providerFor_(ai, user.id);
+			if (!provider) {
+				return reply.code(503).send({
+					error: 'no_api_key',
+					message: isSubscription(ai.provider)
+						? 'No Claude subscription is connected for this account. Connect one in Settings.'
+						: 'This deployment has no API key configured.',
+				});
+			}
 
 			const prompt = readPrompt(request.body);
 			if (!prompt) {

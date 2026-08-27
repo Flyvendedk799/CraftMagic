@@ -20,6 +20,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../library/auth.js';
+import { ClaudeTerminal } from './ClaudeTerminal.js';
+import type { ClaudeConnection } from './claudeCode.js';
 import {
   isSubscription,
   loadSettings,
@@ -71,6 +73,8 @@ export function AdminPage() {
   const [provider, setProvider] = useState<ProviderId>('anthropic');
   const [model, setModel] = useState('');
   const [key, setKey] = useState('');
+  /** This account's own connected subscription, reported up by the terminal. */
+  const [connection, setConnection] = useState<ClaudeConnection | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -212,7 +216,21 @@ export function AdminPage() {
               </p>
             )}
 
-            {isSubscription(provider) ? (
+            {provider === 'claude-code' ? (
+              <>
+                {/* The connect flow, shown as the shell it stands in for. Above the machine-login
+                    note rather than instead of it: the account's own subscription is the thing to
+                    do here, and the server's login is only what it falls back to. */}
+                <div className="admin__field">
+                  <span className="admin__label">Your Claude subscription</span>
+                  <ClaudeTerminal onChange={setConnection} />
+                </div>
+                <ClaudeSubscriptionNote
+                  connection={connection}
+                  machine={settings.subscriptions.claudeCode}
+                />
+              </>
+            ) : isSubscription(provider) ? (
               <SubscriptionNote provider={provider} status={settings.subscriptions} />
             ) : (
               <>
@@ -290,6 +308,50 @@ export function AdminPage() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Which of the two credentials will actually serve this account.
+ *
+ * There are two, they are checked in a fixed order, and the order is the feature: an account's
+ * own subscription first, the server's machine login only if it has none. Saying so plainly
+ * matters more than it looks — the difference between the two is *whose plan gets spent*, and
+ * a page that showed only "connected" would be hiding exactly that.
+ */
+function ClaudeSubscriptionNote({
+  connection,
+  machine,
+}: {
+  connection: ClaudeConnection | null;
+  machine: SubscriptionStatus['claudeCode'];
+}) {
+  if (connection?.connected) {
+    return (
+      <p className="admin__note">
+        Generations from this account bill to your own subscription
+        {connection.plan ? ` (${connection.plan} plan)` : ''}. The token is stored encrypted,
+        refreshed automatically, and never sent back to this page.
+      </p>
+    );
+  }
+
+  if (machine.connected) {
+    return (
+      <p className="admin__warn">
+        This account has no subscription of its own, so its generations fall back to the{' '}
+        <code>claude</code> login on the server
+        {machine.subscriptionType ? ` (${machine.subscriptionType} plan)` : ''} — which means they
+        are billed to whoever set this server up. Sign in above to use your own instead.
+      </p>
+    );
+  }
+
+  return (
+    <p className="admin__warn">
+      Neither this account nor the server has a Claude subscription connected, so generation will
+      refuse. Sign in above.
+    </p>
   );
 }
 

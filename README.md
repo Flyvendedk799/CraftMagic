@@ -468,6 +468,43 @@ valid bearer token fails with `invalid x-api-key` while carrying a perfectly goo
 Verified against `api.anthropic.com`: bearer alone → 200, bearer + any `x-api-key` → 401.
 
 
+#### Each account brings its own subscription
+
+The first version of the subscription provider read the one `claude` login on the server's
+machine. That is right for a laptop and wrong for anything with more than one user on it:
+every visitor's generation would be billed to whoever set the server up.
+
+So an account can sign in to its own Claude plan, from the browser, in **Settings → Claude
+subscription**. What is shown there is a terminal, because the flow it stands in for is one:
+type `claude`, get a URL, approve it, paste the code back. Nothing is executed on the server —
+the terminal is a representation, and it says so when you type anything else at it.
+
+Underneath it is Claude Code's own OAuth: PKCE, the manual `code#state` paste flow, and the
+endpoints the CLI itself uses (`platform.claude.com/oauth/authorize`, `.../v1/oauth/token`).
+The verifier never leaves the server, the token never reaches the browser, and the credential
+is stored per user in `claude_oauth`, encrypted with the same AES-256-GCM envelope the
+settings table uses.
+
+Resolution order when the provider is **Claude subscription**:
+
+1. the requesting account's own connected subscription, if it has one;
+2. otherwise the `claude` login on the server's machine.
+
+The second is a fallback, not a default, and the settings page says so in as many words when
+an account is relying on it — because the difference between the two is whose plan gets spent.
+
+Unlike the machine-local credential, a per-account one *is* refreshed here, and the rotated
+refresh token is written back. That is the opposite rule to the machine login and for the
+opposite reason: no CLI is holding a second copy of this credential, so nothing else will ever
+refresh it, and dropping a rotated token would log the user out an hour later for reasons
+nobody could reconstruct.
+
+> **Before pointing a hosted deployment at consumer plans**, note that the consent screen a
+> user sees says *Claude Code*, because this flow uses Claude Code's OAuth client id. Tell your
+> users that, and check Anthropic's subscription terms — the mechanism works, but whether a
+> given deployment is entitled to use it is not a question the code can answer.
+
+
 ### Cost control
 
 The API key on this project holds a small fixed balance meant to last a month, so spend

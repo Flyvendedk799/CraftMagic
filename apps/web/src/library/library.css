@@ -175,162 +175,444 @@
   color: var(--fail);
 }
 
-/* --- library page ------------------------------------------------------- */
+/* --- library page -------------------------------------------------------- */
 
+/* Wider than the 60rem it was as a table: the page is a gallery now, and three cards across
+   is the difference between recognising a build at a glance and scrolling for it. */
 .library {
-  max-width: 60rem;
+  max-width: 76rem;
   margin: 0 auto;
-  padding: 3rem 1.5rem 5rem;
+  padding: var(--space-5) var(--space-4) var(--space-6);
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
 }
 
 .library__head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
+.library__eyebrow {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--accent);
+}
+
 .library__title {
-  font-size: 2rem;
+  font-family: var(--font-display);
+  font-size: var(--text-display);
 }
 
 .library__sub {
-  margin: 0.35rem 0 0;
+  margin: var(--space-2) 0 0;
+  max-width: 62ch;
+  font-size: var(--text-md);
   color: var(--muted);
-  font-size: 0.875rem;
 }
 
+.library__new {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.library__new:hover {
+  filter: brightness(1.1);
+}
 
 .library__account {
   max-width: 24rem;
 }
 
 .library__error {
-  margin: 1.5rem 0 0;
-  padding: 0.75rem 1rem;
-  font-size: 0.875rem;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-md);
   color: var(--fail);
   background: color-mix(in srgb, var(--fail) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--fail) 35%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .library__empty {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
+  line-height: 1.6;
   color: var(--muted);
 }
 
-.library__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.5rem;
-}
-
-.library__row {
-  display: grid;
-  /* One column below 46rem: the metadata row and the action row both need their own line on a
-     phone, and squeezing them side by side truncates the name, which is the only part that
-     tells one build from another. */
-  grid-template-columns: minmax(8rem, 1fr) auto auto;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 0.875rem;
-  background: #12161b;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-@media (max-width: 46rem) {
-  .library__row {
-    grid-template-columns: 1fr;
-  }
-}
-
-.library__name {
+/* A button that has to read as part of a sentence, because it is. */
+.library__linkish {
   padding: 0;
   font: inherit;
-  font-weight: 600;
-  text-align: left;
-  color: var(--text);
+  font-size: inherit;
+  color: var(--accent);
   background: none;
   border: 0;
   border-radius: 0;
+  text-decoration: underline;
   cursor: pointer;
-  overflow-wrap: anywhere;
 }
 
-.library__name:hover {
-  color: var(--accent);
-  filter: none;
+/* --- filter and sort ----------------------------------------------------- */
+
+.library__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
 }
 
-.library__meta {
-  display: grid;
-  grid-template-columns: repeat(4, auto);
-  gap: 0.1rem 1.25rem;
-  margin: 0;
-  font-size: 0.75rem;
+.library__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 16rem;
+  max-width: 26rem;
+  padding: 0 var(--space-3);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 
-.library__meta dt {
+.library__search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.library__search-icon {
+  font-size: 1rem;
   color: var(--muted);
 }
 
-.library__meta dd {
-  margin: 0;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-}
-
-.library__actions,
-.library__rename {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-}
-
-.library__rename {
-  grid-column: 1 / -1;
-}
-
-.library__actions button,
-.library__rename button {
-  font-size: 0.75rem;
-  padding: 0.3rem 0.6rem;
-  background: #212832;
+.library__search input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) 0;
+  font: inherit;
+  font-size: var(--text-md);
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  white-space: nowrap;
+  background: none;
+  border: 0;
+  outline: none;
 }
 
-.library__actions button:disabled {
+.library__sort {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.library__sort button {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.library__sort button:hover {
+  color: var(--text);
+  filter: none;
+}
+
+.library__sort button[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--raised);
+  font-weight: 600;
+}
+
+/* --- the gallery --------------------------------------------------------- */
+
+/* `auto-fill` with a floor, not a fixed column count: the page has to hold one build and
+   forty equally well, and a fixed three columns stretches a single card across the window. */
+.gallery {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+}
+
+.card {
+  display: grid;
+  /* The actions pin to the bottom edge whatever the name above them wraps to, so a row of
+     cards has one action line rather than four at four heights. */
+  grid-template-rows: auto 1fr auto;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.card__open {
+  display: block;
+  border-radius: var(--radius-md);
+}
+
+.card__open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.card__body {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.card__name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.card__name a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.card__name a:hover {
+  color: var(--accent);
+}
+
+.card__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted);
+}
+
+.card__dim {
+  color: var(--text);
+}
+
+/* A sentence, not a chip: "resizable" on its own meant nothing to anyone who had not read
+   the docs, and the second half is the part that explains the difference. */
+.card__kind {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-2xs);
+  color: var(--muted);
+}
+
+.card__kind::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 0.4rem;
+  vertical-align: 0.05em;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+
+.card__kind[data-kind='resizable']::before {
+  background: var(--ok);
+}
+
+.card__kind[data-kind='edited']::before {
+  background: var(--pending);
+}
+
+.card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.card__action {
+  padding: var(--space-1) var(--space-3);
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text);
+  text-decoration: none;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.card__action:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  filter: none;
+}
+
+.card__action--go {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.card__action--go:hover {
+  filter: brightness(1.1);
+}
+
+/* Rename and delete are quieter than the two that go somewhere: four buttons of equal
+   weight in a 15rem card wrap to two lines and read as four equally likely next moves,
+   when in practice only Open is. Borderless keeps them on one row as well. */
+.card__action--quiet {
+  padding-inline: var(--space-2);
+  color: var(--muted);
+  background: none;
+  border-color: transparent;
+}
+
+.card__action--quiet:hover {
+  color: var(--text);
+  background: var(--raised);
+  border-color: var(--border);
+}
+
+/* Pushes everything after it to the trailing edge. */
+.card__actions-gap {
+  margin-left: auto;
+}
+.card__action--danger:hover {
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 50%, transparent);
+}
+
+.card__action:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.library__delete:hover {
-  color: var(--fail);
-  border-color: color-mix(in srgb, var(--fail) 50%, transparent);
-  filter: none;
+/* Rename takes over the whole card rather than squeezing a field between the picture and the
+   buttons: it is a mode, and a mode that looks like the thing it replaced is a trap. */
+.card__rename {
+  grid-row: 1 / -1;
+  display: grid;
+  align-content: center;
+  gap: var(--space-2);
 }
 
-.library__input {
-  flex: 1;
-  min-width: 0;
-  padding: 0.35rem 0.5rem;
+.card__rename-label {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--muted);
+}
+
+.card__input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--text-base);
   color: var(--text);
-  background: #0d1014;
+  background: var(--sunken);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
 }
 
-.library__input:focus-visible {
+.card__input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* --- the empty library --------------------------------------------------- */
+
+.firstbuild {
+  padding: var(--space-5) var(--space-4);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.firstbuild__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+}
+
+.firstbuild__lead {
+  margin: var(--space-2) 0 var(--space-4);
+  max-width: 58ch;
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.firstbuild__ways {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+.firstbuild__way {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  color: inherit;
+  text-decoration: none;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.firstbuild__way:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.firstbuild__way-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.firstbuild__way-body {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Chosen where something specific stops fitting rather than at a device size: the three-way
+   empty state stops holding a sentence in a column at 52rem, and the filter and the sort
+   buttons stop sharing a line at about the same point. */
+@media (max-width: 52rem) {
+  .firstbuild__ways {
+    grid-template-columns: 1fr;
+  }
+
+  .library__controls {
+    align-items: stretch;
+  }
+
+  .library__search {
+    max-width: none;
+  }
+}
+

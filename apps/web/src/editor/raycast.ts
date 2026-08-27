@@ -17,6 +17,15 @@ export interface VoxelHit {
   y: number;
   z: number;
   face: VoxelFace;
+  /**
+   * True when the ray touched no block at all and landed on the ground plane instead.
+   *
+   * Unlike every other hit, the cell named here is *empty*: it is the floor cell a block
+   * would drop into, not a block the pointer is resting on. Tools that add something can
+   * take it as-is; tools that read whatever is under the pointer have nothing to read, and
+   * the editor turns those away rather than letting them act on air.
+   */
+  ground?: true;
 }
 
 export interface Vec3Like {
@@ -39,6 +48,15 @@ export interface RaycastOptions {
    * meant for the visible slice would land on the roof of the floor below.
    */
   minY?: number;
+  /**
+   * Fall back to the ground plane at `minY` when the ray touches no block.
+   *
+   * Off by default, because a pick that names a cell with nothing in it is the wrong answer
+   * to most questions. The editor turns it on, and has to: without it an empty build is an
+   * inert grey box — every click misses, nothing appears, and there is no first block to
+   * place a second one against.
+   */
+  ground?: boolean;
 }
 
 /** Neighbour of a hit, i.e. the empty cell a newly placed block would occupy. */
@@ -69,10 +87,13 @@ export function raycastVoxel(
   const dy = direction.y / len;
   const dz = direction.z / len;
 
+  /** The floor cell under this ray, or null. Called wherever the walk gives up. */
+  const floor = () => groundCell(options, origin, dx, dy, dz, size, minY, maxDistance);
+
   // The camera normally orbits outside the structure, so start by skipping to the box.
   // A ray that misses the box entirely is rejected here rather than stepped.
   const entry = clipToBounds(origin, dx, dy, dz, size.x, minY, maxY + 1, size.z, maxDistance);
-  if (!entry) return null;
+  if (!entry) return floor();
 
   // Nudge past the boundary so the floor lands inside the first cell rather than on its face.
   let t = entry.tMin;
@@ -110,23 +131,58 @@ export function raycastVoxel(
       t = tMaxX;
       tMaxX += tDeltaX;
       face = stepX > 0 ? 'west' : 'east';
-      if (x < 0 || x >= size.x) return null;
+      if (x < 0 || x >= size.x) return floor();
     } else if (tMaxY < tMaxZ) {
       y += stepY;
       t = tMaxY;
       tMaxY += tDeltaY;
       face = stepY > 0 ? 'down' : 'up';
-      if (y < minY || y > maxY) return null;
+      if (y < minY || y > maxY) return floor();
     } else {
       z += stepZ;
       t = tMaxZ;
       tMaxZ += tDeltaZ;
       face = stepZ > 0 ? 'north' : 'south';
-      if (z < 0 || z >= size.z) return null;
+      if (z < 0 || z >= size.z) return floor();
     }
   }
 
-  return null;
+  return floor();
+}
+
+/**
+ * Where the ray crosses the floor the build stands on, as an empty cell.
+ *
+ * Only ever reached once the walk has established that the ray touches no block, so the
+ * cell handed back is always air — when the walk left through the bottom it is the very
+ * cell it tested immediately before stepping out.
+ *
+ * The plane is `minY`, not 0, so that isolating a layer brings the floor up with it. In
+ * isolate mode the slice on screen is the only thing anyone can see, and a block dropped
+ * onto a floor two hundred courses below it would vanish the moment it was placed.
+ */
+function groundCell(
+  options: RaycastOptions,
+  origin: Vec3Like,
+  dx: number,
+  dy: number,
+  dz: number,
+  size: VoxelGrid['size'],
+  minY: number,
+  maxDistance: number,
+): VoxelHit | null {
+  if (!options.ground || dy === 0) return null;
+
+  const t = (minY - origin.y) / dy;
+  if (t < 0 || t > maxDistance) return null;
+
+  const x = Math.floor(origin.x + dx * t);
+  const z = Math.floor(origin.z + dz * t);
+  if (x < 0 || z < 0 || x >= size.x || z >= size.z) return null;
+
+  // `up`, so a ground hit handed to anything that reads a face still describes the only
+  // surface involved: the floor, seen from above.
+  return { x, y: minY, z, face: 'up', ground: true };
 }
 
 interface BoundsEntry {

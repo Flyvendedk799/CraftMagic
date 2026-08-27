@@ -75,6 +75,7 @@ import { familyOf, swapFamily, swapPaletteIndex } from './tools/paletteSwap.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
 import { AccountPanel } from '../library/AccountPanel.js';
+import { AppNav } from '../shell/AppNav.js';
 import type { VoxelHit } from './raycast.js';
 import './editor.css';
 
@@ -325,6 +326,17 @@ export function EditorPage() {
    */
   const onCanvasClick = useCallback(
     (hit: VoxelHit) => {
+      // A ground hit names an empty floor cell rather than a block, which is the whole point
+      // of it — it is how the first block of an empty build gets placed. The tools below act
+      // on whatever is *already* under the pointer, and on the floor there is nothing: a
+      // flood fill would spread through the air, and a palette swap would find every empty
+      // cell in the build and turn the sky into stone.
+      const refusal = hit.ground ? NEEDS_A_BLOCK[tool] : undefined;
+      if (refusal) {
+        setNotice(refusal);
+        return;
+      }
+
       const slot = () => {
         const index = session.resolveBlock(block);
         if (index < 0) setNotice('Palette is full — this build cannot hold another block type.');
@@ -705,7 +717,9 @@ export function EditorPage() {
 
   const meshed = totalChunks === 0 ? 1 : 1 - remaining / totalChunks;
   const issues = [...build.errors, ...build.warnings];
-  const hoverBlock = hover ? blockAt(grid, hover) : null;
+  // "Air" would be true and useless. A ground hit is the floor, and saying so is what tells
+  // someone staring at an empty plot that the click they are about to make will land.
+  const hoverBlock = !hover ? null : hover.ground ? 'Ground' : blockAt(grid, hover);
   const strokable = tool === 'place' || tool === 'erase';
 
   // After every hook, never before: an early return above one would change the hook order
@@ -713,19 +727,20 @@ export function EditorPage() {
   // flight, which is a few milliseconds nobody sees.
   if (fetching.loading || fetching.error !== null) {
     return (
-      <div className="library" data-ready={fetching.error ? '1' : '0'}>
-        <section className="panel">
-          <h2>{fetching.error ? 'Could not open that build' : 'Opening build…'}</h2>
-          <p className="library__empty">
-            {fetching.error ?? 'Fetching it from your library.'}
-          </p>
-          {fetching.error && (
-            <p className="library__empty" style={{ marginTop: '1rem' }}>
-              <Link to="/library">← Back to the library</Link>
-            </p>
-          )}
-        </section>
-      </div>
+      <>
+        <AppNav current="editor" />
+        <div className="library" data-ready={fetching.error ? '1' : '0'}>
+          <section className="panel">
+            <h2>{fetching.error ? 'Could not open that build' : 'Opening build…'}</h2>
+            <p className="library__empty">{fetching.error ?? 'Fetching it from your library.'}</p>
+            {fetching.error && (
+              <p className="library__empty" style={{ marginTop: '1rem' }}>
+                <Link to="/library">← Back to the library</Link>
+              </p>
+            )}
+          </section>
+        </div>
+      </>
     );
   }
 
@@ -741,6 +756,13 @@ export function EditorPage() {
       data-detached={session.detached}
       data-tool={tool}
     >
+      {/* The same bar every other signed-in page wears. It used to be withheld here on the
+          grounds that the editor is a full-viewport canvas with its own HUD — but that made
+          this the one room in the product with no visible way out, and the HUD had grown a
+          stack of plain-text links down at the bottom to compensate. A strip of chrome costs
+          three and a half rem of canvas and buys the same way around from every page. */}
+      <AppNav current="editor" />
+
       <div className="editor__canvas">
         <EditorCanvas
           grid={grid}
@@ -761,8 +783,11 @@ export function EditorPage() {
       </div>
 
       <section className="hud hud--top">
-        <h1 className="hud__title">CraftMagic</h1>
-        <p className="hud__sub">Voxel editor</p>
+        {/* The wordmark moved into the bar above, so this is a panel heading now rather than
+            a second brand. It still has to be the h1: it is the only heading on the page
+            that names what this screen is for. */}
+        <h1 className="hud__title">Voxel editor</h1>
+        <p className="hud__sub">Pick a build, or start from an empty plot.</p>
 
         <div className="hud__actions">
           {BUILD_IDS.map((id) => (
@@ -949,21 +974,10 @@ export function EditorPage() {
           <AccountPanel />
         </div>
 
+        {/* Dashboard, the layouter and the mod page were all listed here. All three are one
+            click away in the bar above now, and a link that repeats one already on screen is
+            furniture. `/status` stays because nothing else in the product points at it. */}
         <p className="hud__sub" style={{ marginTop: '0.875rem' }}>
-          <Link className="hud__link" to="/dashboard">
-            Dashboard →
-          </Link>
-          <br />
-          {/* The tool to reach for when the inside is the point: rooms, doors and stairs
-              instead of blocks, compiling to a program this editor can open. */}
-          <Link className="hud__link" to="/layouter">
-            Lay out a floorplan →
-          </Link>
-          <br />
-          <Link className="hud__link" to="/mod">
-            Get the Minecraft mod →
-          </Link>
-          <br />
           <Link className="hud__link" to="/status">
             Deployment checks →
           </Link>
@@ -1040,6 +1054,23 @@ export function EditorPage() {
     </div>
   );
 }
+
+/**
+ * Tools that act on the block already under the pointer, and what to say when there is not
+ * one — i.e. when the click landed on the ground plane rather than on the build.
+ *
+ * Everything absent from this map either adds blocks (place, line, box, stamp) or needs no
+ * source block, and a ground cell is a perfectly good target for those. The four here would
+ * each do something quietly wrong with it instead: a flood fill starting in air spreads
+ * through the whole sky, and a palette swap keyed on air would turn every empty cell in the
+ * build into stone.
+ */
+const NEEDS_A_BLOCK: Readonly<Partial<Record<ToolId, string>>> = {
+  erase: 'Nothing there to erase — that is bare ground.',
+  fill: 'Nothing to fill there — a flood fill has to start from a block.',
+  swap: 'Nothing to swap there — click the block you want replaced everywhere.',
+  pick: 'Nothing to pick there — click a block to make it the active one.',
+};
 
 /** Keys a shortcut claims, so everything else still reaches the browser. */
 const HANDLED = /^([1-8]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape)$/;

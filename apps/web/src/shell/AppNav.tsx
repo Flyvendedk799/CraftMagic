@@ -6,10 +6,15 @@
  * demo reached by one link and wrong for a product someone comes back to — the way around a
  * tool should not depend on which door you came in through.
  *
- * So: one component, one place that decides what the destinations are. Rendered by the
- * dashboard, the library and the mod page. Deliberately *not* by the editor or the guide —
- * the editor is a full-viewport canvas with its own floating HUD, and the guide is a document
- * that gets printed. Both link back here instead.
+ * So: one component, one place that decides what the destinations are. Rendered by every
+ * screen in the product — the dashboard, the library, the mod page and the editor. The
+ * editor was the late holdout, on the theory that a full-viewport canvas with its own HUD
+ * had no room for chrome; what that actually bought was the one room with no visible way
+ * out, plus a stack of hand-rolled text links at the bottom of the HUD doing the same job
+ * worse. It floats over the canvas there and the HUD is offset beneath it.
+ *
+ * The guide is still the exception, and stays one: it is a document that gets printed, and
+ * a navigation bar is not something anyone wants on paper.
  *
  * The account chip is the other half of its job. Signed in, generation is metered per account
  * and per day, and that number decides whether the prompt box will work at all; putting it in
@@ -30,11 +35,11 @@ export interface AppNavProps {
    * query the other one also accepts — `/dashboard?signup=1` and `/library?signup=1` — and a
    * path comparison would be quietly wrong the day another such pair appears.
    */
-  current?: 'dashboard' | 'library' | 'mod';
+  current?: 'dashboard' | 'editor' | 'layouter' | 'library' | 'mod';
 }
 
 interface Destination {
-  key: NonNullable<AppNavProps['current']> | 'editor' | 'layouter';
+  key: NonNullable<AppNavProps['current']>;
   to: string;
   label: string;
   /** Signed-out visitors get the tour, not the filing cabinet. */

@@ -27,7 +27,9 @@
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppNav } from '../shell/AppNav.js';
+import { StatBand } from '../shell/StatBand.js';
 import { AccountPanel } from '../library/AccountPanel.js';
+import { BuildThumb } from '../library/BuildThumb.js';
 import { useAuth } from '../library/auth.js';
 import { useAgents, type PairedAgent } from '../agent/useAgents.js';
 import { libraryBuildId } from '../editor/builds.js';
@@ -77,8 +79,11 @@ export function DashboardPage() {
         <SignedOut signingUp={search.get('signup') === '1'} />
       ) : (
         <main className="dash__main">
-          <header className="dash__head">
-            <div>
+          {/* The greeting and the prompt box are one block, not two. "Welcome back" is not a
+              thing to look at on its own, and separating them put a heading, a paragraph and
+              a card border between arriving and the one control that starts anything. */}
+          <section className="hero">
+            <div className="hero__intro">
               <p className="dash__eyebrow">Dashboard</p>
               <h1 className="dash__title">
                 {account ? `Welcome back, ${handleOf(account.email)}` : 'Welcome back'}
@@ -88,47 +93,50 @@ export function DashboardPage() {
                 it out as a schematic, a printable guide, or blocks in your own world.
               </p>
             </div>
-          </header>
 
-          <Launcher
-            generationsLeft={account?.generationsLeftToday ?? 0}
-            budgetSpent={data.spend !== null && data.spend.remainingUsd <= 0}
-          />
-
-          <section className="dash__stats" aria-label="Your account at a glance">
-            <StatTile
-              label="Saved builds"
-              value={data.builds.length.toLocaleString()}
-              note={data.builds.length === 0 ? 'nothing saved yet' : 'in your library'}
-              to="/library"
-            />
-            <StatTile
-              label="Blocks designed"
-              value={compact(totalBlocks(data.builds))}
-              note="across every saved build"
-              to="/library"
-            />
-            <StatTile
-              label="Generations left"
-              value={`${account?.generationsLeftToday ?? 0}`}
-              note={`of ${account?.dailyGenQuota ?? 0} today`}
-              meter={
-                account && account.dailyGenQuota > 0
-                  ? account.generationsLeftToday / account.dailyGenQuota
-                  : 0
-              }
-            />
-            <StatTile
-              label="Paired worlds"
-              value={`${agents.agents.length}`}
-              note={
-                agents.agents.some((agent) => agent.online)
-                  ? `${agents.agents.filter((agent) => agent.online).length} online now`
-                  : 'none online'
-              }
-              to="/mod"
+            <Launcher
+              generationsLeft={account?.generationsLeftToday ?? 0}
+              budgetSpent={data.spend !== null && data.spend.remainingUsd <= 0}
             />
           </section>
+
+          {/* The same band the library uses, for the same reason: these are context for what
+              is below, not the subject of the page. Four bordered tiles used to compete with
+              the builds for exactly the attention the builds should win. */}
+          <StatBand
+            label="Your account at a glance"
+            stats={[
+              {
+                label: 'Saved builds',
+                value: data.builds.length.toLocaleString(),
+                note: data.builds.length === 0 ? 'nothing saved yet' : 'in your library',
+                to: '/library',
+              },
+              {
+                label: 'Blocks designed',
+                value: compact(totalBlocks(data.builds)),
+                note: 'across every build',
+                to: '/library',
+              },
+              {
+                label: 'Generations left',
+                value: `${account?.generationsLeftToday ?? 0}`,
+                note: `of ${account?.dailyGenQuota ?? 0} today`,
+                meter:
+                  account && account.dailyGenQuota > 0
+                    ? account.generationsLeftToday / account.dailyGenQuota
+                    : 0,
+              },
+              {
+                label: 'Paired worlds',
+                value: `${agents.agents.length}`,
+                note: agents.agents.some((agent) => agent.online)
+                  ? `${agents.agents.filter((agent) => agent.online).length} online now`
+                  : 'none online',
+                to: '/mod',
+              },
+            ]}
+          />
 
           {/* Hidden the moment it is finished rather than left ticked. A permanent list of
               things you already did is clutter on every visit after the first week. */}
@@ -164,7 +172,7 @@ export function DashboardPage() {
 function SignedOut({ signingUp }: { signingUp: boolean }) {
   return (
     <main className="dash__main dash__main--narrow">
-      <header className="dash__head">
+      <header className="hero__intro">
         <div>
           <p className="dash__eyebrow">Dashboard</p>
           <h1 className="dash__title">{signingUp ? 'Create your account' : 'Sign in'}</h1>
@@ -218,137 +226,125 @@ function Launcher({
     navigate(trimmed ? `/editor?prompt=${encodeURIComponent(trimmed)}` : '/editor');
   }, [navigate, prompt]);
 
+  // Two siblings rather than one box, so the hero can put the prompt beside the greeting and
+  // run the suggestions full width underneath both. Stacked inside one column, the prompt
+  // made the right half half again as tall as the left and left a hole above the greeting.
   return (
-    <section className="panel launcher">
-      <h2 className="dash__card-title">Start a build</h2>
+    <>
+      <section className="launcher" aria-label="Start a build">
+        <h2 className="launcher__title">Start a build</h2>
 
-      <div className="launcher__row">
-        <textarea
-          className="launcher__input"
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) open();
-          }}
-          rows={2}
-          maxLength={600}
-          placeholder="a small stone windmill with a wooden roof"
-          aria-label="Describe the structure to build"
-        />
-        <button type="button" className="launcher__go" onClick={open}>
-          {prompt.trim() ? 'Take it to the editor' : 'Open the editor'}
-        </button>
-      </div>
-
-      <div className="launcher__chips">
-        <span className="launcher__chip-label">Try</span>
-        {EXAMPLES.map((example) => (
-          <button
-            key={example}
-            type="button"
-            className="launcher__chip"
-            onClick={() => setPrompt(example)}
-          >
-            {example}
+        <div className="launcher__row">
+          <textarea
+            className="launcher__input"
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) open();
+            }}
+            rows={2}
+            maxLength={600}
+            placeholder="a small stone windmill with a wooden roof"
+            aria-label="Describe the structure to build"
+          />
+          <button type="button" className="launcher__go" onClick={open}>
+            {prompt.trim() ? 'Take it to the editor' : 'Open the editor'}
           </button>
-        ))}
-      </div>
+        </div>
 
-      <div className="launcher__chips">
-        <span className="launcher__chip-label">Or open a sample</span>
-        {SAMPLES.map((sample) => (
-          <Link key={sample.id} className="launcher__chip" to={`/editor?build=${sample.id}`}>
-            {sample.label}
+        <p className="launcher__note">
+          {budgetSpent
+            ? 'This deployment has spent its monthly model budget, so generation is paused — the editor and every export still work.'
+            : generationsLeft > 0
+              ? `${generationsLeft} generation${generationsLeft === 1 ? '' : 's'} left today. The editor shows the price before it spends one.`
+              : 'You have used today’s generations. They come back on a rolling 24-hour window — the editor and every export still work in the meantime.'}
+        </p>
+      </section>
+
+      <div className="suggest">
+        <div className="launcher__chips">
+          <span className="launcher__chip-label">Try</span>
+          {EXAMPLES.map((example) => (
+            <button
+              key={example}
+              type="button"
+              className="launcher__chip"
+              onClick={() => setPrompt(example)}
+            >
+              {example}
+            </button>
+          ))}
+        </div>
+
+        <div className="launcher__chips">
+          <span className="launcher__chip-label">Or open</span>
+          {/* The one route into the editor that starts with nothing at all, and until the
+              ground became clickable it was also the least useful. It is first because
+              "start from scratch" is the thing a sample list quietly implies you cannot do. */}
+          <Link className="launcher__chip launcher__chip--blank" to="/editor?build=empty">
+            An empty plot
           </Link>
-        ))}
-      </div>
+          {SAMPLES.map((sample) => (
+            <Link key={sample.id} className="launcher__chip" to={`/editor?build=${sample.id}`}>
+              {sample.label}
+            </Link>
+          ))}
+        </div>
 
-      {/* The other door into the same engine. It belongs on the launcher rather than only in
-          the nav because "describe it" and "draw the floorplan" are the two ways to start, and
-          nobody looks for a second tool they have not been told exists. */}
-      <div className="launcher__chips">
-        <span className="launcher__chip-label">Or draw a floorplan</span>
-        <Link className="launcher__chip" to="/layouter">
-          Open the layouter
-        </Link>
+        {/* The other door into the same engine. It belongs beside the samples rather than
+            only in the bar, because "describe it" and "draw the floorplan" are the two ways
+            to start and nobody looks for a second tool they have not been told exists. */}
+        <div className="launcher__chips">
+          <span className="launcher__chip-label">Or draw a floorplan</span>
+          <Link className="launcher__chip" to="/layouter">
+            Open the layouter
+          </Link>
+        </div>
       </div>
-
-      <p className="launcher__note">
-        {budgetSpent
-          ? 'This deployment has spent its monthly model budget, so generation is paused — the editor and every export still work.'
-          : generationsLeft > 0
-            ? `${generationsLeft} generation${generationsLeft === 1 ? '' : 's'} left today. The editor shows the price before it spends one.`
-            : 'You have used today’s generations. They come back on a rolling 24-hour window — the editor and every export still work in the meantime.'}
-      </p>
-    </section>
+    </>
   );
 }
 
 /* --- stats --------------------------------------------------------------- */
 
-function StatTile({
-  label,
-  value,
-  note,
-  to,
-  meter,
-}: {
-  label: string;
-  value: string;
-  note: string;
-  to?: string;
-  meter?: number;
-}) {
-  const body = (
-    <>
-      <span className="stat__label">{label}</span>
-      <span className="stat__value">{value}</span>
-      {meter !== undefined && (
-        <span className="stat__meter" aria-hidden="true">
-          <span
-            style={{
-              width: `${Math.round(Math.max(0, Math.min(1, meter)) * 100)}%`,
-            }}
-          />
-        </span>
-      )}
-      <span className="stat__note">{note}</span>
-    </>
-  );
-
-  // A tile is a link when there is somewhere its number leads, and a plain block when there is
-  // not. Making all four links for symmetry would mean inventing a destination for one of them.
-  return to ? (
-    <Link className="stat stat--link" to={to}>
-      {body}
-    </Link>
-  ) : (
-    <div className="stat">{body}</div>
-  );
-}
-
 /* --- checklist ----------------------------------------------------------- */
 
+/**
+ * The three steps, side by side rather than stacked.
+ *
+ * Stacked, this was a tall block of mostly-finished rows that pushed the builds below the
+ * fold on every visit until the last step was done — and the last step needs a Minecraft
+ * install, so for plenty of people that is every visit. Across, it is one strip with a
+ * progress bar, and the unfinished step is the only one drawn at full strength.
+ */
 function Checklist({ steps, done }: { steps: OnboardingStep[]; done: number }) {
   return (
-    <section className="panel checklist">
+    <section className="checklist">
       <div className="checklist__head">
         <h2 className="dash__card-title">Get set up</h2>
         <span className="checklist__count">
           {done} of {steps.length}
         </span>
+        <span
+          className="checklist__bar"
+          role="progressbar"
+          aria-valuenow={done}
+          aria-valuemin={0}
+          aria-valuemax={steps.length}
+          aria-label="Setup progress"
+        >
+          <span style={{ width: `${Math.round((done / steps.length) * 100)}%` }} />
+        </span>
       </div>
 
       <ol className="checklist__list">
-        {steps.map((step) => (
+        {steps.map((step, index) => (
           <li key={step.id} className="checklist__step" data-done={step.done ? '1' : '0'}>
             <span className="checklist__tick" aria-hidden="true">
-              {step.done ? '✓' : ''}
+              {step.done ? '✓' : index + 1}
             </span>
-            <span className="checklist__body">
-              <span className="checklist__title">{step.title}</span>
-              <span className="checklist__detail">{step.detail}</span>
-            </span>
+            <span className="checklist__title">{step.title}</span>
+            <span className="checklist__detail">{step.detail}</span>
             {step.href && (
               <Link className="checklist__action" to={step.href}>
                 {step.action} →
@@ -370,11 +366,12 @@ function BuildsCard({ builds, loading }: { builds: LibraryBuild[]; loading: bool
     <section className="panel dash__builds">
       <div className="dash__card-head">
         <h2 className="dash__card-title">Recent builds</h2>
-        {builds.length > RECENT_LIMIT && (
-          <Link className="dash__card-more" to="/library">
-            All {builds.length} →
-          </Link>
-        )}
+        {/* Always, not only once the list overflows. The card is a window onto the library
+            and the way out of it should not appear and vanish depending on how much is in
+            there — the fifth build is exactly when someone stops noticing new controls. */}
+        <Link className="dash__card-more" to="/library">
+          {builds.length > RECENT_LIMIT ? `All ${builds.length}` : 'Library'} →
+        </Link>
       </div>
 
       {loading && <p className="dash__empty">Loading…</p>}
@@ -390,6 +387,17 @@ function BuildsCard({ builds, loading }: { builds: LibraryBuild[]; loading: bool
         <ul className="buildlist">
           {recent.map((build) => (
             <li key={build.id} className="buildlist__row" data-build={build.id}>
+              {/* The same picture the library draws, at the small size. It is what tells one
+                  of your builds from another before you have read a word of the row. */}
+              <Link
+                className="buildlist__thumb"
+                to={`/editor?build=${libraryBuildId(build.id)}`}
+                tabIndex={-1}
+                aria-hidden="true"
+              >
+                <BuildThumb build={build} variant="row" />
+              </Link>
+
               <Link className="buildlist__name" to={`/editor?build=${libraryBuildId(build.id)}`}>
                 {build.name}
               </Link>

@@ -119,6 +119,24 @@ export class IsoFilmstrip {
     this.frame(size);
   }
 
+  /**
+   * Load a finished build in one go.
+   *
+   * `place` is the step-at-a-time entry point, and it is the wrong shape for a caller that
+   * only wants the completed model: it would mean one object per block to describe
+   * something the grid already holds contiguously — a quarter of a million allocations for
+   * a large build, thrown away immediately. The library's thumbnails want exactly that, so
+   * this copies the voxels straight across and marks every chunk dirty.
+   */
+  fill(voxels: Uint16Array): void {
+    this.source.voxels.set(voxels);
+    for (let cy = 0; cy < this.counts.y; cy++) {
+      for (let cz = 0; cz < this.counts.z; cz++) {
+        for (let cx = 0; cx < this.counts.x; cx++) this.dirty.add(chunkKey(cx, cy, cz));
+      }
+    }
+  }
+
   /** Add one step's blocks to the standing model. */
   place(blocks: readonly IsoBlock[]): void {
     const { size, voxels } = this.source;

@@ -57,6 +57,20 @@ describe('place', () => {
     // Palette slot 0 is air, and the neighbour is already air.
     expect(place(grid, { x: 2, y: 2, z: 2, face: 'up' }, 0)).toBeNull();
   });
+
+  it('fills a ground hit itself rather than stepping off its face', () => {
+    const grid = loneBlock();
+    // A ground hit already names the empty cell. Stepping off `up` would leave the first
+    // block of an empty build hanging one course above the floor.
+    expect(placementCell(grid, { x: 4, y: 0, z: 4, face: 'up', ground: true })).toEqual({
+      x: 4,
+      y: 0,
+      z: 4,
+    });
+    const op = place(grid, { x: 4, y: 0, z: 4, face: 'up', ground: true }, 1);
+    expect(op).not.toBeNull();
+    expect(voxelPosition(grid.size, op!.indices[0]!)).toEqual([4, 0, 4]);
+  });
 });
 
 describe('erase', () => {

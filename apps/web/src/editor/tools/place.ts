@@ -10,12 +10,17 @@ import { AIR_INDEX, voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/
 import { FACE_NORMAL, type VoxelHit } from '../raycast.js';
 import { EditBuilder } from './op.js';
 
+const NO_STEP = [0, 0, 0] as const;
+
 /** The empty cell a block placed on this hit would occupy, or null if there is none. */
 export function placementCell(
   grid: VoxelGrid,
   hit: VoxelHit,
 ): { x: number; y: number; z: number } | null {
-  const [dx, dy, dz] = FACE_NORMAL[hit.face];
+  // A ground hit already *is* the empty cell: there is no block under the pointer to place
+  // against, only the floor the build stands on. Stepping off its face would leave the
+  // first block of an empty build hovering one course above the ground.
+  const [dx, dy, dz] = hit.ground ? NO_STEP : FACE_NORMAL[hit.face];
   const x = hit.x + dx;
   const y = hit.y + dy;
   const z = hit.z + dz;

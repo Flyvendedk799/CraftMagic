@@ -1,8 +1,8 @@
 # CraftMagic
 
-Describe a Minecraft build in words. Get it back as a 3D model you can edit, then export it
-three ways: a WorldEdit schematic, a LEGO-style instruction booklet, or a builder bot that
-walks into your world and constructs it.
+Describe a Minecraft build in words, or lay out its floorplan storey by storey. Get it back as
+a 3D model you can edit, then export it three ways: a WorldEdit schematic, a LEGO-style
+instruction booklet, or a builder bot that walks into your world and constructs it.
 
 ## How it works
 
@@ -23,7 +23,7 @@ reliably get wrong.
 |---|---|
 | `packages/core` | Shared, isomorphic: IR + expander, block registry, `.schem` writer, guide logic, agent protocol |
 | `apps/server` | Fastify — API, auth, Claude pipeline, agent WebSocket gateway; also serves the built frontend |
-| `apps/web` | React + Vite + three.js editor and site |
+| `apps/web` | React + Vite + three.js editor, floorplan layouter and site |
 | `mod` | Fabric mod for Minecraft 26.2 (Gradle, outside the npm workspaces) |
 | `tools/registry-gen` | Dev-only. Generates the block registry from Mojang's data generator |
 
@@ -277,6 +277,54 @@ opens and closes, the re-expansion guard appears, revert restores the build exac
 Ctrl+Z inside the generation prompt does *not* undo. On a 100k-cell fill the op costs
 ~8 ms to build and ~2.5 ms to undo through `VoxelWorld`; a 1.25M-cell box op is 10 MB and
 applies in ~34 ms.
+
+**The layouter — done.** A second authoring tool at `/layouter`, for the job the voxel editor
+is worst at: interiors. Placing a block at a time is fine for a facade and miserable for a
+floorplan, because the decisions that matter inside — where a wall runs, where a door goes
+through it, whether you can walk from the entrance to the back room — are invisible from
+outside and hard to nudge one block at a time.
+
+So the layouter's document is a **plan**, not voxels: a stack of storeys holding rooms, free
+partitions, doors, windows, staircases, floor voids, platforms and columns, drawn top-down on
+a block-ruled SVG surface. `compile.ts` turns that plan into an ordinary `BuildProgram` on
+every change, which is the whole point — the export controls on the page are literally the
+editor's `ExportBar`, so the schematic, the program JSON, the library, "Send to game" and the
+printable guide all work with no export code written twice. There is **no prompt box**: the
+premise of the tool is that you already know what you want, and everything on it is direct
+manipulation.
+
+The compiler works in painting passes rather than in booleans — structure, then carves (floor
+voids, stairwells), then apertures, then the stairs themselves — because the IR paints
+components in order and `minecraft:air` carves. A door therefore never has to know which walls
+it crosses, and a staircase cuts its own well through the slab above it. A storey draws the
+ceiling over itself, so the next storey's slabs simply overwrite it where they overlap, and a
+building that steps in as it rises is roofed correctly with no special case.
+
+Three behaviours carry most of the feel, and all three are ports of the level editor engine in
+[flyvendedk799/firstpgame](https://github.com/flyvendedk799/firstpgame) (`src/customMaps/`):
+
+- **Wall-insert snapping** (`wallInsertSnap`): a door or window dropped near a wall jumps into
+  it and takes its facing, and is refused with a reason when there is no wall near enough. An
+  aperture that is not in a wall is a hole in mid-air the compiler would cheerfully build.
+- **Edge snapping**, generalised from its socket snapping: a room drawn or dragged against a
+  neighbour overlaps it by exactly the wall thickness, so the two come out sharing one wall
+  rather than two with a dead cavity between them.
+- **Walkability validation** (`customMapValidation.js`): the walls are rasterised into a nav
+  grid, flood-filled from the entrance doors and chained up the staircases, so the panel can
+  say *which room* nobody can reach and *which storey* nothing climbs to. That is the check a
+  3D preview cannot make — a sealed room looks perfectly finished from outside.
+
+The plan is also what history and storage act on. Undo is snapshot-based rather than op-based
+(a plan is a few kilobytes however much of it changed, and every mutation is undoable without
+defining its own inverse), an entry is claimed at the first movement that changes something so
+that *selecting* a room never costs an undo, and the plan autosaves to localStorage — it is the
+one document in the product that exists nowhere else until somebody exports it. Materials come
+from swappable **kits** (oak cottage, stone keep, modern concrete, industrial) that map to the
+IR's palette roles, so re-skinning a whole building is one select rather than a re-draw.
+
+The 3D model sits beside the plan and can be cut at the storey being edited, which is the only
+way to look inside a finished building. It lags the plan by ~180 ms on purpose: re-expanding is
+cheap, re-meshing is not, and a dragged wall would otherwise ask for both on every frame.
 
 **M3 (exports) — schematic download done.** The editor's Export panel writes a
 WorldEdit-compatible `.schem` **entirely in the browser** — `packages/core` is isomorphic

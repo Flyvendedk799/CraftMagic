@@ -157,10 +157,11 @@ try {
 
 	const rows = () =>
 		evaluate(`
-			[...document.querySelectorAll('.library__row')].map((row) => ({
+			[...document.querySelectorAll('.card')].map((row) => ({
 				id: row.dataset.build,
-				name: row.querySelector('.library__name')?.textContent.trim() ?? null,
-				meta: [...row.querySelectorAll('.library__meta dd')].map((d) => d.textContent.trim()),
+				name: row.querySelector('.card__name')?.textContent.trim() ?? null,
+				meta: [...row.querySelectorAll('.card__facts span')].map((d) => d.textContent.trim()),
+				kind: row.querySelector('.card__kind')?.dataset.kind ?? null,
 			}))
 		`);
 
@@ -178,11 +179,14 @@ try {
 	await type('.account__input[type="password"]', password);
 	await clickText('.account__submit', 'Create account');
 
-	await waitFor("document.querySelector('.account')?.dataset.state === 'signed-in'", 'the signup', 20_000);
+	// Signed in, the library drops its account form: who you are and the way out live in the
+	// app bar on every page, and a second copy of both on one of them is furniture. So the
+	// signed-in assertions below read the bar rather than the form that just vanished.
+	await waitFor("!!document.querySelector('.nav__email')", 'the signup', 20_000);
 	await libraryReady();
-	const signedInAs = await evaluate("document.querySelector('.account__email')?.textContent");
+	const signedInAs = await evaluate("document.querySelector('.nav__email')?.textContent");
 	check('signing up signs you in', signedInAs === email, signedInAs);
-	check('the quota is on screen', (await evaluate("document.querySelector('.account__note').textContent")).includes('30 generations left today'));
+	check('the quota is on screen', (await evaluate("document.querySelector('.nav__quota')?.title ?? ''")).includes('30 of 30 generations left today'));
 	check('a new library is empty', (await evaluate("document.querySelector('.library').dataset.count")) === '0');
 
 	// --- save a build ---------------------------------------------------------
@@ -208,6 +212,7 @@ try {
 
 	const editorBlocks = await evaluate("Number([...document.querySelectorAll('.hud__stats dd')][2].textContent.replace(/[^0-9]/g, ''))");
 	check('the editor kept the session across the navigation', (await evaluate("document.querySelector('.account')?.dataset.state")) === 'signed-in');
+	check('the editor wears the app bar too', await evaluate("!!document.querySelector('.editor > .nav')"));
 
 	await clickText('.save__actions button', 'Save to library');
 	await waitFor("!!document.querySelector('.save__note--ok')", 'the save to confirm', 20_000);
@@ -225,11 +230,11 @@ try {
 	check('the row shows dimensions', /^\d+×\d+×\d+$/.test(listed[0]?.meta[0] ?? ''), listed[0]?.meta[0]);
 	check('the row shows the block count', Number((listed[0]?.meta[1] ?? '').replace(/[^0-9]/g, '')) === editorBlocks, `${listed[0]?.meta[1]} vs ${editorBlocks} in the editor`);
 	check('the row shows a date', (listed[0]?.meta[2] ?? '').length > 3, listed[0]?.meta[2]);
-	check('a program-backed build is marked resizable', listed[0]?.meta[3] === 'resizable', listed[0]?.meta[3]);
+	check('a program-backed build is marked resizable', listed[0]?.kind === 'resizable', listed[0]?.kind);
 	const rowId = listed[0]?.id;
 
 	// --- open it --------------------------------------------------------------
-	await clickText('.library__actions button', 'Open');
+	await clickText('.card__action', 'Open');
 	await waitFor("!!document.querySelector('.editor')", 'the editor to open the build', 30_000);
 	await meshed();
 
@@ -262,13 +267,13 @@ try {
 	await libraryReady();
 	await waitFor("document.querySelector('.library').dataset.count === '1'", 'the listing');
 
-	await clickText('.library__actions button', 'Rename');
-	await waitFor("!!document.querySelector('.library__input')", 'the rename field');
-	await type('.library__input', 'A Renamed Tower');
-	await clickText('.library__rename button', 'Save');
+	await clickText('.card__action', 'Rename');
+	await waitFor("!!document.querySelector('.card__input')", 'the rename field');
+	await type('.card__input', 'A Renamed Tower');
+	await clickText('.card__rename button', 'Save');
 
 	await waitFor(
-		"document.querySelector('.library__name')?.textContent.trim() === 'A Renamed Tower'",
+		"document.querySelector('.card__name')?.textContent.trim() === 'A Renamed Tower'",
 		'the rename',
 		20_000,
 	);
@@ -300,7 +305,7 @@ try {
 	// `window.confirm` blocks a headless page forever; answering it up front is the only way
 	// to drive the button that a person would actually press.
 	await evaluate('window.confirm = () => true; true');
-	await clickText('.library__actions button', 'Delete');
+	await clickText('.card__action', 'Delete');
 	await waitFor("document.querySelector('.library').dataset.count === '0'", 'the delete', 20_000);
 	check('deleting removes the row', true);
 
@@ -309,8 +314,8 @@ try {
 	check('it is still gone after a reload', (await evaluate("document.querySelector('.library').dataset.count")) === '0');
 
 	// --- sign out -------------------------------------------------------------
-	await clickText('.account__link', 'Sign out');
-	await waitFor("document.querySelector('.account')?.dataset.state === 'anonymous'", 'the sign out', 20_000);
+	await clickText('.nav__signout', 'Sign out');
+	await waitFor("!document.querySelector('.nav__email')", 'the sign out', 20_000);
 	check('signing out returns the page to its signed-out state', true);
 
 	await send('Page.navigate', { url: `${ORIGIN}/library` });

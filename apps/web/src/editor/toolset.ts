@@ -33,7 +33,7 @@ export const TOOLS: readonly ToolSpec[] = [
     id: 'place',
     verb: 'place a block',
     label: 'Place',
-    hint: 'Click a face to add a block against it. Shift-drag to keep placing.',
+    hint: 'Click a face to add a block against it, or the ground to start one. Shift-drag to keep placing.',
     needsBlock: true,
     usesBrush: true,
     key: '1',

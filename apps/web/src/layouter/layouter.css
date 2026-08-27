@@ -15,10 +15,25 @@
   inset: 0;
   display: grid;
   grid-template-columns: 21rem minmax(0, 1fr) minmax(0, 26rem);
+  /* The app bar takes a row of its own above the three columns. Without it this page was the
+     one destination the bar lists that then loses the bar on arrival. */
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0.75rem;
-  padding: 0.75rem;
+  padding: 0 0.75rem 0.75rem;
   overflow: hidden;
   background: var(--bg);
+}
+
+/* Full-bleed: the bar is chrome and belongs against the window edge, so it cancels the page
+   padding rather than floating inside it with three-quarters of a rem of background either
+   side. Same treatment as the editor, and for the same reason the columns keep the padding. */
+.layouter > .nav {
+  grid-column: 1 / -1;
+  margin: 0 -0.75rem;
+}
+
+.layouter > .nav .nav__inner {
+  max-width: none;
 }
 
 /* The editor's HUD is absolutely positioned over its canvas; here it is a column, so the
@@ -51,11 +66,12 @@
 @media (max-width: 1180px) {
   .layouter {
     grid-template-columns: 19rem minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) 14rem;
+    /* Bar, then the plan, then the model beneath it. */
+    grid-template-rows: auto minmax(0, 1fr) 14rem;
   }
 
   .layouter__panel {
-    grid-row: 1 / span 2;
+    grid-row: 2 / span 2;
   }
 }
 

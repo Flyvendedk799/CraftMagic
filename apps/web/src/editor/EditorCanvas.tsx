@@ -122,6 +122,11 @@ function Scene({
   worldCallback.current = onWorld;
   const lastRemaining = useRef(-1);
 
+  // Keyed on the grid, not on its contents, and that is the point: edits write straight into
+  // `grid.voxels`, so an answer recomputed per render would flip the moment the first block
+  // landed and yank the camera to a new framing as a reward for using the tool.
+  const startedEmpty = useMemo(() => isEmpty(grid), [grid]);
+
   // Keyed on the grid identity: a new structure is a full teardown, and building the world
   // inside the effect (rather than useMemo) keeps StrictMode's double-mount honest.
   //
@@ -163,7 +168,7 @@ function Scene({
 
   return (
     <>
-      <Framing size={grid.size} view={view ?? null} />
+      <Framing size={grid.size} empty={startedEmpty} view={view ?? null} />
       <Furniture size={grid.size} />
       <Picker
         grid={grid}
@@ -193,23 +198,45 @@ interface OrbitLike {
  * than they look: an orbit camera is very good at ending up somewhere with no horizon and no
  * way back, and "straight down" is the view that makes a floor plan readable.
  */
-function Framing({ size, view }: { size: VoxelGrid['size']; view: ViewRequest | null }) {
+function Framing({
+  size,
+  empty,
+  view,
+}: {
+  size: VoxelGrid['size'];
+  empty: boolean;
+  view: ViewRequest | null;
+}) {
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
 
   useEffect(() => {
-    frameCamera(camera, controls, size, 'iso');
-  }, [camera, controls, size]);
+    frameCamera(camera, controls, size, 'iso', empty);
+  }, [camera, controls, size, empty]);
 
   useEffect(() => {
     if (!view) return;
-    frameCamera(camera, controls, size, view.kind);
+    frameCamera(camera, controls, size, view.kind, empty);
     // `view.nonce` rather than `view`: pressing the same preset twice must re-frame, and the
     // page hands over a new object either way.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
-  }, [camera, controls, size, view?.nonce]);
+  }, [camera, controls, size, empty, view?.nonce]);
 
   return null;
+}
+
+/**
+ * Is there anything in this build at all?
+ *
+ * Bails on the first block, and a build with blocks in it almost always has its foundation
+ * at y=0 — the very start of the array — so the scan that matters costs nothing. Only a
+ * genuinely empty grid is walked end to end, and that is the one case where the answer is
+ * worth having.
+ */
+function isEmpty(grid: VoxelGrid): boolean {
+  const { voxels } = grid;
+  for (let i = 0; i < voxels.length; i++) if (voxels[i] !== 0) return false;
+  return true;
 }
 
 function frameCamera(
@@ -217,9 +244,16 @@ function frameCamera(
   controls: OrbitLike | null,
   size: VoxelGrid['size'],
   kind: ViewKind,
+  empty = false,
 ): void {
-  const target = new THREE.Vector3(size.x / 2, size.y * 0.45, size.z / 2);
-  const radius = Math.max(size.x, size.y, size.z);
+  // An empty plot is framed on its floor, not on the middle of the volume it could grow
+  // into. Aimed at mid-height it shows thirty courses of nothing with the ground squeezed
+  // into a strip along the bottom edge — and the ground is the only surface a first click
+  // can land on, so the plot reads as one that ignores the pointer. Sighting down at the
+  // floor, and sizing the frame to the footprint rather than the height, makes the empty
+  // build look like what it is: a plot to start on.
+  const target = new THREE.Vector3(size.x / 2, empty ? 0 : size.y * 0.45, size.z / 2);
+  const radius = empty ? Math.max(size.x, size.z) : Math.max(size.x, size.y, size.z);
 
   // Offsets in units of the build's own radius, so every preset frames a cottage and a
   // 200-block tower equally well.
@@ -338,6 +372,10 @@ function Picker({
         // are — otherwise it happily returns a block nobody can see.
         maxY: layerClip ?? undefined,
         minY: layerFloor,
+        // A ray that touches nothing lands on the floor instead of being thrown away. It is
+        // what makes the ground grid under the build a surface you can build on, and the
+        // only reason an empty plot is anything other than an inert grey box.
+        ground: true,
       });
     };
 

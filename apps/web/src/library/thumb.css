@@ -1,0 +1,99 @@
+/* The build thumbnail.
+
+   The frame is a fixed aspect ratio and paints its own surface, so the grid's geometry is
+   settled before a single render lands. Everything else here is about making a transparent
+   PNG of a voxel model sit convincingly on a page: a hint of ground under it, and a wash
+   that keeps a pale build from bleaching out against the panel. */
+
+.thumb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 118%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 62%),
+    linear-gradient(180deg, var(--raised), var(--sunken));
+  border-radius: var(--radius-md);
+}
+
+.thumb[data-variant='card'] {
+  aspect-ratio: 4 / 3;
+  width: 100%;
+}
+
+.thumb[data-variant='row'] {
+  width: 5rem;
+  height: 3.75rem;
+  flex: none;
+}
+
+.thumb__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* The renders have no ground plane of their own, so the build floats. A soft drop makes
+     it sit on the wash below instead. */
+  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 0.45));
+}
+
+.thumb[data-variant='card'] .thumb__img {
+  padding: var(--space-3);
+}
+
+.thumb__placeholder {
+  display: grid;
+  place-items: center;
+  width: 60%;
+  height: 60%;
+}
+
+.thumb__proxy {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Three faces at three tints: enough to read as a solid, flat enough to read as absent.
+   The proxy is a stand-in, and one that looked finished would be worse than none. */
+.thumb__face {
+  stroke: color-mix(in srgb, var(--muted) 45%, transparent);
+  stroke-width: 0.6;
+  stroke-linejoin: round;
+}
+
+.thumb__face--top {
+  fill: color-mix(in srgb, var(--muted) 20%, transparent);
+}
+
+.thumb__face--left {
+  fill: color-mix(in srgb, var(--muted) 11%, transparent);
+}
+
+.thumb__face--right {
+  fill: color-mix(in srgb, var(--muted) 6%, transparent);
+}
+
+/* A slow pulse while a render is queued or in flight. Only while it is actually working:
+   an idle card off the bottom of the page has not been asked for anything yet, and a page
+   of breathing placeholders would say the opposite. */
+.thumb[data-state='loading'] .thumb__placeholder {
+  animation: thumb-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes thumb-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb[data-state='loading'] .thumb__placeholder {
+    animation: none;
+    opacity: 0.7;
+  }
+}

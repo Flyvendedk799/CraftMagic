@@ -63,4 +63,55 @@ describe('raycastVoxel', () => {
     const hit = raycastVoxel(grid, { x: -2, y: 3.5, z: 4.5 }, { x: 1, y: 0, z: 0 });
     expect(hit).toEqual({ x: 4, y: 3, z: 4, face: 'west' });
   });
+
+  describe('ground', () => {
+    /** Nothing in it at all — the state an empty plot opens in. */
+    function empty(): VoxelGrid {
+      const size = { x: 8, y: 8, z: 8 };
+      return {
+        size,
+        palette: ['minecraft:air'],
+        voxels: new Uint16Array(size.x * size.y * size.z),
+      };
+    }
+
+    it('lands on the floor of an empty build instead of missing', () => {
+      const hit = raycastVoxel(empty(), { x: 2.5, y: 6, z: 3.5 }, { x: 0, y: -1, z: 0 }, { ground: true });
+      expect(hit).toEqual({ x: 2, y: 0, z: 3, face: 'up', ground: true });
+    });
+
+    it('is off by default, so a pick still reports nothing rather than an empty cell', () => {
+      expect(raycastVoxel(empty(), { x: 2.5, y: 6, z: 3.5 }, { x: 0, y: -1, z: 0 })).toBeNull();
+    });
+
+    it('never wins over a block: the floor is only what is left when the ray hits nothing', () => {
+      const hit = raycastVoxel(grid8(), { x: 4.5, y: 6, z: 4.5 }, { x: 0, y: -1, z: 0 }, { ground: true });
+      expect(hit).toEqual({ x: 4, y: 3, z: 4, face: 'up' });
+    });
+
+    it('follows the isolate cut up, so a block placed on it lands in the visible slice', () => {
+      const hit = raycastVoxel(
+        grid8(),
+        { x: 1.5, y: 6, z: 1.5 },
+        { x: 0, y: -1, z: 0 },
+        { minY: 3, maxY: 3, ground: true },
+      );
+      expect(hit).toEqual({ x: 1, y: 3, z: 1, face: 'up', ground: true });
+    });
+
+    it('stays null outside the footprint — there is no floor beside the build to build on', () => {
+      const away = raycastVoxel(
+        empty(),
+        { x: 20, y: 6, z: 20 },
+        { x: 0, y: -1, z: 0 },
+        { ground: true },
+      );
+      expect(away).toBeNull();
+    });
+
+    it('stays null for a ray that will never reach the floor', () => {
+      const up = raycastVoxel(empty(), { x: 2.5, y: 6, z: 3.5 }, { x: 0, y: 1, z: 0 }, { ground: true });
+      expect(up).toBeNull();
+    });
+  });
 });

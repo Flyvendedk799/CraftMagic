@@ -5,11 +5,28 @@
   position: fixed;
   inset: 0;
   overflow: hidden;
+  /* The app bar's height. Every floating panel measures its own top from here rather than
+     from the viewport, so the bar can change height — it wraps on a phone — without any of
+     them having to be re-tuned or, worse, ending up underneath it. */
+  --chrome: 3.5rem;
+}
+
+/* The bar is the only thing in this page that is in normal flow; it defines the top edge
+   the canvas and the HUD start from. Full-bleed rather than the 76rem column it gets on the
+   document pages: the editor's own chrome is docked hard to both margins, and a centred bar
+   floating between them reads as a different application. */
+.editor > .nav {
+  position: relative;
+  z-index: 20;
+}
+
+.editor > .nav .nav__inner {
+  max-width: none;
 }
 
 .editor__canvas {
   position: absolute;
-  inset: 0;
+  inset: var(--chrome) 0 0 0;
 }
 
 .editor__canvas canvas {
@@ -33,11 +50,11 @@
    tool palette and a block picker, so every rem of slack it does not need is a rem of the
    export controls that would otherwise sit below the fold. */
 .hud--top {
-  top: 1rem;
+  top: calc(var(--chrome) + 1rem);
   left: 1rem;
   width: 19rem;
   max-width: calc(100vw - 2rem);
-  max-height: calc(100vh - 6.5rem);
+  max-height: calc(100vh - var(--chrome) - 6.5rem);
   overflow-y: auto;
 }
 
@@ -267,12 +284,17 @@
 
 .prompt {
   position: absolute;
-  top: 1.25rem;
+  top: calc(var(--chrome) + 1.25rem);
   right: 1.25rem;
   width: 22rem;
   max-width: calc(100vw - 2.5rem);
+  /* Same reserve as the tool panel opposite it: the prompt grows an estimate, a status line
+     and a budget note, and without a ceiling the tall states run under the layer bar. */
+  max-height: calc(100vh - var(--chrome) - 6.5rem);
+  overflow-y: auto;
   display: grid;
   gap: 0.75rem;
+  align-content: start;
 }
 
 .hud__section {

@@ -7,5 +7,6 @@ export * from './samples/index.js';
 export * from './schem/write.js';
 export * from './guide/design-system.js';
 export * from './guide/steps.js';
+export * from './image/index.js';
 export * from './voxels/codec.js';
 export * from './protocol/agent.js';

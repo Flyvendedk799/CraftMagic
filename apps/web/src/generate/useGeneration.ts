@@ -54,6 +54,11 @@ export interface UseGeneration {
   estimating: boolean;
   /** Free — uses the token-counting endpoint, which is not billed. */
   requestEstimate: (prompt: string, size?: SizeChoice) => Promise<void>;
+  /** A picture to build from, as base64 and its media type. */
+  generateFromImage: (request: {
+    prompt: string;
+    image: { data: string; mediaType: string };
+  }) => Promise<void>;
   clearEstimate: () => void;
   /**
    * Generate a build, or refine one.
@@ -128,7 +133,12 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
 
   const clearEstimate = useCallback(() => setEstimate(null), []);
 
-  const generate = useCallback(async (prompt: string, refineOf?: unknown, size?: SizeChoice) => {
+  const generate = useCallback(async (
+    prompt: string,
+    refineOf?: unknown,
+    size?: SizeChoice,
+    image?: { data: string; mediaType: string },
+  ) => {
     const trimmed = prompt.trim();
     if (!trimmed) return;
 
@@ -144,6 +154,7 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
           prompt: trimmed,
           ...(refineOf ? { refineOf } : {}),
           ...(size && !refineOf ? { size } : {}),
+          ...(image && !refineOf ? { image } : {}),
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -219,7 +230,25 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
     };
   }, []);
 
-  return { phase, spend, estimate, estimating, requestEstimate, clearEstimate, generate, cancel };
+  // A picture and a written prompt are the same request with a different subject, so they
+  // share the whole path — progress, spend, cancel and the completion callback included.
+  const generateFromImage = useCallback(
+    (request: { prompt: string; image: { data: string; mediaType: string } }) =>
+      generate(request.prompt, undefined, undefined, request.image),
+    [generate],
+  );
+
+  return {
+    phase,
+    spend,
+    estimate,
+    estimating,
+    requestEstimate,
+    clearEstimate,
+    generate,
+    generateFromImage,
+    cancel,
+  };
 }
 
 export { busy as isGenerating };

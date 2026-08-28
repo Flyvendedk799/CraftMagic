@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BuildProgram } from '@craftmagic/core';
+import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 
 /**
  * How a generated build survives the hop from the editor to the guide.
@@ -158,5 +158,81 @@ describe('a build fitted to a chosen size', () => {
       y: 16,
       z: 16,
     });
+  });
+});
+
+/**
+ * Pictures rebuilt as blocks.
+ *
+ * A mural is voxels and nothing else — no program describes a photograph — so it takes the
+ * same path a hand-edited build does. What is specific to it is storage: a wall is tens of
+ * thousands of voxels, which is why it is kept compressed rather than as JSON, and why only a
+ * few are kept at all.
+ */
+describe('pictures built from blocks', () => {
+  /** A tiny two-colour wall, in the shape `buildMural` produces. */
+  function mural(): VoxelGrid {
+    const size = { x: 4, y: 2, z: 1 };
+    const voxels = new Uint16Array(size.x * size.y * size.z);
+    for (let i = 0; i < voxels.length; i++) voxels[i] = (i % 2) + 1;
+    return { size, palette: ['minecraft:air', 'minecraft:white_wool', 'minecraft:black_wool'], voxels };
+  }
+
+  it('opens as a build like any other, with no program behind it', async () => {
+    const builds = await openTab(storage());
+    const id = builds.registerMuralBuild('Poster', mural());
+
+    expect(builds.isBuildId(id)).toBe(true);
+    const loaded = builds.expandBuild(id);
+    expect(loaded.name).toBe('Poster');
+    expect(loaded.grid.size).toEqual({ x: 4, y: 2, z: 1 });
+    expect(loaded.blockCount).toBe(8);
+    // Nothing parametric describes a photograph, so there is nothing to resize or refine.
+    expect(loaded.program).toBeNull();
+    expect(loaded.params).toEqual([]);
+  });
+
+  it('survives a reload, blocks and all', async () => {
+    const store = storage();
+    const first = await openTab(store);
+    const id = first.registerMuralBuild('Poster', mural());
+
+    const reopened = await openTab(store);
+    const loaded = reopened.expandBuild(id);
+    expect(loaded.grid.palette).toContain('minecraft:white_wool');
+    expect(Array.from(loaded.grid.voxels)).toEqual(Array.from(mural().voxels));
+    expect(reopened.muralBuilds().map((entry) => entry.name)).toEqual(['Poster']);
+  });
+
+  it('keeps a picture out of the editor when there is nothing to build it from', async () => {
+    const builds = await openTab(storage());
+    expect(builds.isBuildId('img:99')).toBe(false);
+  });
+
+  it('keeps only the most recent few, oldest dropped first', async () => {
+    const builds = await openTab(storage());
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => builds.registerMuralBuild(name, mural()));
+
+    const kept = builds.muralBuilds().map((entry) => entry.name);
+    expect(kept.length).toBeLessThanOrEqual(4);
+    expect(kept).toContain('f');
+    expect(kept).not.toContain('a');
+    // Ids are never reused, so a link to a dropped picture fails to resolve rather than
+    // quietly opening a different one.
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('stores a picture compressed, not as a wall of numbers', async () => {
+    const store = storage();
+    const builds = await openTab(store);
+
+    // A 64x64 wall: 4,096 voxels, which as a JSON array would be tens of kilobytes.
+    const size = { x: 64, y: 64, z: 1 };
+    const voxels = new Uint16Array(size.x * size.y * size.z).fill(1);
+    builds.registerMuralBuild('Big', { size, palette: ['minecraft:air', 'minecraft:stone'], voxels });
+
+    const stored = store.snapshot()['craftmagic.murals'] ?? '';
+    expect(stored.length).toBeGreaterThan(0);
+    expect(stored.length).toBeLessThan(4096);
   });
 });

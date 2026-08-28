@@ -27,11 +27,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import { generateBuild, GenerationError, TOOL_NAME } from './pipeline.js';
-import { sizeBrief, systemPrompt } from './prompt.js';
+import { pictureBrief, sizeBrief, systemPrompt } from './prompt.js';
 import { costOf, isPricingKnown, isSubscription, worstCaseCost, type ProviderId } from './pricing.js';
 import { providerErrorFacts } from '@flyvendedk799/ai-auth';
 import { describeProviderError } from './providerError.js';
 import { providerFor, type Provider } from './providers.js';
+import { imageTokens, readImage, IMAGE_TYPES, MAX_IMAGE_BASE64 } from './image.js';
 import type { GenerationQuota } from './quota.js';
 import type { AiSettings } from '../settings/store.js';
 import { BudgetExceededError, type SpendLedger } from './spend.js';
@@ -68,6 +69,16 @@ export interface GenerateRoutesOptions {
 const DEFAULT_MAX_TOKENS = 16_000;
 /** Long enough for a detailed brief, short enough that nobody pastes a novel into it. */
 const MAX_PROMPT_LENGTH = 600;
+
+/**
+ * Body limit for the two routes that can carry a picture.
+ *
+ * Fastify's default is 1MB, which a perfectly reasonable crop can exceed — and it exceeds it
+ * as a bare 413 with no body, which reads to the user as "the app broke" rather than as "that
+ * picture is too big". Raised only on these two routes, so the rest of the API keeps the
+ * smaller default.
+ */
+const IMAGE_BODY_LIMIT = 8 * 1024 * 1024;
 
 export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsync {
 	return async (app) => {
@@ -169,7 +180,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			return options.auth.requireUser(request, reply);
 		}
 
-		app.post('/api/generations/estimate', async (request, reply) => {
+		app.post('/api/generations/estimate', { bodyLimit: IMAGE_BODY_LIMIT }, async (request, reply) => {
 			const ai = await options.resolveAi();
 			// Deliberately no readiness gate. Estimating needs a credential only on the one
 			// branch below that asks Anthropic to count tokens for free, and that branch already
@@ -190,9 +201,16 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			}
 
 			const system = systemPrompt();
-			// The size brief is part of the user turn, so it is part of what the call costs.
-			const brief = sizeBrief(readSize(request.body));
-			const userTurn = brief ? `${prompt}\n\n${brief}` : prompt;
+			// Everything on the user turn is part of what the call costs, the picture included.
+			const estimateImage = readImage(request.body);
+			const image = estimateImage === 'invalid' ? null : estimateImage;
+			const userTurn = [
+				prompt,
+				image ? pictureBrief() : null,
+				sizeBrief(readSize(request.body)),
+			]
+				.filter((part): part is string => part !== null && part !== '')
+				.join('\n\n');
 			let inputTokens: number;
 			let exact: boolean;
 
@@ -210,7 +228,24 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 							input_schema: schema as unknown as Anthropic.Tool.InputSchema,
 						},
 					],
-					messages: [{ role: 'user', content: userTurn }],
+					messages: [
+						{
+							role: 'user',
+							content: image
+								? [
+										{
+											type: 'image' as const,
+											source: {
+												type: 'base64' as const,
+												media_type: image.mediaType as 'image/png',
+												data: image.data,
+											},
+										},
+										{ type: 'text' as const, text: userTurn },
+									]
+								: userTurn,
+						},
+					],
 				});
 				inputTokens = counted.input_tokens;
 				exact = true;
@@ -218,7 +253,9 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 				// OpenAI has no free token-counting endpoint, and calling the model to find out
 				// what a call costs would defeat the point. ~3.8 chars per token, rounded up,
 				// plus the schema — an estimate that errs high, which is the safe direction.
-				inputTokens = Math.ceil((system.length + userTurn.length + JSON.stringify(schema).length) / 3.8);
+				inputTokens =
+					Math.ceil((system.length + userTurn.length + JSON.stringify(schema).length) / 3.8) +
+					imageTokens(image);
 				exact = false;
 			}
 
@@ -247,7 +284,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			};
 		});
 
-		app.post('/api/generations', async (request, reply) => {
+		app.post('/api/generations', { bodyLimit: IMAGE_BODY_LIMIT }, async (request, reply) => {
 			const ai = await options.resolveAi();
 
 			// The account comes first now, because for a subscription provider it *is* the
@@ -314,6 +351,14 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			// or a prompt that reliably fails validation becomes free and unlimited.
 			const recordId = await quota.start(user.id, prompt, ai.model);
 
+			const image = readImage(request.body);
+			if (image === 'invalid') {
+				return reply.code(400).send({
+					error: 'bad_image',
+					message: `image must be { data: base64, mediaType: one of ${IMAGE_TYPES.join(', ')} } and under ${MAX_IMAGE_BASE64 / 1024 / 1024}MB`,
+				});
+			}
+
 			const size = readSize(request.body);
 			const generation = store.create(prompt);
 			// Bound after the guard above: TypeScript will not carry the null-check narrowing
@@ -323,6 +368,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			const model = ai.model;
 			const refining = refineOf;
 			const chosenSize = size;
+			const picture = image;
 
 			// Deliberately not awaited: the response returns an id immediately and progress
 			// arrives over SSE.
@@ -337,6 +383,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 							prompt: brief,
 							...(refining ? { refineOf: refining } : {}),
 							...(chosenSize ? { size: chosenSize } : {}),
+							...(picture ? { image: picture } : {}),
 							model,
 							effort: 'medium',
 							maxTokens,

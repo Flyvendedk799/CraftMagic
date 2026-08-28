@@ -191,6 +191,32 @@ export function sizeBrief(choice: SizeChoice | undefined): string | null {
 	].join('\n');
 }
 
+/**
+ * What to do with a picture.
+ *
+ * The instruction a picture needs is not "describe this" but "build this", and the difference
+ * is the whole feature: asked to reproduce a photograph, a model reaches for a flat wall of
+ * coloured blocks, which is both a bad structure and something the app already does exactly
+ * — pixel by pixel, for free, without asking anyone. What it is being asked for here is the
+ * thing a builder would make *of* the subject: a statue of the person, a model of the ship,
+ * the building itself as a building.
+ */
+export function pictureBrief(): string {
+	return [
+		`The picture is the brief. Build what it shows as a Minecraft structure.`,
+		``,
+		`- Build the **subject**, not the photograph. A person becomes a statue, a car becomes a`,
+		`  model of that car, a house becomes that house. Never a flat wall of coloured blocks.`,
+		`- Take the silhouette seriously — proportions, stance, and the outline read from a`,
+		`  distance long before any detail does.`,
+		`- Take the colours from the picture and find the closest blocks for them, using the`,
+		`  palette roles as usual so the whole thing can be re-skinned afterwards.`,
+		`- Anything painted flat white in the picture was masked out deliberately. It is not`,
+		`  part of the subject and must not appear in the build.`,
+		`- Say what you built in \`meta.name\` and \`meta.description\`.`,
+	].join('\n');
+}
+
 const LIMITS_TEXT = `## Limits
 
 - size at most ${LIMITS.maxSizeX} x ${LIMITS.maxSizeY} x ${LIMITS.maxSizeZ}

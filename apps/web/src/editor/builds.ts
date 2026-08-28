@@ -11,6 +11,8 @@
  */
 
 import {
+  decodeVoxels,
+  encodeVoxels,
   expand,
   isScaled,
   NO_SCALE,
@@ -269,6 +271,112 @@ export function isGeneratedId(id: string): boolean {
   return id.startsWith(GENERATED_PREFIX);
 }
 
+// --- pictures rebuilt as blocks -----------------------------------------
+
+/**
+ * Murals: a picture mapped onto blocks, keyed by `img:<n>`.
+ *
+ * These are voxels and not a program, because nothing parametric describes them — a
+ * photograph is not a structure with a wall thickness and a roof pitch, and pretending
+ * otherwise would give the editor a size slider that could only degrade the picture. Changing
+ * a mural's size means re-reading the picture at the new one, which the panel that made it
+ * does far better than any resampler could.
+ *
+ * Stored gzipped rather than as a plain array: a 256x160 wall is 40k voxels, and JSON of that
+ * would spend a quarter of the whole storage quota on one picture.
+ */
+const murals = new Map<string, { name: string; grid: VoxelGrid }>();
+
+export const MURAL_PREFIX = 'img:';
+
+const MURAL_STORAGE_KEY = 'craftmagic.murals';
+/**
+ * How many pictures are kept between visits.
+ *
+ * Small on purpose. Each one is tens of kilobytes even compressed, they are seconds of work to
+ * rebuild from the original picture, and the durable home for one worth keeping is the
+ * library — same as any other build.
+ */
+const MAX_STORED_MURALS = 4;
+
+export function isMuralId(id: string): boolean {
+  return id.startsWith(MURAL_PREFIX);
+}
+
+function persistMurals(): void {
+  while (murals.size > MAX_STORED_MURALS) {
+    const oldest = murals.keys().next();
+    if (oldest.done) break;
+    murals.delete(oldest.value);
+  }
+
+  try {
+    const stored = [...murals.entries()].map(([id, entry]) => [
+      id,
+      entry.name,
+      base64FromBytes(encodeVoxels(entry.grid)),
+    ]);
+    localStorage.setItem(MURAL_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // Out of quota, or storage blocked. The picture is still on screen; it just will not
+    // survive a reload, which is a far better outcome than refusing to build it.
+  }
+}
+
+function restoreMurals(): void {
+  try {
+    const raw = localStorage.getItem(MURAL_STORAGE_KEY);
+    if (!raw) return;
+    for (const [id, name, encoded] of JSON.parse(raw) as [string, string, string][]) {
+      murals.set(id, { name, grid: decodeVoxels(bytesFromBase64(encoded)) });
+    }
+  } catch {
+    // One unreadable picture must not stop the editor from loading.
+  }
+}
+
+function base64FromBytes(bytes: Uint8Array): string {
+  let binary = '';
+  // Chunked: `String.fromCharCode(...bytes)` on a 40k-block grid overflows the argument list.
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function bytesFromBase64(encoded: string): Uint8Array {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** Remember a picture built out of blocks, and return the id that selects it. */
+export function registerMuralBuild(name: string, grid: VoxelGrid): string {
+  restoreMurals();
+
+  let highest = 0;
+  for (const id of murals.keys()) {
+    const n = Number.parseInt(id.slice(MURAL_PREFIX.length), 10);
+    if (Number.isFinite(n) && n > highest) highest = n;
+  }
+
+  const id = `${MURAL_PREFIX}${highest + 1}`;
+  murals.set(id, { name, grid });
+  persistMurals();
+  return id;
+}
+
+/** Pictures this browser still remembers, oldest first. */
+export function muralBuilds(): { id: string; name: string }[] {
+  return [...murals.entries()].map(([id, entry]) => ({ id, name: entry.name }));
+}
+
+// Below the store it fills, not beside the one above: called any earlier this runs inside
+// `murals`' temporal dead zone, and the ReferenceError disappears into its own catch — which
+// looks exactly like "there was nothing saved".
+restoreMurals();
+
 /**
  * Builds fetched from the server-side library, keyed by `lib:<uuid>`.
  *
@@ -321,7 +429,7 @@ function programOf(id: string): BuildProgram | undefined {
 
 export function isBuildId(id: string | null): id is string {
   if (id === null) return false;
-  return library.has(id) || programOf(id) !== undefined;
+  return library.has(id) || murals.has(id) || programOf(id) !== undefined;
 }
 
 /** Read a program's declared params without expanding it — the UI needs them before a value exists. */
@@ -368,6 +476,10 @@ export function expandBuild(
 ): LoadedBuild {
   const stored = library.get(id);
   if (stored?.kind === 'voxels') return fromVoxels(id, stored.name, stored.grid);
+
+  // A picture is voxels and nothing else, so params and scale have nothing to act on here.
+  const mural = murals.get(id);
+  if (mural) return fromVoxels(id, mural.name, mural.grid);
 
   const program = programOf(id);
   if (!program) throw new Error(`unknown build "${id}"`);

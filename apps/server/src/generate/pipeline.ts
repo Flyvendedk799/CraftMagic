@@ -23,10 +23,10 @@ import {
 	type SizeChoice,
 } from '@craftmagic/core';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
-import { refinePrompt, repairPrompt, sizeBrief, systemPrompt } from './prompt.js';
+import { pictureBrief, refinePrompt, repairPrompt, sizeBrief, systemPrompt } from './prompt.js';
 import { schemaIssues } from './validate.js';
 import type { ModelId } from './pricing.js';
-import type { Provider, ProviderSession } from './providers.js';
+import type { Provider, ProviderImage, ProviderSession } from './providers.js';
 import { TOOL_NAME } from './providers.js';
 import type { SpendLedger } from './spend.js';
 
@@ -51,6 +51,14 @@ export interface GenerateOptions {
 	 * put it back at 100% whenever the user wants to see it.
 	 */
 	size?: SizeChoice;
+	/**
+	 * A picture to build from.
+	 *
+	 * The prompt goes with it rather than instead of it: the picture says what the subject
+	 * looks like and the words say what to do about it ("as a stone statue"), which is exactly
+	 * the split a person would use.
+	 */
+	image?: ProviderImage;
 	model?: ModelId;
 	/** Lower effort means less thinking and fewer tokens. Meaningful on cost. */
 	effort?: 'low' | 'medium' | 'high';
@@ -124,12 +132,14 @@ export async function generateBuild(
 	// guard must not overlook — otherwise the ceiling is computed against the wrong call.
 	// The size brief rides on the user turn rather than the system prompt, which is cached and
 	// must stay identical from one call to the next to stay that way.
-	const brief = sizeBrief(options.size);
-	const userContent = options.refineOf
-		? refinePrompt(options.refineOf, options.prompt)
-		: brief
-			? `${options.prompt}\n\n${brief}`
-			: options.prompt;
+	// The order is the order a person would say it in: what to build, then what to build it
+	// from, then how big. A refine replaces the first of those with the program itself.
+	const briefs = [
+		options.refineOf ? refinePrompt(options.refineOf, options.prompt) : options.prompt,
+		options.image && !options.refineOf ? pictureBrief() : null,
+		sizeBrief(options.size),
+	].filter((part): part is string => part !== null && part !== '');
+	const userContent = briefs.join('\n\n');
 
 	// Rough token estimate for the guard: ~3.8 chars per token is close enough, and the
 	// guard's job is to be conservative rather than exact.
@@ -160,7 +170,7 @@ export async function generateBuild(
 	};
 
 	options.onProgress?.({ stage: 'thinking' });
-	const first = await session.emit(userContent);
+	const first = await session.emit(userContent, options.image);
 	record(first, options.refineOf ? 'refine' : 'generate');
 
 	if (first.input === undefined) {

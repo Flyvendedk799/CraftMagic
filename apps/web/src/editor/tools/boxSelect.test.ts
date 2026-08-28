@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { voxelIndex, type VoxelGrid } from '@craftmagic/core';
-import { boxBounds, boxEdit } from './boxSelect.js';
+import { voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
+import { boxBounds, boxEdit, moveEdit } from './boxSelect.js';
 
 function grid8(): VoxelGrid {
   const size = { x: 8, y: 8, z: 8 };
@@ -64,5 +64,84 @@ describe('boxEdit', () => {
     const grid = grid8();
     expect(boxEdit(grid, { x: 5, y: 5, z: 5 }, { x: 7, y: 7, z: 7 }, 'clear', 2)).toBeNull();
     expect(boxEdit(grid, { x: 0, y: 0, z: 0 }, { x: 3, y: 0, z: 3 }, 'fill', 1)).toBeNull();
+  });
+});
+
+describe('moveEdit', () => {
+  /** A grid with a named palette, so a test can read a slice back as letters. */
+  function grid(x: number, y: number, z: number): VoxelGrid {
+    return {
+      size: { x, y, z },
+      voxels: new Uint16Array(x * y * z),
+      palette: ['minecraft:air', 'a', 'b'],
+    };
+  }
+
+  function row(g: VoxelGrid, y: number, z: number): string {
+    let out = '';
+    for (let x = 0; x < g.size.x; x++) {
+      out += g.palette[g.voxels[voxelIndex(g.size, x, y, z)]!]![0]!.replace('m', '.');
+    }
+    return out;
+  }
+
+  function apply(g: VoxelGrid, op: EditOp | null): VoxelGrid {
+    if (op) for (let i = 0; i < op.indices.length; i++) g.voxels[op.indices[i]!] = op.after[i]!;
+    return g;
+  }
+
+  function set(g: VoxelGrid, from: number, to: number, value: number) {
+    for (let x = from; x <= to; x++) g.voxels[voxelIndex(g.size, x, 0, 0)] = value;
+  }
+
+  it('moves the contents and leaves air behind', () => {
+    const g = grid(10, 1, 1);
+    set(g, 1, 3, 1);
+    apply(g, moveEdit(g, { x: 1, y: 0, z: 0 }, { x: 3, y: 0, z: 0 }, 5, 0, 0));
+    expect(row(g, 0, 0)).toBe('......aaa.');
+  });
+
+  it('survives a move that overlaps its own source', () => {
+    // The case two passes get wrong: writing air over the source, then the contents, records
+    // an erase for every interior cell whose moved value equals what was already there.
+    const g = grid(10, 1, 1);
+    set(g, 1, 5, 1);
+    apply(g, moveEdit(g, { x: 1, y: 0, z: 0 }, { x: 5, y: 0, z: 0 }, 1, 0, 0));
+    expect(row(g, 0, 0)).toBe('..aaaaa...');
+  });
+
+  it('undoes exactly, overlap and all', () => {
+    const g = grid(10, 1, 1);
+    set(g, 1, 5, 1);
+    set(g, 6, 7, 2);
+    const before = row(g, 0, 0);
+    const op = moveEdit(g, { x: 1, y: 0, z: 0 }, { x: 5, y: 0, z: 0 }, 2, 0, 0)!;
+    apply(g, op);
+    // The b's are overwritten: a region moved onto something replaces it, and undo is what
+    // brings it back — which is exactly what the rest of this test is checking.
+    expect(row(g, 0, 0)).toBe('...aaaaa..');
+    for (let i = op.indices.length - 1; i >= 0; i--) g.voxels[op.indices[i]!] = op.before[i]!;
+    expect(row(g, 0, 0)).toBe(before);
+  });
+
+  it('drops the part that would leave the grid rather than piling it at the wall', () => {
+    const g = grid(10, 1, 1);
+    set(g, 6, 8, 1);
+    apply(g, moveEdit(g, { x: 6, y: 0, z: 0 }, { x: 8, y: 0, z: 0 }, 3, 0, 0));
+    expect(row(g, 0, 0)).toBe('.........a');
+  });
+
+  it('is a no-op when nothing moves', () => {
+    const g = grid(4, 1, 1);
+    set(g, 0, 3, 1);
+    expect(moveEdit(g, { x: 0, y: 0, z: 0 }, { x: 3, y: 0, z: 0 }, 0, 0, 0)).toBeNull();
+  });
+
+  it('carries air with it, so a move does not paint holes shut', () => {
+    const g = grid(10, 1, 1);
+    set(g, 1, 1, 1);
+    set(g, 3, 3, 1);
+    apply(g, moveEdit(g, { x: 1, y: 0, z: 0 }, { x: 3, y: 0, z: 0 }, 4, 0, 0));
+    expect(row(g, 0, 0)).toBe('.....a.a..');
   });
 });

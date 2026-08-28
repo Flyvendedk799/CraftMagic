@@ -17,6 +17,7 @@ import {
   CHUNK_SIZE,
   chunkCounts,
   meshChunk,
+  meshCuts,
   type MeshBuffers,
   type MeshSource,
   type MesherRequest,
@@ -71,6 +72,16 @@ export class VoxelWorld {
     side: THREE.DoubleSide,
   });
 
+  /**
+   * The cut surface, as one mesh rather than a chunked set.
+   *
+   * It is per-area where the chunks are per-volume, it changes on a different clock from
+   * them — the box moves under a drag while the voxels sit still — and it has no use for the
+   * upload budget, since one geometry cannot stall a frame the way four hundred can.
+   */
+  private cuts: ChunkEntry = {};
+  private cutsStale = false;
+
   private readonly chunks = new Map<number, ChunkEntry>();
   private readonly dirty = new Set<number>();
   private readonly inFlight = new Set<number>();
@@ -106,6 +117,9 @@ export class VoxelWorld {
   /** Which faces are active, as a bitmask over `clipPlanes`. Zero means no clipping. */
   private clipMask = 0;
 
+  /** The box the skin was last built for, kept so an edit can rebuild it unprompted. */
+  private clipBox: ClipBox | null = null;
+
   constructor() {
     this.group.name = 'voxel-world';
     this.group.matrixAutoUpdate = false;
@@ -124,6 +138,8 @@ export class VoxelWorld {
     this.clearChunks();
     this.generation++;
     this.batchId = 0;
+
+    this.cutsStale = this.clipMask !== 0;
 
     this.grid = grid;
     this.source = { size: grid.size, voxels: grid.voxels, paletteColors, paletteFlags };
@@ -232,6 +248,12 @@ export class VoxelWorld {
       this.clipPlanes[i]!.constant = i % 2 === 0 ? -value + CLIP_EPSILON : value + 1 + CLIP_EPSILON;
     }
 
+    // The skin is rebuilt even when the mask is unchanged: sliding a layer slider moves the
+    // boundary without adding or removing a face, and the surface it exposes is different at
+    // every stop.
+    this.clipBox = box;
+    this.cutsStale = true;
+
     if (mask === this.clipMask) return;
     this.clipMask = mask;
 
@@ -250,6 +272,8 @@ export class VoxelWorld {
    * multi-second stall no matter how fast the meshing was.
    */
   update(): void {
+    if (this.cutsStale) this.rebuildCuts();
+
     let budget = UPLOADS_PER_FRAME;
     while (budget > 0 && this.pending.length > 0) {
       this.upload(this.pending.pop()!);
@@ -297,6 +321,7 @@ export class VoxelWorld {
    * the shading of its edge- and corner-adjacent chunks too.
    */
   private touch(x: number, y: number, z: number): void {
+    if (this.clipMask !== 0) this.cutsStale = true;
     const xLo = (x - 1) >> 4;
     const xHi = (x + 1) >> 4;
     const yLo = (y - 1) >> 4;
@@ -314,6 +339,53 @@ export class VoxelWorld {
         }
       }
     }
+  }
+
+  /**
+   * Rebuild the cut surface from the current voxels and box.
+   *
+   * Placed at the clip boundary itself, where `CLIP_EPSILON` has already nudged the plane a
+   * thousandth of a block past — so the skin sits on the kept side of its own cut and needs
+   * no exemption from the material's clipping, which is what lets it share the chunk
+   * materials and stay subject to the *other* five faces of the box.
+   */
+  private rebuildCuts(): void {
+    this.cutsStale = false;
+
+    const previous = this.cuts;
+    this.cuts = {};
+    for (const mesh of [previous.opaque, previous.transparent]) {
+      if (!mesh) continue;
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+    }
+
+    const source = this.source;
+    const box = this.clipBox;
+    if (!source || !box || this.clipMask === 0) return;
+
+    const { opaque, transparent } = meshCuts(source, box);
+    this.cuts.opaque = this.addCut(opaque, this.opaqueMaterial, 0);
+    this.cuts.transparent = this.addCut(transparent, this.transparentMaterial, 1);
+  }
+
+  private addCut(
+    buffers: MeshBuffers | null,
+    material: THREE.Material,
+    renderOrder: number,
+  ): THREE.Mesh | undefined {
+    if (!buffers) return undefined;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(buffers.positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(buffers.colors, 3, true));
+    geometry.setIndex(new THREE.BufferAttribute(buffers.indices, 1));
+    geometry.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = renderOrder;
+    mesh.matrixAutoUpdate = false;
+    this.group.add(mesh);
+    return mesh;
   }
 
   private requestDirty(uploadBudgetLeft: number): void {
@@ -425,6 +497,13 @@ export class VoxelWorld {
   }
 
   private clearChunks(): void {
+    for (const mesh of [this.cuts.opaque, this.cuts.transparent]) {
+      if (!mesh) continue;
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+    }
+    this.cuts = {};
+
     for (const entry of this.chunks.values()) {
       for (const mesh of [entry.opaque, entry.transparent]) {
         if (!mesh) continue;

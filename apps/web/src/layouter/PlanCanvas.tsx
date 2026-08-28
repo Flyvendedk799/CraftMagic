@@ -40,6 +40,7 @@ import {
   wallRuns,
   type Point,
 } from './geometry.js';
+import { selectionBounds } from './arrange.js';
 import { Dimensions, SizeBadge } from './Dimensions.js';
 import {
   createColumn,
@@ -65,17 +66,29 @@ export interface PlanCanvasProps {
   plan: LayoutPlan;
   floorIndex: number;
   tool: LayoutToolId;
-  selectedId: string | null;
+  /**
+   * Every selected item, in the order they were picked.
+   *
+   * A list rather than an id because aligning, spacing and moving things as a group is most
+   * of what drafting a floorplan is, and none of it is expressible one item at a time. The
+   * single-selection affordances that only make sense for one thing — the resize handles, the
+   * inspector's fields — key off its length being exactly one rather than off a second prop
+   * that could disagree with this one.
+   */
+  selectedIds: readonly string[];
   /** Rooms validation could not walk to, drawn hatched. */
   unreachable: ReadonlySet<string>;
   /** Draw the storey below in outline, so things can be lined up through the floor. */
   showBelow: boolean;
-  onSelect: (id: string | null) => void;
+  /** `additive` is a shift-click: toggle this item's membership instead of replacing it. */
+  onSelect: (id: string | null, additive?: boolean) => void;
+  /** A marquee finished. Ids are everything it touched, already unioned with any shift-held set. */
+  onSelectMany: (ids: string[]) => void;
   /** A gesture is starting: record the plan so the whole gesture is one undo. */
   onBeginGesture: () => void;
   onCreate: (item: PlanItem) => void;
   /** An intermediate frame of a drag — applied without touching history. */
-  onPreview: (item: PlanItem) => void;
+  onPreview: (items: PlanItem[]) => void;
   onNotice: (message: string | null) => void;
   /** Reported so the page's readout can say what is under the pointer. */
   onHover?: (at: Point | null) => void;
@@ -97,7 +110,9 @@ type Drag =
    * is taken at the first movement that actually changes the plan, which still gives one undo
    * per gesture and gives none to a gesture that changed nothing.
    */
-  | { kind: 'move'; id: string; origin: PlanItem; from: Point; to: Point; marked: boolean }
+  | { kind: 'move'; origins: PlanItem[]; from: Point; to: Point; marked: boolean }
+  /** A rubber band over empty canvas. `additive` keeps whatever was already selected. */
+  | { kind: 'marquee'; from: Point; to: Point; additive: boolean }
   | { kind: 'resize'; id: string; origin: Rect; corner: Corner; to: Point; marked: boolean }
   | { kind: 'pan'; fromClient: Point; view: { ox: number; oz: number } };
 
@@ -107,10 +122,11 @@ export function PlanCanvas({
   plan,
   floorIndex,
   tool,
-  selectedId,
+  selectedIds,
   unreachable,
   showBelow,
   onSelect,
+  onSelectMany,
   onBeginGesture,
   onCreate,
   onPreview,
@@ -122,6 +138,13 @@ export function PlanCanvas({
   const [view, setView] = useState(() => ({ scale: 14, ox: 0, oz: 0 }));
   const [drag, setDrag] = useState<Drag | null>(null);
   const [cursor, setCursor] = useState<Point | null>(null);
+
+  /**
+   * The selection when it is exactly one thing. Resize handles and the alignment guides both
+   * need a subject rather than a set, and "the first of several" would be an arbitrary one.
+   */
+  const selectedId = selectedIds.length === 1 ? selectedIds[0]! : null;
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
   const floor = plan.floors[floorIndex];
   const items = useMemo(() => floor?.items ?? [], [floor]);
@@ -250,9 +273,26 @@ export function PlanCanvas({
           return;
         }
 
+        const additive = event.shiftKey;
         const hit = hitTest(items, at.x, at.z, plan.wallThickness, plan.storeyHeight);
-        onSelect(hit?.id ?? null);
-        if (hit) setDrag({ kind: 'move', id: hit.id, origin: hit, from: at, to: at, marked: false });
+
+        if (!hit) {
+          // Empty canvas starts a rubber band rather than only clearing the selection: a
+          // drag that begins on nothing has no other meaning, and marquee is the one way to
+          // pick up a row of rooms without clicking each of them.
+          setDrag({ kind: 'marquee', from: at, to: at, additive });
+          if (!additive) onSelect(null);
+          return;
+        }
+
+        // Dragging one member of a selection moves the whole selection. Re-selecting on
+        // pointer-down instead would make "select three rooms, drag them" impossible: the
+        // press would throw the other two away before the drag began.
+        const moving = selectedSet.has(hit.id) && !additive
+          ? items.filter((item) => selectedSet.has(item.id))
+          : [hit];
+        if (!selectedSet.has(hit.id) || additive) onSelect(hit.id, additive);
+        setDrag({ kind: 'move', origins: moving, from: at, to: at, marked: false });
         return;
       }
 
@@ -284,7 +324,7 @@ export function PlanCanvas({
         return;
       }
 
-      if (drag.kind === 'draw') {
+      if (drag.kind === 'draw' || drag.kind === 'marquee') {
         setDrag({ ...drag, to: at });
         return;
       }
@@ -296,7 +336,13 @@ export function PlanCanvas({
         if (dx === 0 && dz === 0 && !drag.marked) return;
         if (!drag.marked) onBeginGesture();
         setDrag({ ...drag, to: at, marked: true });
-        onPreview(movedItem(drag.origin, dx, dz, plan, items));
+        // Snapping is for a single item. Moving a group and snapping each member separately
+        // would tear the group apart on the first neighbour any one of them passed.
+        onPreview(
+          drag.origins.length === 1
+            ? [movedItem(drag.origins[0]!, dx, dz, plan, items)]
+            : drag.origins.map((origin) => shifted(origin, dx, dz)),
+        );
         return;
       }
 
@@ -307,7 +353,7 @@ export function PlanCanvas({
         if (!drag.marked && sameRect(rect, item.rect)) return;
         if (!drag.marked) onBeginGesture();
         setDrag({ ...drag, to: at, marked: true });
-        onPreview({ ...item, rect } as PlanItem);
+        onPreview([{ ...item, rect } as PlanItem]);
       }
     },
     [drag, view.scale, items, plan, toPlan, onPreview, onBeginGesture, onHover],
@@ -320,6 +366,17 @@ export function PlanCanvas({
       if (drag?.kind === 'draw') {
         const rect = rectFromPoints(drag.from, drag.to);
         finishDraw(rect, drag.from, drag.to);
+      }
+      if (drag?.kind === 'marquee') {
+        const band = rectFromPoints(drag.from, drag.to);
+        // A band that never left its cell is a click on empty canvas, which already cleared
+        // the selection on the way down; treating it as a marquee would select nothing twice.
+        if (band.w > 0 || band.d > 0) {
+          const caught = items
+            .filter((item) => overlaps(band, itemFootprint(item, plan.wallThickness, plan.storeyHeight)))
+            .map((item) => item.id);
+          onSelectMany(drag.additive ? [...new Set([...selectedIds, ...caught])] : caught);
+        }
       }
       setDrag(null);
     },
@@ -421,6 +478,11 @@ export function PlanCanvas({
   const viewHeight = (bounds?.height ?? 600) / view.scale;
 
   const draft = drag?.kind === 'draw' ? draftFor(tool, drag.from, drag.to, plan, items) : null;
+  const band = drag?.kind === 'marquee' ? rectFromPoints(drag.from, drag.to) : null;
+  const group =
+    selectedIds.length > 1
+      ? selectionBounds(items, selectedIds, plan.wallThickness, plan.storeyHeight)
+      : null;
   const ghost = cursor && !drag ? ghostFor(tool, cursor, plan, runs) : null;
 
   const selectedItem = selectedId ? items.find((entry) => entry.id === selectedId) ?? null : null;
@@ -451,10 +513,16 @@ export function PlanCanvas({
    */
   const guides = useMemo(() => {
     if (!drag || drag.kind === 'pan') return [];
+    // A group move has no single subject to guide against, and six sets of guides at once
+    // is noise rather than help.
     const subject =
       drag.kind === 'draw'
         ? draftFor(tool, drag.from, drag.to, plan, items)
-        : items.find((entry) => entry.id === drag.id);
+        : drag.kind === 'resize'
+          ? items.find((entry) => entry.id === drag.id)
+          : drag.kind === 'move' && drag.origins.length === 1
+            ? items.find((entry) => entry.id === drag.origins[0]!.id)
+            : undefined;
     if (!subject) return [];
     const rect = 'kind' in subject ? itemFootprint(subject, plan.wallThickness, plan.storeyHeight) : subject;
     const others = items
@@ -527,12 +595,36 @@ export function PlanCanvas({
             key={item.id}
             item={item}
             plan={plan}
-            selected={item.id === selectedId}
+            selected={selectedSet.has(item.id)}
             unreachable={unreachable.has(item.id)}
           />
         ))}
 
         {selectedId && <Handles items={items} selectedId={selectedId} plan={plan} scale={view.scale} />}
+
+        {/* The box the selection sits in, so an alignment button's subject is visible before
+            it is pressed rather than only inferable from which outlines are lit. */}
+        {group && (
+          <rect
+            x={group.x}
+            y={group.z}
+            width={group.w}
+            height={group.d}
+            className="plan__group"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+
+        {band && (
+          <rect
+            x={band.x}
+            y={band.z}
+            width={band.w}
+            height={band.d}
+            className="plan__marquee"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
 
         {draft && (
           <rect
@@ -643,7 +735,14 @@ function badgeFor(
     const dx = drag.to.x - drag.from.x;
     const dz = drag.to.z - drag.from.z;
     if (dx === 0 && dz === 0) return null;
-    return [`${dx >= 0 ? '+' : ''}${dx} x, ${dz >= 0 ? '+' : ''}${dz} z`];
+    const move = `${dx >= 0 ? '+' : ''}${dx} x, ${dz >= 0 ? '+' : ''}${dz} z`;
+    return drag.origins.length > 1 ? [move, `${drag.origins.length} items`] : [move];
+  }
+
+  if (drag.kind === 'marquee') {
+    const band = rectFromPoints(drag.from, drag.to);
+    if (band.w === 0 && band.d === 0) return null;
+    return [`${band.w} × ${band.d}`];
   }
 
   if (drag.kind === 'resize' && drag.marked) {
@@ -664,6 +763,21 @@ function badgeFor(
  * once the preview grew a dimension readout, it was confidently reporting a size that was
  * not the size you got.
  */
+/** Do two plan rects share any cell? Touching edges do not count — a marquee has to enclose. */
+function overlaps(a: Rect, b: Rect): boolean {
+  return (
+    a.x < rectRight(b) && rectRight(a) > b.x && a.z < rectBottom(b) && rectBottom(a) > b.z
+  );
+}
+
+/** Move an item bodily, with no snapping. The group-move counterpart of `movedItem`. */
+function shifted(item: PlanItem, dx: number, dz: number): PlanItem {
+  if (item.kind === 'room' || item.kind === 'opening' || item.kind === 'platform') {
+    return { ...item, rect: { ...item.rect, x: item.rect.x + dx, z: item.rect.z + dz } };
+  }
+  return { ...item, x: item.x + dx, z: item.z + dz };
+}
+
 function draftFor(
   tool: LayoutToolId,
   from: Point,

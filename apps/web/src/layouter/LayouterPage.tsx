@@ -40,6 +40,8 @@ import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild } from '../editor/builds.js';
 import { AccountPanel } from '../library/AccountPanel.js';
 import { AppNav } from '../shell/AppNav.js';
+import { alignOffsets, distributeOffsets, type Offsets } from './arrange.js';
+import { ArrangePanel } from './ArrangePanel.js';
 import { compilePlan } from './compile.js';
 import { FloorStack } from './FloorStack.js';
 import { Inspector } from './Inspector.js';
@@ -99,7 +101,25 @@ export function LayouterPage() {
 
   const [tool, setTool] = useState<LayoutToolId>('room');
   const [floorIndex, setFloorIndex] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * The selection, as a list.
+   *
+   * Most of the page still wants exactly one item — the inspector's fields, the room cutaway,
+   * "send to floor" — and reads `selected` below for it. What a list buys is the other half of
+   * drafting: moving a wing of a building without dragging four rooms one at a time, and
+   * lining rooms up with each other rather than with a coordinate typed twice.
+   */
+  const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
+  const setSelectedId = useCallback(
+    (id: string | null, additive = false) => {
+      setSelectedIds((current) => {
+        if (id === null) return [];
+        if (!additive) return [id];
+        return current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id];
+      });
+    },
+    [],
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [showBelow, setShowBelow] = useState(true);
   const [modelMode, setModelMode] = useState<ModelMode>('storey');
@@ -116,7 +136,7 @@ export function LayouterPage() {
    * plan item is already JSON. It survives a storey change and a template load on purpose —
    * copying a bathroom to paste onto the floor above is most of what a clipboard is for here.
    */
-  const [clip, setClip] = useState<PlanItem | null>(null);
+  const [clip, setClip] = useState<PlanItem[]>([]);
 
   /**
    * Re-frame the model.
@@ -133,7 +153,7 @@ export function LayouterPage() {
   const load = useCallback(
     (next: LayoutPlan) => {
       session.reset(next);
-      setSelectedId(null);
+      setSelectedIds([]);
       setFloorIndex(0);
       setNotice(null);
       // After the deferred compile has produced the new grid, so the framing is of the
@@ -155,7 +175,14 @@ export function LayouterPage() {
   const deferred = useDeferred(plan, PREVIEW_DELAY);
   const built = useMemo(() => buildFrom(deferred), [deferred]);
 
+  const selectedId = selectedIds.length === 1 ? selectedIds[0]! : null;
   const selected = useMemo(() => findItem(plan, selectedId ?? ''), [plan, selectedId]);
+
+  /** The selected items on the storey being edited. Alignment is a within-storey idea. */
+  const selectedItems = useMemo(() => {
+    const wanted = new Set(selectedIds);
+    return (plan.floors[activeFloor]?.items ?? []).filter((item) => wanted.has(item.id));
+  }, [plan, activeFloor, selectedIds]);
 
   // --- mutation ----------------------------------------------------------
 
@@ -172,22 +199,48 @@ export function LayouterPage() {
   );
 
   const previewChange = useCallback(
-    (item: PlanItem) => session.preview((current) => replaceItem(current, item.id, item)),
+    (items: PlanItem[]) =>
+      session.preview((current) =>
+        items.reduce((plan, item) => replaceItem(plan, item.id, item), current),
+      ),
+    [session],
+  );
+
+  /** Apply a map of per-item moves as one undo entry. The align and distribute buttons' verb. */
+  const arrange = useCallback(
+    (offsets: Offsets, what: string) => {
+      if (offsets.size === 0) {
+        setNotice(`Nothing to ${what} — those are already there.`);
+        return;
+      }
+      session.commit((current) =>
+        [...offsets].reduce(
+          (plan, [id, move]) => {
+            const found = findItem(plan, id);
+            return found ? replaceItem(plan, id, offset(found.item, move.dx, move.dz)) : plan;
+          },
+          current,
+        ),
+      );
+      setNotice(null);
+    },
     [session],
   );
 
   const remove = useCallback(() => {
-    if (!selectedId) return;
-    session.commit((current) => removeItem(current, selectedId));
-    setSelectedId(null);
-  }, [session, selectedId]);
+    if (selectedIds.length === 0) return;
+    session.commit((current) => selectedIds.reduce((plan, id) => removeItem(plan, id), current));
+    setSelectedIds([]);
+  }, [session, selectedIds]);
 
   const duplicate = useCallback(() => {
-    if (!selected) return;
-    const copy = offset({ ...selected.item, id: planId(selected.item.kind) }, 2, 2);
-    session.commit((current) => addItem(current, selected.floorIndex, copy));
-    setSelectedId(copy.id);
-  }, [session, selected]);
+    if (selectedItems.length === 0) return;
+    const copies = selectedItems.map((item) =>
+      offset({ ...item, id: planId(item.kind) }, 2, 2),
+    );
+    session.commit((current) => copies.reduce((plan, copy) => addItem(plan, activeFloor, copy), current));
+    setSelectedIds(copies.map((copy) => copy.id));
+  }, [session, selectedItems, activeFloor]);
 
   const sendToFloor = useCallback(
     (target: number) => {
@@ -200,17 +253,24 @@ export function LayouterPage() {
 
   const nudge = useCallback(
     (dx: number, dz: number) => {
-      if (!selected) return;
-      change(offset(selected.item, dx, dz));
+      if (selectedItems.length === 0) return;
+      session.commit((current) =>
+        selectedItems.reduce(
+          (plan, item) => replaceItem(plan, item.id, offset(item, dx, dz)),
+          current,
+        ),
+      );
     },
-    [selected, change],
+    [selectedItems, session],
   );
 
   const copy = useCallback(() => {
-    if (!selected) return;
-    setClip(selected.item);
-    setNotice(`Copied the ${selected.item.kind}. Ctrl+V drops a copy on the storey you are on.`);
-  }, [selected]);
+    if (selectedItems.length === 0) return;
+    setClip(selectedItems);
+    const what =
+      selectedItems.length === 1 ? `the ${selectedItems[0]!.kind}` : `${selectedItems.length} items`;
+    setNotice(`Copied ${what}. Ctrl+V drops a copy on the storey you are on.`);
+  }, [selectedItems]);
 
   /**
    * Paste onto the storey being edited, offset by two blocks.
@@ -220,10 +280,10 @@ export function LayouterPage() {
    * indistinguishable from a paste that silently failed.
    */
   const paste = useCallback(() => {
-    if (!clip) return;
-    const copied = offset({ ...clip, id: planId(clip.kind) }, 2, 2);
-    session.commit((current) => addItem(current, activeFloor, copied));
-    setSelectedId(copied.id);
+    if (clip.length === 0) return;
+    const copied = clip.map((item) => offset({ ...item, id: planId(item.kind) }, 2, 2));
+    session.commit((current) => copied.reduce((plan, item) => addItem(plan, activeFloor, item), current));
+    setSelectedIds(copied.map((item) => item.id));
     setNotice(null);
   }, [clip, session, activeFloor]);
 
@@ -264,6 +324,13 @@ export function LayouterPage() {
           duplicate();
           return;
         }
+        if (key === 'a') {
+          // The storey, not the building: every other selection verb here is scoped to the
+          // floor being edited, and a selection spanning storeys could not be dragged.
+          event.preventDefault();
+          setSelectedIds((plan.floors[activeFloor]?.items ?? []).map((item) => item.id));
+          return;
+        }
         return;
       }
 
@@ -300,7 +367,7 @@ export function LayouterPage() {
           break;
         case 'Delete':
         case 'Backspace':
-          if (selectedId) {
+          if (selectedIds.length > 0) {
             event.preventDefault();
             remove();
           }
@@ -314,25 +381,25 @@ export function LayouterPage() {
           setFloorIndex((index) => Math.min(plan.floors.length - 1, index + 1));
           break;
         case 'ArrowLeft':
-          if (selectedId) {
+          if (selectedIds.length > 0) {
             event.preventDefault();
             nudge(-1, 0);
           }
           break;
         case 'ArrowRight':
-          if (selectedId) {
+          if (selectedIds.length > 0) {
             event.preventDefault();
             nudge(1, 0);
           }
           break;
         case 'ArrowUp':
-          if (selectedId) {
+          if (selectedIds.length > 0) {
             event.preventDefault();
             nudge(0, -1);
           }
           break;
         case 'ArrowDown':
-          if (selectedId) {
+          if (selectedIds.length > 0) {
             event.preventDefault();
             nudge(0, 1);
           }
@@ -344,7 +411,19 @@ export function LayouterPage() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [session, selectedId, remove, nudge, copy, paste, duplicate, help, plan.floors.length]);
+  }, [
+    session,
+    selectedIds,
+    remove,
+    nudge,
+    copy,
+    paste,
+    duplicate,
+    help,
+    plan.floors,
+    activeFloor,
+    setSelectedId,
+  ]);
 
   // --- hand-off ----------------------------------------------------------
 
@@ -482,16 +561,45 @@ export function LayouterPage() {
           />
         </Section>
 
-        <Section id="layouter-inspector" title="Selection" summary={selected?.item.kind ?? 'none'}>
-          <Inspector
-            plan={plan}
-            item={selected?.item ?? null}
-            floorIndex={selected?.floorIndex ?? activeFloor}
-            onChange={change}
-            onDelete={remove}
-            onDuplicate={duplicate}
-            onSendToFloor={sendToFloor}
-          />
+        <Section
+          id="layouter-inspector"
+          title="Selection"
+          summary={
+            selectedIds.length > 1
+              ? `${selectedIds.length} items`
+              : selected?.item.kind ?? 'none'
+          }
+        >
+          {selectedItems.length > 1 ? (
+            <ArrangePanel
+              count={selectedItems.length}
+              onAlign={(mode) =>
+                arrange(
+                  alignOffsets(selectedItems, selectedIds, plan.wallThickness, plan.storeyHeight, mode),
+                  'align',
+                )
+              }
+              onDistribute={(axis) =>
+                arrange(
+                  distributeOffsets(selectedItems, selectedIds, plan.wallThickness, plan.storeyHeight, axis),
+                  'space out',
+                )
+              }
+              canDistribute={selectedItems.length > 2}
+              onDelete={remove}
+              onDuplicate={duplicate}
+            />
+          ) : (
+            <Inspector
+              plan={plan}
+              item={selected?.item ?? null}
+              floorIndex={selected?.floorIndex ?? activeFloor}
+              onChange={change}
+              onDelete={remove}
+              onDuplicate={duplicate}
+              onSendToFloor={sendToFloor}
+            />
+          )}
         </Section>
 
         {/* Between the selection and the building settings: it is a reading of what has been
@@ -642,11 +750,12 @@ export function LayouterPage() {
           plan={plan}
           floorIndex={activeFloor}
           tool={tool}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
           unreachable={validation.unreachable}
           showBelow={showBelow}
           fitNonce={fitNonce}
           onSelect={setSelectedId}
+          onSelectMany={setSelectedIds}
           onBeginGesture={session.mark}
           onCreate={create}
           onPreview={previewChange}

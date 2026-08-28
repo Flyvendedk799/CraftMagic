@@ -1191,3 +1191,59 @@
   font-size: var(--text-2xs);
   color: var(--muted);
 }
+
+/* --- the box selection -------------------------------------------------------
+ *
+ * Sits where the box tool's mode row used to, and is taller than it was, because the box now
+ * outlives the click that made it and has more than one thing to say about itself.
+ */
+.region {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.region__what {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.region__where {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+/* Six across: the three axis pairs land as −X +X / −Y +Y / −Z +Z reading left to right, which
+   is the order they are named in everywhere else in the editor. */
+.region__grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--space-1);
+}
+
+.region__nudge {
+  padding: var(--space-1) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.region__nudge:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.region__nudge--wide {
+  grid-column: span 2;
+  font-family: inherit;
+  font-size: var(--text-xs);
+}

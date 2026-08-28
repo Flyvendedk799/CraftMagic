@@ -13,23 +13,15 @@
 
 import type { BlockRef } from '@craftmagic/core';
 import { BlockPicker } from './BlockPicker.js';
-import type { BoxCorner, BoxMode } from './tools/boxSelect.js';
+import { RegionPanel, type RegionAction } from './RegionPanel.js';
+import type { BoxCorner } from './tools/boxSelect.js';
 import { MAX_BRUSH_RADIUS, type BrushShape } from './tools/brush.js';
 import type { Clip, StampMode } from './tools/clipboard.js';
 import { TOOL_BY_ID, TOOLS, type ToolId } from './toolset.js';
 
 export type { ToolId } from './toolset.js';
+export type { RegionAction } from './RegionPanel.js';
 
-/** What the box tool's second click does. `copy` is the one that does not edit anything. */
-export type BoxAction = BoxMode | 'copy';
-
-const BOX_ACTIONS: readonly { id: BoxAction; label: string; title: string }[] = [
-  { id: 'fill', label: 'Fill', title: 'Every cell in the box' },
-  { id: 'replace', label: 'Replace', title: 'Only cells that already hold a block' },
-  { id: 'hollow', label: 'Hollow', title: 'Only the six faces of the box — a room, not a slab' },
-  { id: 'clear', label: 'Clear', title: 'Empty the box' },
-  { id: 'copy', label: 'Copy', title: 'Take the region to the clipboard, changing nothing' },
-];
 
 const STAMP_MODES: readonly { id: StampMode; label: string; title: string }[] = [
   { id: 'merge', label: 'Merge', title: 'Empty cells in the clipboard leave the build alone' },
@@ -42,8 +34,13 @@ export interface ToolPaletteProps {
   block: BlockRef;
   onBlock: (block: BlockRef) => void;
 
-  boxAction: BoxAction;
-  onBoxAction: (mode: BoxAction) => void;
+  /** The box that is standing, once both corners are down. */
+  region: { min: BoxCorner; max: BoxCorner } | null;
+  regionFilled: number;
+  onRegionAction: (action: RegionAction) => void;
+  onRegionNudge: (dx: number, dy: number, dz: number) => void;
+  onRegionResize: (by: number) => void;
+  onDeselectRegion: () => void;
   /** First corner of a box or line in progress, if any. */
   anchor: BoxCorner | null;
   onClearAnchor: () => void;
@@ -105,9 +102,7 @@ export function ToolPalette(props: ToolPaletteProps) {
       </div>
 
       <p className="tools__hint">
-        {props.tool === 'select' && props.boxAction === 'copy'
-          ? 'Click two opposite corners to copy that region to the clipboard.'
-          : spec.hint}{' '}
+        {spec.hint}{' '}
         <button type="button" className="tools__inline" onClick={props.onShowHelp}>
           shortcuts
         </button>
@@ -153,30 +148,16 @@ export function ToolPalette(props: ToolPaletteProps) {
       {spec.needsBlock && <BlockPicker value={props.block} onChange={props.onBlock} />}
 
       {props.tool === 'select' && (
-        <>
-          <div className="tools__row tools__row--modes">
-            {BOX_ACTIONS.map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                className="tools__mode"
-                aria-pressed={props.boxAction === mode.id}
-                title={mode.title}
-                onClick={() => props.onBoxAction(mode.id)}
-              >
-                {mode.label}
-              </button>
-            ))}
-          </div>
-          {props.anchor && (
-            <p className="tools__hint">
-              Corner at {props.anchor.x}, {props.anchor.y}, {props.anchor.z} —{' '}
-              <button type="button" className="tools__inline" onClick={props.onClearAnchor}>
-                cancel
-              </button>
-            </p>
-          )}
-        </>
+        <RegionPanel
+          region={props.region}
+          anchor={props.anchor}
+          onCancelAnchor={props.onClearAnchor}
+          onAction={props.onRegionAction}
+          onNudge={props.onRegionNudge}
+          onResize={props.onRegionResize}
+          onDeselect={props.onDeselectRegion}
+          filled={props.regionFilled}
+        />
       )}
 
       {props.tool === 'line' && props.anchor && (

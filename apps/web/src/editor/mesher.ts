@@ -89,6 +89,13 @@ const FACES: readonly FaceSpec[] = [
   { n: [-1, 0, 0], o: [0, 0, 0], u: [0, 0, 1], v: [0, 1, 0], shade: 0.6 },
 ];
 
+/**
+ * Which face of a voxel a cut through each side of a clip box exposes, as an index into
+ * `FACES`. The order matches `ClipBox`'s own — minX, maxX, minY, maxY, minZ, maxZ — so a
+ * caller holding a mask over the box's faces can reuse the same bit positions here.
+ */
+const CUT_FACE: readonly number[] = [5, 4, 1, 0, 2, 3];
+
 /** Occlusion level 0..3 → brightness multiplier. The classic Minecraft-ish ramp. */
 const AO_FACTOR = [0.5, 0.65, 0.8, 1.0] as const;
 
@@ -300,6 +307,137 @@ class QuadSink {
     indices.set(this.indices);
     this.indices = indices;
   }
+}
+
+/**
+ * A box to keep, in inclusive block coordinates. An absent face is not cut.
+ *
+ * Structurally the renderer's `ClipBox`, restated here so this module keeps its no-imports
+ * property and stays usable away from the editor.
+ */
+export interface CutBox {
+  minX?: number | null;
+  maxX?: number | null;
+  minY?: number | null;
+  maxY?: number | null;
+  minZ?: number | null;
+  maxZ?: number | null;
+}
+
+/**
+ * The skin of a cutaway: the faces a cut through solid material exposes.
+ *
+ * A voxel mesher culls the face between two solid blocks, because nothing can ever see it.
+ * Hiding half a building behind clipping planes breaks that promise — those faces are gone
+ * from the geometry rather than merely hidden, so the cut looks straight through whatever it
+ * passed through. In a floorplan that is not a subtle artefact. The party wall between two
+ * rooms has its top face culled against the ceiling, so a storey cutaway seen from above
+ * shows a one-block slot of background exactly where the shared wall is: two rooms that share
+ * a wall read as two rooms with a gap between them, and the plan looks like it lied.
+ *
+ * The repair is the mirror image of the cull. A cut face is precisely a face the mesher
+ * declined to emit *because* of a neighbour the cut has since hidden, so walking the six
+ * planes of the box and emitting those — and only those — restores the surface without ever
+ * double-covering a face that was already drawn.
+ *
+ * Cost is per unit of cut *area*, not volume, and the box moves far more often than the
+ * voxels do. That is what keeps a scrubbed layer slider affordable: the chunks stay meshed
+ * and clipped exactly as they were, and only this skin is rebuilt.
+ */
+export function meshCuts(
+  src: MeshSource,
+  box: CutBox,
+): { opaque: MeshBuffers | null; transparent: MeshBuffers | null } {
+  const { size, voxels, paletteColors, paletteFlags } = src;
+  const layer = size.x * size.z;
+  const limit: readonly number[] = [size.x, size.y, size.z];
+
+  const opaque = new QuadSink();
+  const transparent = new QuadSink();
+
+  const at = (x: number, y: number, z: number): number =>
+    x < 0 || y < 0 || z < 0 || x >= size.x || y >= size.y || z >= size.z
+      ? 0
+      : voxels[x + z * size.x + y * layer]!;
+
+  const faces: (number | null | undefined)[] = [
+    box.minX,
+    box.maxX,
+    box.minY,
+    box.maxY,
+    box.minZ,
+    box.maxZ,
+  ];
+
+  const pos = new Float32Array(12);
+  const col = new Uint8Array(12);
+
+  for (let bi = 0; bi < faces.length; bi++) {
+    const bound = faces[bi];
+    if (bound === null || bound === undefined) continue;
+
+    const axis = bi >> 1;
+    // A cut outside the grid, or on its outermost cell facing outwards, exposes nothing:
+    // there was never a neighbour there for the mesher to cull against.
+    if (bound < 0 || bound >= limit[axis]!) continue;
+    if (bi % 2 === 0 ? bound === 0 : bound === limit[axis]! - 1) continue;
+
+    const f = FACES[CUT_FACE[bi]!]!;
+    // The two axes the cut plane spans: x,y,z with the cut's own axis removed.
+    const spanA = axis === 0 ? 1 : 0;
+    const spanB = axis === 2 ? 1 : 2;
+    const cell = [0, 0, 0];
+    cell[axis] = bound;
+
+    for (let a = 0; a < limit[spanA]!; a++) {
+      cell[spanA] = a;
+      for (let b = 0; b < limit[spanB]!; b++) {
+        cell[spanB] = b;
+        const x = cell[0]!;
+        const y = cell[1]!;
+        const z = cell[2]!;
+
+        const self = voxels[x + z * size.x + y * layer]!;
+        if (self === 0) continue;
+
+        const neighbour = at(x + f.n[0]!, y + f.n[1]!, z + f.n[2]!);
+        // Exactly the mesher's cull test, negated: emit only where it stayed silent.
+        if (neighbour === 0) continue;
+        const selfTransparent = (paletteFlags[self]! & FLAG_TRANSPARENT) !== 0;
+        if (
+          (paletteFlags[neighbour]! & FLAG_TRANSPARENT) !== 0 &&
+          !(selfTransparent && neighbour === self)
+        ) {
+          continue;
+        }
+
+        const shade = (paletteFlags[self]! & FLAG_EMISSIVE) !== 0 ? 1 : f.shade;
+        const cBase = self * 3;
+        // No ambient occlusion. Every occluder a cut face would sample lives on the far side
+        // of the cut — the half deliberately hidden — so shading with them would darken the
+        // surface using geometry the viewer has been shown none of.
+        const r = paletteColors[cBase]! * shade + 0.5;
+        const g = paletteColors[cBase + 1]! * shade + 0.5;
+        const bl = paletteColors[cBase + 2]! * shade + 0.5;
+
+        for (let k = 0; k < 4; k++) {
+          const cu = CORNER_U[k]!;
+          const cv = CORNER_V[k]!;
+          const p = k * 3;
+          pos[p] = x + f.o[0]! + f.u[0]! * cu + f.v[0]! * cv;
+          pos[p + 1] = y + f.o[1]! + f.u[1]! * cu + f.v[1]! * cv;
+          pos[p + 2] = z + f.o[2]! + f.u[2]! * cu + f.v[2]! * cv;
+          col[p] = r;
+          col[p + 1] = g;
+          col[p + 2] = bl;
+        }
+
+        (selfTransparent ? transparent : opaque).push(pos, col, false);
+      }
+    }
+  }
+
+  return { opaque: opaque.take(), transparent: transparent.take() };
 }
 
 /* ---------------------------------------------------------------------------------------

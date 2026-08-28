@@ -23,6 +23,10 @@
 import type { Face } from '@craftmagic/core';
 import type { LayoutPlan, PlanAxis, PlanItem, Rect, RoomItem } from './plan.js';
 
+// Re-exported because every caller that measures with this module also has to name what it
+// measured, and importing the two halves from two files invites them to drift.
+export type { Rect } from './plan.js';
+
 /** How near a dragged edge has to be, in blocks, before it snaps to a neighbour. */
 export const EDGE_SNAP = 2;
 

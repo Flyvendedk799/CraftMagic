@@ -34,7 +34,7 @@ export const LAYOUT_TOOLS: readonly LayoutToolSpec[] = [
   {
     id: 'select',
     label: 'Select',
-    hint: 'Click to select, drag to move, drag a corner to resize. Delete removes.',
+    hint: 'Click to select, drag to move, drag a corner to resize. Shift-click or rubber-band the empty plan to pick several, then align them.',
     gesture: 'click',
     verb: 'select',
     key: '1',

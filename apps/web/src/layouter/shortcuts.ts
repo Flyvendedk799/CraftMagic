@@ -29,7 +29,10 @@ export const LAYOUTER_SHORTCUTS: readonly ShortcutGroup[] = [
   {
     title: 'Selection',
     rows: [
-      { keys: 'Arrows', what: 'Nudge the selection one block' },
+      { keys: 'Shift + click', what: 'Add or remove one item from the selection' },
+      { keys: 'Drag empty plan', what: 'Rubber-band everything the box encloses' },
+      { keys: 'Ctrl + A', what: 'Select everything on this storey' },
+      { keys: 'Arrows', what: 'Nudge the selection one block — all of it' },
       { keys: 'Ctrl + C', what: 'Copy the selection' },
       { keys: 'Ctrl + V', what: 'Paste onto the storey you are on' },
       { keys: 'Ctrl + D', what: 'Duplicate in place, offset by two blocks' },

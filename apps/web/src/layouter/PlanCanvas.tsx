@@ -337,10 +337,7 @@ export function PlanCanvas({
     const clamped = clampRectToSite(rect, plan.site);
 
     if (tool === 'room') {
-      const snapped = clampRectToSite(
-        snapRoomRect(clamped, roomRects(items), plan.wallThickness, 'draw'),
-        plan.site,
-      );
+      const snapped = draftFor('room', from, to, plan, items);
       if (snapped.w < 3 || snapped.d < 3) {
         onNotice('A room needs to be at least 3×3 — anything smaller has no inside once its walls are built.');
         return;
@@ -423,7 +420,7 @@ export function PlanCanvas({
   const viewWidth = (bounds?.width ?? 800) / view.scale;
   const viewHeight = (bounds?.height ?? 600) / view.scale;
 
-  const draft = drag?.kind === 'draw' ? clampRectToSite(rectFromPoints(drag.from, drag.to), plan.site) : null;
+  const draft = drag?.kind === 'draw' ? draftFor(tool, drag.from, drag.to, plan, items) : null;
   const ghost = cursor && !drag ? ghostFor(tool, cursor, plan, runs) : null;
 
   const selectedItem = selectedId ? items.find((entry) => entry.id === selectedId) ?? null : null;
@@ -442,7 +439,7 @@ export function PlanCanvas({
       ? { rect: itemFootprint(selectedItem, plan.wallThickness, plan.storeyHeight), axes: measuredAxes(selectedItem), live: drag !== null }
       : null;
 
-  const badge = drag ? badgeFor(drag, items, plan) : null;
+  const badge = drag ? badgeFor(drag, items, plan, tool) : null;
 
   /**
    * Lines showing what the thing being dragged has lined up with.
@@ -456,7 +453,7 @@ export function PlanCanvas({
     if (!drag || drag.kind === 'pan') return [];
     const subject =
       drag.kind === 'draw'
-        ? clampRectToSite(rectFromPoints(drag.from, drag.to), plan.site)
+        ? draftFor(tool, drag.from, drag.to, plan, items)
         : items.find((entry) => entry.id === drag.id);
     if (!subject) return [];
     const rect = 'kind' in subject ? itemFootprint(subject, plan.wallThickness, plan.storeyHeight) : subject;
@@ -626,9 +623,16 @@ function measuredAxes(item: PlanItem): 'both' | 'x' | 'z' {
  * is about its area, moving one is about how far it has come, and resizing is about the size
  * it is heading for. A single "w × d" for all three would answer the question only once.
  */
-function badgeFor(drag: Drag, items: readonly PlanItem[], plan: LayoutPlan): string[] | null {
+function badgeFor(
+  drag: Drag,
+  items: readonly PlanItem[],
+  plan: LayoutPlan,
+  tool: LayoutToolId,
+): string[] | null {
   if (drag.kind === 'draw') {
-    const rect = clampRectToSite(rectFromPoints(drag.from, drag.to), plan.site);
+    // The snapped rect, like everything else that describes this gesture — the readout is
+    // the most explicit of the four, so it is the one a wrong number is least forgivable in.
+    const rect = draftFor(tool, drag.from, drag.to, plan, items);
     const inner = Math.max(0, rect.w - plan.wallThickness * 2) * Math.max(0, rect.d - plan.wallThickness * 2);
     return inner > 0
       ? [`${rect.w} × ${rect.d}`, `${inner} blocks inside`]
@@ -649,6 +653,27 @@ function badgeFor(drag: Drag, items: readonly PlanItem[], plan: LayoutPlan): str
   }
 
   return null;
+}
+
+/**
+ * The rectangle a drag would actually produce, snapping included.
+ *
+ * Shared by the outline, the dimensions, the alignment guides and the commit, because they
+ * used to disagree: the preview drew the raw drag while the commit ran the edge snap, so a
+ * room dragged against a neighbour was previewed in one place and created in another — and
+ * once the preview grew a dimension readout, it was confidently reporting a size that was
+ * not the size you got.
+ */
+function draftFor(
+  tool: LayoutToolId,
+  from: Point,
+  to: Point,
+  plan: LayoutPlan,
+  items: readonly PlanItem[],
+): Rect {
+  const clamped = clampRectToSite(rectFromPoints(from, to), plan.site);
+  if (tool !== 'room') return clamped;
+  return clampRectToSite(snapRoomRect(clamped, roomRects(items), plan.wallThickness, 'draw'), plan.site);
 }
 
 function isDragTool(tool: LayoutToolId): boolean {

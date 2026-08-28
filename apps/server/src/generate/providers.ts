@@ -89,7 +89,19 @@ function countComponents(partialJson: string): number {
 
 class AnthropicSession implements ProviderSession {
   private readonly messages: Anthropic.MessageParam[] = [];
-  private lastToolUseId: string | null = null;
+  /**
+   * Every `tool_use` id in the last assistant turn, not just the one we read.
+   *
+   * The API's rule is total: a message following a turn that made tool calls must answer
+   * *all* of them, in that one message. Answering only the call we cared about is a 400 —
+   *
+   *   messages.2: `tool_use` ids were found without `tool_result` blocks immediately after
+   *
+   * — which is a strange thing to be told when your tool was invoked correctly and you replied
+   * to it. Holding one id was fine for as long as the model returned one block, and became a
+   * failed generation the moment it returned four.
+   */
+  private lastToolUseIds: string[] = [];
 
   constructor(
     private readonly client: Anthropic,
@@ -102,11 +114,31 @@ class AnthropicSession implements ProviderSession {
   }
 
   async repair(problems: string): Promise<ProviderReply> {
-    if (!this.lastToolUseId) throw new Error('repair() called before emit()');
+    // Still a misuse check, but on the right thing. It used to test the tool id, which
+    // conflated "nobody has called emit()" with "the model answered in prose" — the second
+    // is a normal outcome the branch below handles.
+    if (this.messages.length === 0) throw new Error('repair() called before emit()');
+    const [answered, ...alsoCalled] = this.lastToolUseIds;
+
+    // No tool call to answer — the model replied in prose. A tool_result would be invalid
+    // here, so the problems go back as an ordinary message.
+    if (answered === undefined) {
+      this.messages.push({ role: 'user', content: problems });
+      return this.call();
+    }
+
     this.messages.push({
       role: 'user',
       content: [
-        { type: 'tool_result', tool_use_id: this.lastToolUseId, content: problems, is_error: true },
+        { type: 'tool_result', tool_use_id: answered, content: problems, is_error: true },
+        // The rest get an answer too, because the API requires one, and an honest one: their
+        // output was never looked at. Silently dropping them is the 400.
+        ...alsoCalled.map((id) => ({
+          type: 'tool_result' as const,
+          tool_use_id: id,
+          content: 'Not read — only the first program in a turn is used. Emit exactly one.',
+          is_error: true,
+        })),
       ],
     });
     return this.call();
@@ -143,7 +175,10 @@ class AnthropicSession implements ProviderSession {
             // use rejects outright. ajv and the expander enforce it on our side instead.
           },
         ],
-        tool_choice: { type: 'tool', name: TOOL_NAME },
+        // One call per turn. The program is a single object, so a second copy of it is never
+        // what anyone wanted — and a turn with several calls in it is what produced the 400
+        // above. Asking for one is better than coping with four.
+        tool_choice: { type: 'tool', name: TOOL_NAME, disable_parallel_tool_use: true },
         messages: this.messages,
       },
       this.options.signal ? { signal: this.options.signal } : undefined,
@@ -162,10 +197,14 @@ class AnthropicSession implements ProviderSession {
     // Kept so the repair round can attach its tool_result to this exact assistant turn.
     this.messages.push({ role: 'assistant', content: message.content });
 
-    const toolUse = message.content.find(
-      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use' && block.name === TOOL_NAME,
+    // Every id, including calls to tools we never registered: the rule is about the ids in
+    // the turn, not about the ones we find interesting.
+    const allToolUse = message.content.filter(
+      (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
     );
-    this.lastToolUseId = toolUse?.id ?? this.lastToolUseId;
+    this.lastToolUseIds = allToolUse.map((block) => block.id);
+
+    const toolUse = allToolUse.find((block) => block.name === TOOL_NAME);
 
     return {
       input: toolUse?.input,
@@ -175,8 +214,11 @@ class AnthropicSession implements ProviderSession {
   }
 }
 
-export function anthropicProvider(apiKey: string): Provider {
-  const client = new Anthropic({ apiKey });
+/**
+ * @param client Injectable so the session's message bookkeeping can be tested without a
+ *   network. The shape of what we send is exactly what a live call hides behind a 400.
+ */
+export function anthropicProvider(apiKey: string, client: Anthropic = new Anthropic({ apiKey })): Provider {
   return {
     id: 'anthropic',
     session: (options) => new AnthropicSession(client, options),

@@ -159,9 +159,17 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 
 		app.post('/api/generations/estimate', async (request, reply) => {
 			const ai = await options.resolveAi();
-			if (!ai.ready) return reply.code(503).send({ error: 'no_api_key' });
-			// Free to the caller, but it still reaches the provider and consumes a rate limit
-			// shared with the paid path.
+			// Deliberately no readiness gate. Estimating needs a credential only on the one
+			// branch below that asks Anthropic to count tokens for free, and that branch already
+			// tests for the key it needs; every other path is local arithmetic over the prompt
+			// and the schema.
+			//
+			// The gate that used to be here asked `resolveAi`, which answers about the *machine*
+			// — is there a `claude` login on this box. A deployment whose credentials are
+			// per-account has no machine login by design, so the answer was always no, and the
+			// estimate refused with "no_api_key" on a server that was generating happily. It
+			// went unnoticed because generation itself resolves the credential per user, a few
+			// lines further down, and only this route disagreed.
 			if (!(await payingUser(request, reply))) return;
 
 			const prompt = readPrompt(request.body);

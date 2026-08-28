@@ -175,21 +175,50 @@ withDb('POST /api/generations', () => {
 withDb('generation without an API key', () => {
 	it('answers 503 rather than failing to start', async () => {
 		// Production deliberately runs with no key, so an unauthenticated port cannot spend
-		// money. That must be a working server with one feature off, not a crash — and the key
-		// check comes first, so it is the answer even for a signed-out caller.
+		// money. That must be a working server with one feature off, not a crash.
 		const keyless = await buildTestApp(db!, { apiKey: undefined });
 		try {
 			const user = await keyless.signUp('nokey');
 
-			for (const url of ['/api/generations', '/api/generations/estimate']) {
-				const response = await keyless.call('POST', url, { cookie: user.cookie, body: { prompt: 'a hut' } });
-				expect(response.status).toBe(503);
-				expect(response.body.error).toBe('no_api_key');
-			}
+			const generate = await keyless.call('POST', '/api/generations', {
+				cookie: user.cookie,
+				body: { prompt: 'a hut' },
+			});
+			expect(generate.status).toBe(503);
+			expect(generate.body.error).toBe('no_api_key');
 
 			// The rest of the server is unaffected.
 			expect((await keyless.call('GET', '/api/me', { cookie: user.cookie })).status).toBe(200);
 			expect((await keyless.call('GET', '/api/spend')).status).toBe(200);
+		} finally {
+			await keyless.app.close();
+		}
+	});
+
+	it('still estimates without a key, because an estimate spends nothing', async () => {
+		// The estimate used to 503 alongside generation, on the reasoning that a keyless
+		// deployment should refuse anything provider-shaped. But it is not provider-shaped: with
+		// no key it counts tokens locally and prices them from the table, touching nothing.
+		//
+		// Refusing it broke a real deployment. Readiness is a fact about the *machine* — is
+		// there a `claude` login on this box — and a deployment whose credentials are
+		// per-account has none by design, so "Estimate (free)" returned no_api_key on a server
+		// that was generating happily.
+		const keyless = await buildTestApp(db!, { apiKey: undefined });
+		try {
+			const user = await keyless.signUp('nokey-estimate');
+			const response = await keyless.call('POST', '/api/generations/estimate', {
+				cookie: user.cookie,
+				body: { prompt: 'a hut' },
+			});
+
+			expect(response.status).toBe(200);
+			expect(response.body.inputTokens).toBeGreaterThan(0);
+			// Local approximation, and it says so rather than implying the provider counted.
+			expect(response.body.exact).toBe(false);
+
+			// Signing in is still required: free to run is not the same as open to anyone.
+			expect((await keyless.call('POST', '/api/generations/estimate', { body: { prompt: 'a hut' } })).status).toBe(401);
 		} finally {
 			await keyless.app.close();
 		}

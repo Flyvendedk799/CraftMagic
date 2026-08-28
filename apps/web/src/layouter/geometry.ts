@@ -445,12 +445,22 @@ export function snapRoomRect(
       return;
     }
 
-    if (bestLow !== null) {
-      out[sizeKey] += out[lowKey] - bestLow;
+    // Drawing keeps the size too, unless *both* edges found a neighbour — in which case the
+    // gap between them decides it, because a room dragged roughly into a slot between two
+    // others is asking to fill that slot exactly.
+    //
+    // Snapping one edge and leaving the other where the pointer happened to be is what this
+    // used to do, and it silently resized every room that touched a neighbour: four rooms
+    // drawn as 6x6 in a two-by-two came out 6x6, 7x6, 6x7 and 7x7. The overlap that makes two
+    // rooms share a wall is one block, so every snapped side grew by one — and nothing in the
+    // drawing said so.
+    if (bestLow !== null && bestHigh !== null) {
       out[lowKey] = bestLow;
+      out[sizeKey] = Math.max(1, bestHigh - bestLow);
+      return;
     }
-    if (bestHigh !== null) out[sizeKey] = bestHigh - out[lowKey];
-    out[sizeKey] = Math.max(1, out[sizeKey]);
+    if (bestLow !== null) out[lowKey] = bestLow;
+    else if (bestHigh !== null) out[lowKey] = bestHigh - out[sizeKey];
   };
 
   snapAxis('x', 'w', (r) => r.x, rectRight);

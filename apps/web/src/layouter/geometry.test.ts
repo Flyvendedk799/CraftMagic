@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   alignmentGuides,
+  rectRight,
   containsRect,
   itemFootprint,
   hitTest,
@@ -192,5 +193,65 @@ describe('itemFootprint', () => {
   it('so a click anywhere along a flight selects it', () => {
     const stair = createStair(5, 5, 'south', { width: 2 });
     expect(hitTest([stair], 5, 8, 1, 5)?.id).toBe(stair.id);
+  });
+});
+
+describe('snapRoomRect keeps the size you drew', () => {
+  const A = { x: 0, z: 0, w: 6, d: 6 };
+
+  it('shifts a room onto its neighbour instead of stretching it', () => {
+    // Dragged flush against A's east edge. Sharing a wall means overlapping it by the wall
+    // thickness, so the rect has to move one west — and stay 6 wide.
+    expect(snapRoomRect({ x: 6, z: 0, w: 6, d: 6 }, [A], 1, 'draw')).toEqual({ x: 5, z: 0, w: 6, d: 6 });
+  });
+
+  it('tiles a 2×2 of 6×6 rooms into four 6×6 rooms', () => {
+    // The bug this exists for: every snapped side used to grow the room by one, so four rooms
+    // drawn the same size came out 6×6, 7×6, 6×7 and 7×7 and nothing lined up.
+    const drawn = [
+      { x: 0, z: 0, w: 6, d: 6 },
+      { x: 6, z: 0, w: 6, d: 6 },
+      { x: 0, z: 6, w: 6, d: 6 },
+      { x: 6, z: 6, w: 6, d: 6 },
+    ];
+    const placed: typeof drawn = [];
+    for (const rect of drawn) placed.push(snapRoomRect(rect, placed.slice(), 1, 'draw'));
+
+    expect(placed.map((r) => `${r.w}x${r.d}`)).toEqual(['6x6', '6x6', '6x6', '6x6']);
+    expect(placed.map((r) => `${r.x},${r.z}`)).toEqual(['0,0', '5,0', '0,5', '5,5']);
+  });
+
+  it('still resizes to fill a gap, when both edges find a neighbour', () => {
+    // The one case where the drawn size cannot be honoured, and should not be: a room dragged
+    // roughly into a slot between two others is asking to fill the slot exactly.
+    const east = { x: 14, z: 0, w: 6, d: 6 };
+    const filled = snapRoomRect({ x: 6, z: 0, w: 7, d: 6 }, [A, east], 1, 'draw');
+    expect(filled.x).toBe(5);
+    expect(filled.x + filled.w).toBe(15);
+  });
+
+  it('leaves a room alone when nothing is near enough to snap to', () => {
+    expect(snapRoomRect({ x: 20, z: 20, w: 6, d: 6 }, [A], 1, 'draw')).toEqual({
+      x: 20,
+      z: 20,
+      w: 6,
+      d: 6,
+    });
+  });
+
+  it('never resizes on a move, whichever edge is nearer', () => {
+    expect(snapRoomRect({ x: 6, z: 0, w: 9, d: 4 }, [A], 1, 'move')).toMatchObject({ w: 9, d: 4 });
+  });
+
+  it('shares exactly one wall thickness, so two rooms have one wall between them', () => {
+    const b = snapRoomRect({ x: 6, z: 0, w: 6, d: 6 }, [A], 1, 'draw');
+    // A covers x 0..5, B covers 5..10: they share column 5 and nothing more.
+    expect(rectRight(A) - b.x).toBe(1);
+  });
+
+  it('shares a thicker wall when the plan has one', () => {
+    const b = snapRoomRect({ x: 6, z: 0, w: 6, d: 6 }, [A], 2, 'draw');
+    expect(rectRight(A) - b.x).toBe(2);
+    expect(b.w).toBe(6);
   });
 });

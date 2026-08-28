@@ -24,6 +24,6 @@
   "allowScripts": {
     "esbuild@0.25.12": true,
     "esbuild@0.21.5": true,
-    "@flyvendedk799/ai-auth@0.4.0": true
+    "@flyvendedk799/ai-auth@0.5.0": true
   }
 }

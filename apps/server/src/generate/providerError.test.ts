@@ -15,7 +15,11 @@ describe('describeProviderError', () => {
 
     // A plan is shared with everything signed in to it, so "another tool is using it" is the
     // likely cause and has to be said. A key is not shared, so it would be a red herring.
-    expect(onPlan).toMatch(/plan is rate-limited/i);
+    // Leads with the model, because a plan meters each one separately and switching model is
+    // the fix that works immediately — diagnosed on a deployment where Haiku answered 200 in
+    // the same second Sonnet was refused.
+    expect(onPlan).toMatch(/refused this call for `claude-sonnet-5`/);
+    expect(onPlan).toMatch(/limits each model separately/);
     expect(onPlan).toMatch(/claude` CLI/);
     expect(onKey).toMatch(/rate-limiting this key/i);
     expect(onKey).not.toMatch(/CLI/);

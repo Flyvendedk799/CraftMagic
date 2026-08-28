@@ -55,10 +55,19 @@ export function translated(parent: Frame, by: Vec3): Frame {
  * North (-Z) maps to east (+X), which in these coordinates is `(x, z) -> (-z, x)` about the
  * pivot. Getting the handedness wrong here mirrors every rotated build, so it is pinned by
  * a test rather than left to inspection.
+ *
+ * The pivot may sit half a block off an integer — the middle of an even-width build does —
+ * so the two constants the rotation actually needs are rounded once, here, rather than every
+ * coordinate being rounded as it goes through. On a square footprint, which is the only shape
+ * a quarter-turn about the centre lands back inside, both are whole numbers anyway.
  */
 export function rotated(parent: Frame, times: number, pivot: Vec3): Frame {
 	const steps = ((times % 4) + 4) % 4;
 	if (steps === 0) return parent;
+
+	// (x,z) -> (sum - z, x - difference), which is the quarter-turn written without the pivot.
+	const sum = Math.round(pivot[0] + pivot[2]);
+	const difference = Math.round(pivot[0] - pivot[2]);
 
 	return {
 		rotation: (parent.rotation + steps) % 4,
@@ -68,10 +77,9 @@ export function rotated(parent: Frame, times: number, pivot: Vec3): Frame {
 			let cx = x;
 			let cz = z;
 			for (let i = 0; i < steps; i++) {
-				const dx = cx - pivot[0];
-				const dz = cz - pivot[2];
-				cx = pivot[0] - dz;
-				cz = pivot[2] + dx;
+				const nx = sum - cz;
+				cz = cx - difference;
+				cx = nx;
 			}
 			return parent.map(cx, y, cz);
 		},
@@ -79,13 +87,22 @@ export function rotated(parent: Frame, times: number, pivot: Vec3): Frame {
 	};
 }
 
+/**
+ * Reflect across a plane.
+ *
+ * The pivot is doubled rather than used directly, so a half-block pivot — the exact middle of
+ * an axis an even number of blocks long — reflects to whole coordinates. Rounding the pivot to
+ * a block instead is what used to land the mirror image of a wall one block short of the
+ * opposite wall, leaving a build that was symmetric by construction visibly off-centre.
+ */
 export function mirrored(parent: Frame, axis: 'x' | 'z', pivot: Vec3): Frame {
+	const twice = Math.round(2 * (axis === 'x' ? pivot[0] : pivot[2]));
 	return {
 		rotation: parent.rotation,
 		mirrorX: axis === 'x' ? !parent.mirrorX : parent.mirrorX,
 		mirrorZ: axis === 'z' ? !parent.mirrorZ : parent.mirrorZ,
 		map: (x, y, z) =>
-			axis === 'x' ? parent.map(2 * pivot[0] - x, y, z) : parent.map(x, y, 2 * pivot[2] - z),
+			axis === 'x' ? parent.map(twice - x, y, z) : parent.map(x, y, twice - z),
 		mapBlock: (ref) => parent.mapBlock(mirrorBlock(ref, axis)),
 	};
 }

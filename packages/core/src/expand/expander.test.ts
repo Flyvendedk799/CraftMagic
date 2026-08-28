@@ -594,3 +594,246 @@ describe('expand — scale moves every block, not just the anchored ones', () =>
 		expect(big.blockCount).toBe(2 * (4 * 4) * 2);
 	});
 });
+
+/**
+ * Resizing has to be *faithful*, not merely proportional.
+ *
+ * The bugs these guard against were all one block wide and all very visible: a symmetric
+ * facade whose left half moved a block further than its right, a wall anchored at `max` that
+ * vanished below half scale because its corner rounded past the far edge, a pair of lanterns
+ * that ended up one block apart, and two components designed to meet that came back with a
+ * gap between them. Every one of them came from rounding a position and a length separately,
+ * or from rounding ties in the one direction that a mirror image cannot survive.
+ */
+describe('expand — a resize keeps the design, not just the proportions', () => {
+	const at = (percent: number) => ({ x: percent, y: percent, z: percent });
+	/** Enough factors to catch a rounding rule that only works on the tidy ones. */
+	const FACTORS = [25, 30, 40, 45, 50, 55, 65, 70, 80, 95, 100, 115, 135, 150, 175, 200, 265, 300];
+
+	/**
+	 * A build that is symmetric across X by construction: every component either sits on the
+	 * centre line or has an opposite number the same distance from the other wall.
+	 */
+	const symmetricHall: BuildProgram = {
+		version: 1,
+		meta: { name: 'Symmetric hall' },
+		size: { x: 21, y: 17, z: 13 },
+		palette: {
+			foundation: 'minecraft:stone_bricks',
+			wall_primary: 'minecraft:oak_planks',
+			frame: 'minecraft:oak_log',
+			roof_primary: 'minecraft:oak_stairs',
+			window: 'minecraft:glass',
+			light: 'minecraft:lantern',
+		},
+		components: [
+			{ type: 'box', pos: ['min', 'min', 'min'], size: ['max', 1, 'max'], fill: { type: 'solid', role: 'foundation' } },
+			{
+				type: 'hollow_box',
+				pos: ['min', 1, 'min'],
+				size: ['max', 9, 'max'],
+				wallThickness: 1,
+				fill: { type: 'solid', role: 'wall_primary' },
+			},
+			// A mirrored pair of pillars, two in from each wall.
+			{ type: 'box', pos: [2, 1, 2], size: [1, 9, 1], fill: { type: 'solid', role: 'frame' } },
+			{ type: 'box', pos: ['max-2', 1, 2], size: [1, 9, 1], fill: { type: 'solid', role: 'frame' } },
+			// A mirrored pair of buttresses that touch the wall they lean on.
+			{ type: 'box', pos: [0, 1, 4], size: [2, 6, 2], fill: { type: 'solid', role: 'frame' } },
+			{ type: 'box', pos: ['max-1', 1, 4], size: [2, 6, 2], fill: { type: 'solid', role: 'frame' } },
+			// A column astride the centre line, so it has to stay astride it.
+			{ type: 'box', pos: ['center-1', 1, 'center-1'], size: [3, 9, 3], fill: { type: 'solid', role: 'frame' } },
+			{
+				type: 'window_grid',
+				face: 'south',
+				region: { pos: ['min', 4, 'max'], size: ['max', 3, 1] },
+				rows: 1,
+				cols: 3,
+				windowSize: [2, 2],
+				margin: 2,
+				role: 'window',
+			},
+			{
+				type: 'gable_roof',
+				pos: ['min', 10, 'min'],
+				size: ['max', 7, 'max'],
+				ridgeAxis: 'z',
+				overhang: 1,
+				roofRole: 'roof_primary',
+			},
+		],
+		details: [
+			{ op: 'set', at: [3, 6, 1], block: 'minecraft:lantern' },
+			{ op: 'set', at: ['max-3', 6, 1], block: 'minecraft:lantern' },
+		],
+	};
+
+	/**
+	 * Cells that are filled on one side of the X centre line and empty on the other.
+	 *
+	 * The two middle columns of an even-width build do not count. A build an even number of
+	 * blocks wide has no centre column at all, so anything the program put *astride* the centre
+	 * line — this one's column — has to lean one block to one side of it once a shrink squeezes
+	 * it down to a single block, and no arithmetic can make that symmetric. Every other column
+	 * is expected to match its opposite number exactly, at every factor.
+	 */
+	function asymmetry(grid: VoxelGrid): number {
+		const middle = grid.size.x % 2 === 0 ? [grid.size.x / 2 - 1, grid.size.x / 2] : [];
+		let count = 0;
+		for (let y = 0; y < grid.size.y; y++) {
+			for (let z = 0; z < grid.size.z; z++) {
+				for (let x = 0; x < grid.size.x; x++) {
+					if (middle.includes(x)) continue;
+					const here = grid.voxels[voxelIndex(grid.size, x, y, z)] !== 0;
+					const there = grid.voxels[voxelIndex(grid.size, grid.size.x - 1 - x, y, z)] !== 0;
+					if (here !== there) count++;
+				}
+			}
+		}
+		return count;
+	}
+
+	it('keeps a symmetric build symmetric at every factor', () => {
+		for (const percent of FACTORS) {
+			const result = expand({ ...symmetricHall, scale: at(percent) });
+			expect(result.errors, `${percent}%`).toEqual([]);
+			expect(asymmetry(result.grid), `${percent}% is lopsided`).toBe(0);
+		}
+	});
+
+	it('centres a round tower as well as an odd number of blocks allows', () => {
+		// A cylinder is always an odd number of blocks across — 2r+1 — so one drawn in a volume
+		// an even number of blocks wide cannot sit exactly in the middle of it, whatever the
+		// expander does. Within a block of centre is the whole of what is available here; being
+		// three blocks off, which scaling the radius on its own could manage, is not.
+		const program = withComponents(
+			[{ type: 'cylinder', base: ['center', 0, 'center'], radius: 3, height: 1, fill: { type: 'solid', role: 'a' } }],
+			{ size: { x: 21, y: 1, z: 21 } },
+		);
+
+		for (const percent of FACTORS) {
+			const { grid } = expand({ ...program, scale: at(percent) });
+			let lo = grid.size.x;
+			let hi = -1;
+			for (let x = 0; x < grid.size.x; x++) {
+				if (blockAt(grid, x, 0, Math.floor(grid.size.z / 2)) === AIR_BLOCK) continue;
+				lo = Math.min(lo, x);
+				hi = Math.max(hi, x);
+			}
+			const offCentre = Math.abs(lo - (grid.size.x - 1 - hi));
+			expect(offCentre, `${percent}% is ${offCentre} off centre`).toBeLessThanOrEqual(1);
+		}
+	});
+
+	it('keeps a mirrored group landing on the wall it was mirrored onto', () => {
+		// An even-width build: the reflection has to happen about the half-block between the
+		// two middle columns, or the mirrored copy lands one short of the far wall.
+		const program: BuildProgram = withComponents(
+			[
+				{
+					type: 'group',
+					transform: [{ op: 'mirror', axis: 'x' }],
+					children: [{ type: 'box', pos: ['min', 0, 'min'], size: [1, 1, 1], fill: { type: 'solid', role: 'a' } }],
+				},
+			],
+			{ size: { x: 10, y: 1, z: 1 } },
+		);
+
+		const { grid } = expand(program);
+		expect(blockAt(grid, 9, 0, 0)).toBe('minecraft:stone');
+	});
+
+	it('never drops a wall that was anchored to the far edge', () => {
+		// Below half scale the far corner used to round past the end of the volume, and the
+		// component was not clipped a little — it disappeared.
+		const program = withComponents(
+			[
+				{ type: 'box', pos: ['max', 'min', 'min'], size: [1, 1, 'max'], fill: { type: 'solid', role: 'a' } },
+				{ type: 'box', pos: ['min', 'min', 'min'], size: [1, 1, 'max'], fill: { type: 'solid', role: 'a' } },
+			],
+			{ size: { x: 20, y: 1, z: 20 } },
+		);
+
+		for (const percent of FACTORS) {
+			const { grid } = expand({ ...program, scale: at(percent) });
+			expect(blockAt(grid, grid.size.x - 1, 0, 0), `far wall at ${percent}%`).toBe('minecraft:stone');
+			expect(blockAt(grid, 0, 0, 0), `near wall at ${percent}%`).toBe('minecraft:stone');
+		}
+	});
+
+	it('leaves no seam between two components that were flush against each other', () => {
+		const program = withComponents(
+			[
+				{ type: 'box', pos: [0, 0, 0], size: [7, 1, 1], fill: { type: 'solid', role: 'a' } },
+				{ type: 'box', pos: [7, 0, 0], size: [6, 1, 1], fill: { type: 'solid', role: 'b' } },
+			],
+			{ size: { x: 13, y: 1, z: 1 } },
+		);
+
+		for (const percent of FACTORS) {
+			const { grid } = expand({ ...program, scale: at(percent) });
+			for (let x = 0; x < grid.size.x; x++) {
+				expect(blockAt(grid, x, 0, 0), `hole at ${x} at ${percent}%`).not.toBe(AIR_BLOCK);
+			}
+		}
+	});
+
+	it('scales an arch with the wall it is cut through', () => {
+		// The opening is anchored to the wall's own corner, so it reaches all the way through
+		// at every factor rather than stopping a block short and leaving a blind alcove.
+		const program = withComponents(
+			[
+				{ type: 'box', pos: ['min', 'min', 4], size: ['max', 'max', 3], fill: { type: 'solid', role: 'a' } },
+				{
+					type: 'arch',
+					pos: ['center-2', 'min', 4],
+					width: 5,
+					height: 6,
+					depth: 3,
+					axis: 'x',
+					carve: true,
+					fill: { type: 'solid', role: 'a' },
+				},
+			],
+			{ size: { x: 15, y: 11, z: 11 } },
+		);
+
+		for (const percent of [50, 75, 150, 200]) {
+			const { grid } = expand({ ...program, scale: at(percent) });
+			const wallStart = Math.round((4 * grid.size.z) / 11);
+			const middle = Math.floor(grid.size.x / 2);
+			for (let z = wallStart; z < wallStart + 2; z++) {
+				expect(blockAt(grid, middle, 1, z), `blocked at ${percent}% z=${z}`).toBe(AIR_BLOCK);
+			}
+		}
+	});
+
+	it('keeps a detail on the block it was placed against', () => {
+		// A lantern hung on the top of a wall, at both ends of it. Scaling the wall by its
+		// corners and the lantern by the plain factor is what used to sink one of the two into
+		// the wall and float the other above it.
+		const program = withComponents(
+			[{ type: 'box', pos: ['min', 'min', 'min'], size: ['max', 5, 1], fill: { type: 'solid', role: 'a' } }],
+			{
+				size: { x: 15, y: 9, z: 1 },
+				details: [
+					{ op: 'set', at: [2, 5, 0], block: 'minecraft:lantern' },
+					{ op: 'set', at: ['max-2', 5, 0], block: 'minecraft:lantern' },
+				],
+			},
+		);
+
+		for (const percent of FACTORS) {
+			const { grid } = expand({ ...program, scale: at(percent) });
+			const lanterns: number[] = [];
+			for (let x = 0; x < grid.size.x; x++) {
+				for (let y = 0; y < grid.size.y; y++) {
+					if (blockAt(grid, x, y, 0).startsWith('minecraft:lantern')) lanterns.push(x);
+				}
+			}
+			// Both of them, and the same distance in from each end.
+			expect(lanterns.length, `${percent}%`).toBe(2);
+			expect(lanterns[0], `${percent}%`).toBe(grid.size.x - 1 - lanterns[1]!);
+		}
+	});
+});

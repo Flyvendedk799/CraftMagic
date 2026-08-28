@@ -27,7 +27,7 @@ import type {
 } from '../ir/types.js';
 import { AIR_BLOCK, COMPONENT_TYPES, LIMITS, voxelPosition } from '../ir/types.js';
 import { CoordError, clampParam, resolveCoord } from '../ir/coords.js';
-import { scaleFactors, scaleLen, scalePos, scaledSize, type Size3 } from '../ir/scale.js';
+import { AxisScale, axisScales, scaledSize, type Scale3, type Size3 } from '../ir/scale.js';
 import { validateBlockRef } from '../registry/registry.js';
 import {
 	Brush,
@@ -59,11 +59,11 @@ export function expand(program: BuildProgram, options: ExpandOptions = {}): Expa
 	const provenance = options.provenance === true;
 
 	// Coordinates resolve against the program's *own* size and are scaled afterwards, so a
-	// resize enlarges the structure rather than only the volume it sits in. At 100% the factors
-	// are 1 and every coordinate comes out exactly as it did before.
+	// resize enlarges the structure rather than only the volume it sits in. At 100% the maps
+	// are the identity and every coordinate comes out exactly as it did before.
 	const base = clampSize(program.size, errors);
 	const size = scaledSize(base, program.scale);
-	const factor = scaleFactors(base, program.scale);
+	const scale = axisScales(base, size);
 
 	const canvas = new VoxelCanvas(size, provenance);
 	const palette = new Palette(program.palette ?? {});
@@ -83,7 +83,7 @@ export function expand(program: BuildProgram, options: ExpandOptions = {}): Expa
 		});
 	}
 
-	const ctx: ExpandContext = { base, size, factor, palette, params, errors, warnings, canvas, parts };
+	const ctx: ExpandContext = { base, size, scale, palette, params, errors, warnings, canvas, parts };
 
 	components.slice(0, LIMITS.maxComponents).forEach((component, index) => {
 		const path = `components[${index}]`;
@@ -210,8 +210,8 @@ interface ExpandContext {
 	base: Size3;
 	/** The volume actually drawn, after `program.scale`. */
 	size: Size3;
-	/** Per-axis multiplier from base space to drawn space. All 1 when nothing is scaled. */
-	factor: Size3;
+	/** Per-axis map from base space into drawn space. The identity when nothing is scaled. */
+	scale: Scale3;
 	palette: Palette;
 	params: Record<string, import('../ir/types.js').ProgramParam> | undefined;
 	errors: ExpandIssue[];
@@ -357,7 +357,7 @@ function draw(
 	partKey: string,
 	ctx: ExpandContext,
 ): void {
-	const pos = (v: CVec3) => resolvePos(v, ctx);
+	const point = (v: CVec3) => resolvePoint(v, ctx);
 	const box = (at: CVec3, size: CVec3) => region(at, size, ctx);
 
 	switch (component.type) {
@@ -386,14 +386,32 @@ function draw(
 		case 'cylinder': {
 			checkRoles(component.fill, path, ctx);
 			// The radius lies in the two axes the cylinder does *not* run along, and the height
-			// along the one it does.
+			// along the one it does. Both are anchored to where the cylinder actually stands:
+			// the circle is derived from the ground its diameter covered, and the height from
+			// the cells its run covered, so a scaled tower keeps its footprint and its top.
 			const axis = component.axis ?? 'y';
+			const base = basePos(component.base, ctx);
+			const radial = AXES.filter((a) => a !== axis);
+			const radius = resolveCoord(component.radius, {
+				extent: ctx.base.x + 1,
+				params: ctx.params,
+			});
+			const discs = radial.map((a) => ctx.scale[a].centred(base[AXES.indexOf(a)]!, radius));
+			const drawnRadius = Math.min(...discs.map((disc) => disc.radius));
+			const centre: Vec3 = [...base];
+			for (const a of radial) {
+				const i = AXES.indexOf(a);
+				centre[i] = ctx.scale[a].centred(base[i]!, radius, drawnRadius).centre;
+			}
+			const along = AXES.indexOf(axis);
+			centre[along] = ctx.scale[axis].edge(base[along]!);
+
 			buildCylinder(
 				brush,
 				ctx.palette,
-				pos(component.base),
-				scalar(component.radius, ctx, 'x', AXES.filter((a) => a !== axis)),
-				scalar(component.height, ctx, axis),
+				centre,
+				drawnRadius,
+				spanLen(base[along]!, component.height, ctx, axis),
 				axis,
 				component.hollow ?? false,
 				component.fill,
@@ -401,34 +419,52 @@ function draw(
 			return;
 		}
 
-		case 'sphere':
+		case 'sphere': {
 			checkRoles(component.fill, path, ctx);
 			// A sphere is round in all three, so under a per-axis resize it stays a sphere and
-			// takes the axis that grew least rather than bulging out of its own build.
+			// takes the axis that grew least rather than bulging out of its own build. Its
+			// centre then follows that one radius on every axis, which is what keeps a dome
+			// sitting on the drum it was drawn on.
+			const centre = basePos(component.center, ctx);
+			const radius = resolveCoord(component.radius, {
+				extent: ctx.base.x + 1,
+				params: ctx.params,
+			});
+			const drawnRadius = Math.min(
+				...AXES.map((a, i) => ctx.scale[a].centred(centre[i]!, radius).radius),
+			);
 			buildSphere(
 				brush,
 				ctx.palette,
-				pos(component.center),
-				scalar(component.radius, ctx, 'x', AXES),
+				AXES.map((a, i) => ctx.scale[a].centred(centre[i]!, radius, drawnRadius).centre) as Vec3,
+				drawnRadius,
 				component.hollow ?? false,
 				component.cap ?? 'full',
 				component.fill,
 			);
 			return;
+		}
 
-		case 'pyramid':
+		case 'pyramid': {
 			checkRoles(component.fill, path, ctx);
+			// The footprint is anchored to the corner it grows from, so a pyramid that covered
+			// the roof of the box below it still covers exactly that roof afterwards.
+			const corner = basePos(component.pos, ctx);
 			buildPyramid(
 				brush,
 				ctx.palette,
-				pos(component.pos),
-				[scalar(component.baseSize[0], ctx, 'x'), scalar(component.baseSize[1], ctx, 'z')],
+				scaleCorner(corner, ctx),
+				[
+					spanLen(corner[0], component.baseSize[0], ctx, 'x'),
+					spanLen(corner[2], component.baseSize[1], ctx, 'z'),
+				],
 				// The inset each tier takes is a horizontal distance, so it follows x and z.
 				magnitude(component.step, ctx, ['x', 'z'], 1),
 				component.hollow ?? false,
 				component.fill,
 			);
 			return;
+		}
 
 		case 'gable_roof':
 			requireRole(component.roofRole, path, ctx);
@@ -457,21 +493,27 @@ function draw(
 			);
 			return;
 
-		case 'arch':
+		case 'arch': {
 			if (!component.carve) checkRoles(component.fill, path, ctx);
+			// Every extent is anchored to the corner the arch starts from, so an arch cut
+			// through a wall still reaches all the way through it, and two arches placed
+			// symmetrically in a facade come out the same width as each other.
+			const corner = basePos(component.pos, ctx);
+			const through: AxisName = component.axis === 'x' ? 'z' : 'x';
 			buildArch(
 				brush,
 				ctx.palette,
-				pos(component.pos),
-				scalar(component.width, ctx, component.axis),
-				scalar(component.height, ctx, 'y'),
-				scalar(component.depth, ctx, component.axis === 'x' ? 'z' : 'x'),
+				scaleCorner(corner, ctx),
+				spanLen(corner[component.axis === 'x' ? 0 : 2], component.width, ctx, component.axis),
+				spanLen(corner[1], component.height, ctx, 'y'),
+				spanLen(corner[through === 'x' ? 0 : 2], component.depth, ctx, through),
 				component.axis,
 				component.style ?? 'round',
 				component.fill,
 				component.carve ?? false,
 			);
 			return;
+		}
 
 		case 'window_grid': {
 			requireRole(component.role, path, ctx);
@@ -498,11 +540,14 @@ function draw(
 
 		case 'door':
 			requireRole(component.role, path, ctx);
+			// A door is one or two blocks wide whatever the build's size — vanilla has no other
+			// door — so it is placed as a block rather than as the corner of a volume, and a
+			// door centred in a wall stays centred in it.
 			buildDoor(
 				brush,
 				ctx.palette,
 				component.face,
-				pos(component.at),
+				point(component.at),
 				component.width ?? 1,
 				component.height ?? 2,
 				component.role,
@@ -514,8 +559,8 @@ function draw(
 			buildLine(
 				brush,
 				ctx.palette,
-				pos(component.from),
-				pos(component.to),
+				point(component.from),
+				point(component.to),
 				// A line's girth is perpendicular to a direction only known at draw time.
 				magnitude(component.thickness, ctx, AXES, 1),
 				component.fill,
@@ -529,12 +574,13 @@ function draw(
 			const travel: AxisName =
 				component.direction === 'north' || component.direction === 'south' ? 'z' : 'x';
 			const across: AxisName = travel === 'z' ? 'x' : 'z';
+			const foot = basePos(component.pos, ctx);
 			buildStairsRun(
 				brush,
 				ctx.palette,
-				pos(component.pos),
+				scaleCorner(foot, ctx),
 				component.direction,
-				scalar(component.width, ctx, 'x', [across]),
+				spanLen(foot[across === 'x' ? 0 : 2], component.width, ctx, across),
 				scalar(component.steps, ctx, 'y', ['y', travel]),
 				component.role,
 				component.style ?? 'stairs',
@@ -576,14 +622,11 @@ function drawGroup(
 	partKey: string,
 	ctx: ExpandContext,
 ): void {
-	// The pivot is the *scaled* centre of the program's own volume, not the centre of the drawn
-	// one: children arrive here already scaled, so mirroring them about anything else would
-	// land the reflection a block or two off its original position.
-	const centre: Vec3 = [
-		scalePos(Math.floor((ctx.base.x - 1) / 2), ctx.factor.x),
-		scalePos(Math.floor((ctx.base.y - 1) / 2), ctx.factor.y),
-		scalePos(Math.floor((ctx.base.z - 1) / 2), ctx.factor.z),
-	];
+	// The exact middle of the drawn volume — half a block off an integer whenever an axis is an
+	// even number of blocks long, and deliberately left that way. Rounding it to a block put
+	// the reflection of an even-width build one block short of the far wall, so a build that
+	// was symmetric by construction came out with a gap down one side and none down the other.
+	const centre: Vec3 = [ctx.scale.x.centre, ctx.scale.y.centre, ctx.scale.z.centre];
 
 	const repeats: Transform[] = [];
 	let frame: Frame = brush.currentFrame;
@@ -591,7 +634,7 @@ function drawGroup(
 	for (const transform of group.transform ?? []) {
 		switch (transform.op) {
 			case 'translate':
-				frame = translated(frame, scaleVec(transform.by, ctx));
+				frame = translated(frame, scaleOffset(transform.by, ctx));
 				break;
 			case 'rotate90':
 				frame = rotated(frame, transform.times, resolvePivot(transform.pivot, centre, ctx));
@@ -638,7 +681,7 @@ function drawGroup(
 		for (let i = 0; i < count; i++) {
 			let stepFrame = translated(
 				current,
-				scaleVec([repeat.step[0] * i, repeat.step[1] * i, repeat.step[2] * i], ctx),
+				scaleOffset([repeat.step[0] * i, repeat.step[1] * i, repeat.step[2] * i], ctx),
 			);
 			if (repeat.alternateMirror && i % 2 === 1) {
 				stepFrame = mirrored(stepFrame, 'x', centre);
@@ -657,18 +700,25 @@ function resolvePivot(
 ): Vec3 {
 	if (pivot === undefined || pivot === 'center') return centre;
 	// A pivot given as raw numbers is used as-is; expressions are not supported here
-	// because a pivot must stay fixed while children move around it. It is still a position in
-	// the program's own space, so it scales like one.
-	return scaleVec([Number(pivot[0]) || 0, Number(pivot[1]) || 0, Number(pivot[2]) || 0], ctx);
+	// because a pivot must stay fixed while children move around it. It names one block in the
+	// program's own space, so it maps like a block rather than like a corner.
+	return [
+		ctx.scale.x.point(Number(pivot[0]) || 0),
+		ctx.scale.y.point(Number(pivot[1]) || 0),
+		ctx.scale.z.point(Number(pivot[2]) || 0),
+	];
 }
 
-/** Scale a literal offset written in the program's own coordinate space. */
-function scaleVec(v: Vec3, ctx: ExpandContext): Vec3 {
-	return [
-		scalePos(v[0], ctx.factor.x),
-		scalePos(v[1], ctx.factor.y),
-		scalePos(v[2], ctx.factor.z),
-	];
+/**
+ * Scale a distance written in the program's own coordinate space — how far a group moves, or
+ * how far apart a repeat spaces its copies.
+ *
+ * A distance is not a position, so it takes the plain factor. It is scaled symmetrically about
+ * zero, so a pair of groups translated the same distance in opposite directions still lands
+ * the same distance apart.
+ */
+function scaleOffset(v: Vec3, ctx: ExpandContext): Vec3 {
+	return [ctx.scale.x.offset(v[0]), ctx.scale.y.offset(v[1]), ctx.scale.z.offset(v[2])];
 }
 
 // --- coordinate helpers -------------------------------------------------
@@ -679,17 +729,44 @@ const AXES = ['x', 'y', 'z'] as const;
 
 /**
  * Everything below resolves against `ctx.base` — the size the program was written for — and
- * then scales the result. That is what makes a resize move *every* block: a literal `radius: 7`
- * or a `$height` param has no relationship to the build volume, so re-resolving it against a
- * bigger volume changes nothing, while scaling what it resolved to changes it by exactly the
- * factor the user asked for.
+ * then maps the result through `ctx.scale`. That is what makes a resize move *every* block: a
+ * literal `radius: 7` or a `$height` param has no relationship to the build volume, so
+ * re-resolving it against a bigger volume changes nothing, while mapping what it resolved to
+ * changes it by exactly the factor the user asked for.
+ *
+ * Which map a value takes is the whole game, and it follows from what the value *is*:
+ *
+ *   a corner      `edge`     the boundary the run starts on, so touching parts keep touching
+ *   a single block `point`   one block inside the cells it now covers, mirror-symmetrically
+ *   a run          `span`    the cells the whole run covered, so its far end lands true
+ *   a centre       `centred` centre and radius derived from the diameter's own span
+ *   a free length  `length`  a thickness or an overhang, with no position to anchor it
+ *
+ * Scaling a position and a length independently is what used to pull a build apart: at 54% a
+ * roof that sat flush inside its volume came out a block wider than the volume it was inside,
+ * and the eaves were silently dropped. Anchoring the length to the position it starts from
+ * keeps every edge exactly where the scaled coordinate space puts it.
  */
-function resolvePos(v: CVec3, ctx: ExpandContext): Vec3 {
+
+/** The low corner of a volume, in drawn space. */
+function scaleCorner(base: Vec3, ctx: ExpandContext): Vec3 {
+	return [ctx.scale.x.edge(base[0]), ctx.scale.y.edge(base[1]), ctx.scale.z.edge(base[2])];
+}
+
+/**
+ * A position that names one block rather than the corner of a volume — a door, a lantern, the
+ * end of a line.
+ *
+ * These keep their *cell* rather than its near corner, so a pair of them placed symmetrically
+ * about the middle of a build stays symmetric after a resize instead of both sliding the same
+ * way and landing a block apart.
+ */
+function resolvePoint(v: CVec3, ctx: ExpandContext): Vec3 {
 	const raw = basePos(v, ctx);
 	return [
-		scalePos(raw[0], ctx.factor.x),
-		scalePos(raw[1], ctx.factor.y),
-		scalePos(raw[2], ctx.factor.z),
+		ctx.scale.x.point(raw[0]),
+		ctx.scale.y.point(raw[1]),
+		ctx.scale.z.point(raw[2]),
 	];
 }
 
@@ -703,27 +780,51 @@ function basePos(v: CVec3, ctx: ExpandContext): Vec3 {
 }
 
 /**
- * A component's box, scaled by its two corners rather than by its position and length
- * separately.
+ * A component's box, mapped by the cells its corners covered rather than by its position and
+ * length separately.
  *
- * Rounding a position and a length independently lets them drift apart: at 54% a roof that sat
- * flush inside its volume comes out a block wider than the volume it is inside, and the eaves
- * are silently dropped. Scaling `pos` and `pos + size` and subtracting keeps every edge exactly
- * where the scaled coordinate space puts it.
+ * A run that shrinks away to nothing is still drawn one block thick, and pulled back inside
+ * the volume if the shrink pushed its corner past the far edge — below half scale that is
+ * exactly what happens to anything anchored at `max`, and a wall that disappears is a much
+ * worse answer than one that shares a block with its neighbour.
  */
 function region(at: CVec3, size: CVec3, ctx: ExpandContext): { pos: Vec3; size: Vec3 } {
 	const near = basePos(at, ctx);
 	const extent = baseLen(size, ctx);
-	const pos = scaleVec(near, ctx);
+	const pos: Vec3 = [0, 0, 0];
+	const drawn: Vec3 = [0, 0, 0];
 
-	return {
-		pos,
-		size: AXES.map((axis, i) => {
-			if (extent[i]! <= 0) return 0;
-			const far = scalePos(near[i]! + extent[i]!, ctx.factor[axis]);
-			return Math.max(1, far - pos[i]!);
-		}) as Vec3,
-	};
+	AXES.forEach((axis, i) => {
+		const scale = ctx.scale[axis];
+		const run = scale.span(near[i]!, extent[i]!, 1);
+		if (extent[i]! <= 0) {
+			pos[i] = run.pos;
+			drawn[i] = 0;
+			return;
+		}
+		drawn[i] = run.len;
+		pos[i] = insideVolume(near[i]!, extent[i]!, run.pos, run.len, scale);
+	});
+
+	return { pos, size: drawn };
+}
+
+/**
+ * Hold a run that the program kept inside its own volume inside the drawn one.
+ *
+ * Only ever pulls a run *back*: a component the program deliberately hangs over the edge —
+ * an overhanging eave, a footprint written larger than `size` — keeps hanging over it.
+ */
+function insideVolume(
+	near: number,
+	extent: number,
+	pos: number,
+	len: number,
+	scale: AxisScale,
+): number {
+	const wasInside = near >= 0 && near + extent <= scale.base;
+	if (!wasInside || pos + len <= scale.target) return pos;
+	return Math.max(0, scale.target - len);
 }
 
 /** Sizes are lengths, so they resolve against `extent`, not `extent - 1`. */
@@ -734,11 +835,33 @@ function baseLen(v: CVec3, ctx: ExpandContext): Vec3 {
 }
 
 /**
- * A length along one known axis — a radius, a height, a run of steps.
+ * A length that starts somewhere: an arch's width, a pyramid's footprint, the run of a
+ * staircase.
+ *
+ * Anchored to the position it grows from, so the far end of the run lands on the same cell
+ * boundary as anything else that reached that far — and so a component and its mirror image
+ * come out exactly the same length, which scaling the two independently could not promise.
+ */
+function spanLen(
+	/** Where the run starts, in the program's own space. */
+	base: number,
+	value: Coord,
+	ctx: ExpandContext,
+	axis: AxisName,
+	min = 1,
+): number {
+	const raw = resolveCoord(value, { extent: ctx.base[axis] + 1, params: ctx.params });
+	if (raw <= 0) return raw;
+	return ctx.scale[axis].span(base, raw, min).len;
+}
+
+/**
+ * A length along one known axis with nothing to anchor it to — a run of steps that climbs two
+ * axes at once, or a radius quoted on its own.
  *
  * `spans` is the axes the length actually occupies, which is not always the one it is written
- * against: a radius resolves as an x-axis length but a cylinder's radius reaches into two axes
- * at once, and under a per-axis resize it can only follow the smaller of them.
+ * against: a staircase advances one block along the ground for every block it climbs, so it
+ * can only follow whichever of those two axes grew least.
  */
 function scalar(
 	value: Coord,
@@ -747,7 +870,7 @@ function scalar(
 	spans: readonly AxisName[] = [axis],
 ): number {
 	const raw = resolveCoord(value, { extent: ctx.base[axis] + 1, params: ctx.params });
-	return scaleLen(raw, minFactor(ctx, spans));
+	return smallest(ctx, spans).length(raw);
 }
 
 /**
@@ -769,9 +892,9 @@ function count(value: Coord | undefined, ctx: ExpandContext, fallback: number): 
 /**
  * A distance whose axis is ambiguous — wall thickness, a roof overhang, a line's girth.
  *
- * Takes the smallest factor of the axes it could lie along. Under a linked resize they are all
- * the same number anyway; under a per-axis one, the smallest is the only choice that cannot
- * push a thickness through the geometry it is meant to sit inside.
+ * Takes the smallest-growing of the axes it could lie along. Under a linked resize they are
+ * all the same number anyway; under a per-axis one, the smallest is the only choice that
+ * cannot push a thickness through the geometry it is meant to sit inside.
  */
 function magnitude(
 	value: Coord | undefined,
@@ -781,11 +904,16 @@ function magnitude(
 	/** Where shrinking stops — 0 for trim a small build is better off without. */
 	min = 1,
 ): number {
-	return scaleLen(count(value, ctx, fallback), minFactor(ctx, axes), min);
+	return smallest(ctx, axes).length(count(value, ctx, fallback), min);
 }
 
-function minFactor(ctx: ExpandContext, axes: readonly AxisName[]): number {
-	return Math.min(...axes.map((axis) => ctx.factor[axis]));
+/** The axis map that grew least of those given — see {@link magnitude}. */
+function smallest(ctx: ExpandContext, axes: readonly AxisName[]): AxisScale {
+	let chosen = ctx.scale[axes[0]!];
+	for (const axis of axes) {
+		if (ctx.scale[axis].factor < chosen.factor) chosen = ctx.scale[axis];
+	}
+	return chosen;
 }
 
 function checkRoles(fill: import('../ir/types.js').Fill, path: string, ctx: ExpandContext): void {
@@ -829,12 +957,16 @@ function applyDetails(brush: Brush, details: DetailOp[], ctx: ExpandContext): vo
 		let baseFrom: Vec3 | undefined;
 		let baseTo: Vec3 | undefined;
 		try {
-			if (op.op === 'set') at = resolvePos(op.at, ctx);
+			// A `set` places one block, so it takes its cell rather than the corner of one: a
+			// pair of lanterns hung symmetrically stays symmetric when the build is resized.
+			// A `fill` is a run, so it takes the cells its two ends covered — the far end
+			// through the far edge, or a doubled build would lose half a cell off that end.
+			if (op.op === 'set') at = resolvePoint(op.at, ctx);
 			else {
 				baseFrom = basePos(op.from, ctx);
 				baseTo = basePos(op.to, ctx);
-				from = scaleVec(baseFrom, ctx);
-				to = scaleVec(baseTo, ctx);
+				from = fillCorner(baseFrom, baseTo, ctx, 'near');
+				to = fillCorner(baseFrom, baseTo, ctx, 'far');
 			}
 		} catch (err) {
 			ctx.errors.push({
@@ -882,6 +1014,26 @@ function applyDetails(brush: Brush, details: DetailOp[], ctx: ExpandContext): vo
 			}
 		}
 	});
+}
+
+/**
+ * One corner of a detail fill, in drawn space.
+ *
+ * `from` and `to` are inclusive and may be given in either order, so the low corner takes the
+ * near edge of its cell and the high corner the far edge of its own — which is what makes a
+ * filled band keep its thickness through a resize rather than losing a cell off one end.
+ */
+function fillCorner(from: Vec3, to: Vec3, ctx: ExpandContext, which: 'near' | 'far'): Vec3 {
+	return AXES.map((axis, i) => {
+		const scale = ctx.scale[axis];
+		const lo = Math.min(from[i]!, to[i]!);
+		const hi = Math.max(from[i]!, to[i]!);
+		const span = scale.span(lo, hi - lo + 1);
+		const near = span.pos;
+		const far = span.pos + Math.max(1, span.len) - 1;
+		const low = from[i]! <= to[i]!;
+		return which === 'near' ? (low ? near : far) : low ? far : near;
+	}) as Vec3;
 }
 
 function boxVolume(from: Vec3, to: Vec3): number {

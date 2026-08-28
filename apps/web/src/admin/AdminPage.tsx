@@ -20,8 +20,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../library/auth.js';
-import { ClaudeTerminal } from './ClaudeTerminal.js';
-import type { ClaudeConnection } from './claudeCode.js';
+import { ClaudeTerminal, type ClaudeConnection } from '@flyvendedk799/ai-auth/react';
 import {
   isSubscription,
   loadSettings,
@@ -30,6 +29,7 @@ import {
   type ProviderId,
   type SubscriptionStatus,
 } from './admin.js';
+import '@flyvendedk799/ai-auth/react/terminal.css';
 import './admin.css';
 
 type Load =

@@ -19,10 +19,9 @@ import { adminRoutes } from './admin/routes.js';
 import { SettingsStore, maskKey, type AiSettings } from './settings/store.js';
 import { isSubscription } from './generate/pricing.js';
 import { claudeCodeProvider, codexProvider } from './generate/providers.js';
-import { ClaudeAccountStore } from './generate/subscription/accountStore.js';
-import { ClaudeCodeCredential } from './generate/subscription/claudeCode.js';
-import { claudeCodeRoutes } from './generate/subscription/routes.js';
-import { CodexCredential } from './generate/subscription/codex.js';
+import { ClaudeAccountStore, ClaudeCodeCredential, CodexCredential } from '@flyvendedk799/ai-auth';
+import { claudeAuthRoutes } from '@flyvendedk799/ai-auth/fastify';
+import { CLAUDE_SECRET_LABEL, ClaudeOauthTableStore } from './generate/subscription/store.js';
 import { GenerationQuota } from './generate/quota.js';
 import { SpendLedger } from './generate/spend.js';
 
@@ -192,7 +191,16 @@ const codex = new CodexCredential();
  * exactly right for a self-hosted single-user instance, and exactly wrong for a hosted one,
  * which is why a hosted one has a database.
  */
-const claudeAccounts = db && settings ? new ClaudeAccountStore(db, config.sessionSecret) : null;
+// Over the table this deployment already has, under the label its rows were sealed with:
+// see `subscription/store.ts` for why neither is the library's own.
+const claudeAccounts =
+  db && settings
+    ? new ClaudeAccountStore({
+        store: new ClaudeOauthTableStore(db),
+        secret: config.sessionSecret,
+        secretLabel: CLAUDE_SECRET_LABEL,
+      })
+    : null;
 
 const resolveAi = async (): Promise<AiSettings> => {
   const env = {
@@ -260,7 +268,15 @@ await app.register(
   }),
 );
 await app.register(
-  claudeCodeRoutes({ auth, store: claudeAccounts }),
+  claudeAuthRoutes({
+    store: claudeAccounts,
+    // The library does not know what a signed-in user is here, so it asks. Returning null
+    // after `requireUser` has answered is how it is told the reply is already written.
+    resolveAccount: async (request, reply) => {
+      const user = await auth.requireUser(request, reply);
+      return user ? { id: user.id, label: user.email } : null;
+    },
+  }),
 );
 await app.register(
   adminRoutes({

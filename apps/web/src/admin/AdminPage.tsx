@@ -21,6 +21,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../library/auth.js';
 import { ClaudeTerminal, type ClaudeConnection } from '@flyvendedk799/ai-auth/react';
+import { ModelPicker } from './ModelPicker.js';
 import {
   isSubscription,
   loadSettings,
@@ -191,22 +192,12 @@ export function AdminPage() {
               ))}
             </div>
 
-            <label className="admin__field">
-              <span className="admin__label">Model</span>
-              <input
-                className="admin__input"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                list="known-models"
-                placeholder={provider === 'openai' ? 'gpt-5' : 'claude-sonnet-5'}
-                spellCheck={false}
-              />
-              <datalist id="known-models">
-                {settings.knownModels.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </label>
+            <ModelPicker
+              provider={provider}
+              value={model}
+              onChange={setModel}
+              metered={!isSubscription(provider)}
+            />
 
             {!isSubscription(provider) && !settings.pricingKnown && (
               <p className="admin__warn">

@@ -142,11 +142,29 @@ export class ClaudeAccountStore {
    * Deduped per user: a page that fires three generations at once must not race three
    * refreshes against each other, because the loser of that race is holding a refresh token
    * the winner has already rotated away.
+   *
+   * The dedup entry is registered *synchronously*, before anything is awaited, and that is
+   * the whole trick. Reading the row first and registering afterwards is the obvious way to
+   * write this and it does not work: the read is an await, so three simultaneous callers all
+   * get past the map check while it is still empty, all start their own exchange, and each
+   * overwrites the last in the map. Two of the three then hold a refresh token the winner has
+   * already rotated away — and the symptom is a logout an hour later, on a schedule nobody
+   * can reproduce.
    */
   async token(userId: string, now = () => Date.now()): Promise<string> {
     const existing = this.refreshing.get(userId);
     if (existing) return existing;
 
+    const work = this.resolveToken(userId, now);
+    this.refreshing.set(userId, work);
+    try {
+      return await work;
+    } finally {
+      this.refreshing.delete(userId);
+    }
+  }
+
+  private async resolveToken(userId: string, now: () => number): Promise<string> {
     const { rows } = await this.db.query<{ payload: string; plan: string | null; expires_at: string }>(
       'SELECT payload, plan, expires_at FROM claude_oauth WHERE user_id = $1',
       [userId],
@@ -165,33 +183,25 @@ export class ClaudeAccountStore {
     const expiresAt = Number(row.expires_at);
     if (expiresAt - EXPIRY_BUFFER_MS > now()) return payload.accessToken;
 
-    const work = (async () => {
-      const identity: ClaudeCodeIdentity = {
-        accessToken: payload.accessToken,
-        refreshToken: payload.refreshToken,
-        expiresAt,
-        subscriptionType: row.plan,
-        scopes: payload.scopes,
-        source: 'file',
-      };
-      const refreshed = await refreshClaudeCodeToken(identity, { now });
-      // Written back before it is handed out: the rotated refresh token is the only one that
-      // will work next time, and losing it costs the user a re-login for no visible reason.
-      await this.save(userId, {
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-        expiresAt: refreshed.expiresAt,
-        scopes: refreshed.scopes,
-        subscriptionType: refreshed.subscriptionType,
-      });
-      return refreshed.accessToken;
-    })();
+    const identity: ClaudeCodeIdentity = {
+      accessToken: payload.accessToken,
+      refreshToken: payload.refreshToken,
+      expiresAt,
+      subscriptionType: row.plan,
+      scopes: payload.scopes,
+      source: 'file',
+    };
 
-    this.refreshing.set(userId, work);
-    try {
-      return await work;
-    } finally {
-      this.refreshing.delete(userId);
-    }
+    const refreshed = await refreshClaudeCodeToken(identity, { now });
+    // Written back before it is handed out: the rotated refresh token is the only one that
+    // will work next time, and losing it costs the user a re-login for no visible reason.
+    await this.save(userId, {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      expiresAt: refreshed.expiresAt,
+      scopes: refreshed.scopes,
+      subscriptionType: refreshed.subscriptionType,
+    });
+    return refreshed.accessToken;
   }
 }

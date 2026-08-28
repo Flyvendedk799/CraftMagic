@@ -56,6 +56,11 @@ export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) 
   );
 
   const changed = scale.x !== 100 || scale.y !== 100 || scale.z !== 100;
+  // A build generated for a chosen size opens below 100%, and nothing else on screen says
+  // that the design it was written from is bigger and fully detailed. Worth one line, because
+  // the interesting drag is the one *up*: the structure was designed at 100% and every corner
+  // post and window frame is still in the program at that size.
+  const shrunk = scale.x < 100 || scale.y < 100 || scale.z < 100;
 
   return (
     <div className="params scale">
@@ -139,6 +144,12 @@ export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) 
           </button>
         )}
       </p>
+
+      {shrunk && (
+        <p className="scale__note">
+          100% is the size this was designed at — the detail is all still in the program.
+        </p>
+      )}
 
       {outcome?.clamped && (
         <p className="scale__warn">

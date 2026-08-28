@@ -14,12 +14,16 @@
 
 import {
 	expand,
+	fitScale,
+	isScaled,
+	sizeTarget,
 	type BuildProgram,
 	type ExpandIssue,
 	type ExpandResult,
+	type SizeChoice,
 } from '@craftmagic/core';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
-import { refinePrompt, repairPrompt, systemPrompt } from './prompt.js';
+import { refinePrompt, repairPrompt, sizeBrief, systemPrompt } from './prompt.js';
 import { schemaIssues } from './validate.js';
 import type { ModelId } from './pricing.js';
 import type { Provider, ProviderSession } from './providers.js';
@@ -38,6 +42,15 @@ export interface GenerateOptions {
 	 * building that merely matches a description.
 	 */
 	refineOf?: BuildProgram;
+	/**
+	 * How big the finished build should be.
+	 *
+	 * Not a limit on the design. The model is asked for the structure at whatever size it needs
+	 * to read properly, and the program comes back carrying the `scale` that brings it down to
+	 * the chosen size — so the detail survives in the program and the editor's size control can
+	 * put it back at 100% whenever the user wants to see it.
+	 */
+	size?: SizeChoice;
 	model?: ModelId;
 	/** Lower effort means less thinking and fewer tokens. Meaningful on cost. */
 	effort?: 'low' | 'medium' | 'high';
@@ -109,9 +122,14 @@ export async function generateBuild(
 
 	// A refine sends the existing program back as well, which is a few thousand tokens the
 	// guard must not overlook — otherwise the ceiling is computed against the wrong call.
+	// The size brief rides on the user turn rather than the system prompt, which is cached and
+	// must stay identical from one call to the next to stay that way.
+	const brief = sizeBrief(options.size);
 	const userContent = options.refineOf
 		? refinePrompt(options.refineOf, options.prompt)
-		: options.prompt;
+		: brief
+			? `${options.prompt}\n\n${brief}`
+			: options.prompt;
 
 	// Rough token estimate for the guard: ~3.8 chars per token is close enough, and the
 	// guard's job is to be conservative rather than exact.
@@ -192,6 +210,21 @@ export async function generateBuild(
 			? problems.slice(0, 3).map((e) => `${e.path}: ${e.message}`).join('; ')
 			: `${program.components?.length ?? 0} components drew nothing inside ${expansion.grid.size.x}x${expansion.grid.size.y}x${expansion.grid.size.z}`;
 		throw new GenerationError(`the generated program produced an empty build — ${detail}`, expansion.errors);
+	}
+
+	// The size the user asked for is applied here, once the program is known to build, and a
+	// refine keeps whatever scale the build already had — the model is never shown it, and a
+	// build that changed size because somebody asked for a balcony would be a surprise.
+	const scale = options.refineOf
+		? options.refineOf.scale
+		: fitScale(expansion.grid.size, sizeTarget(options.size));
+
+	if (isScaled(scale)) {
+		program = { ...program, scale };
+		// Re-expanded rather than reported at its full size: the block count is what the user is
+		// about to see on screen, and the warnings are the ones that build actually produced.
+		const scaled = expand(program);
+		if (scaled.blockCount > 0) expansion = scaled;
 	}
 
 	options.onProgress?.({ stage: 'done', blockCount: expansion.blockCount });

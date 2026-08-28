@@ -27,7 +27,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import { generateBuild, GenerationError, TOOL_NAME } from './pipeline.js';
-import { systemPrompt } from './prompt.js';
+import { sizeBrief, systemPrompt } from './prompt.js';
 import { costOf, isPricingKnown, isSubscription, worstCaseCost, type ProviderId } from './pricing.js';
 import { providerErrorFacts } from '@flyvendedk799/ai-auth';
 import { describeProviderError } from './providerError.js';
@@ -37,7 +37,7 @@ import type { AiSettings } from '../settings/store.js';
 import { BudgetExceededError, type SpendLedger } from './spend.js';
 import { GenerationStore } from './store.js';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
-import type { BuildProgram } from '@craftmagic/core';
+import { isSizeChoice, type BuildProgram, type SizeChoice } from '@craftmagic/core';
 
 export interface GenerateRoutesOptions {
 	ledger: SpendLedger;
@@ -112,6 +112,18 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 		}
 
 		/**
+		 * The size the caller asked for.
+		 *
+		 * An unrecognised value is ignored rather than refused: it changes how big the build
+		 * comes out, not whether it is valid, and failing a paid request over a stale query
+		 * string would be a poor trade.
+		 */
+		function readSize(body: unknown): SizeChoice | undefined {
+			const value = (body as { size?: unknown } | null)?.size;
+			return isSizeChoice(value) ? value : undefined;
+		}
+
+		/**
 		 * The program a refine is editing.
 		 *
 		 * Three outcomes, kept distinct on purpose: absent (a normal generation), a usable
@@ -178,6 +190,9 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			}
 
 			const system = systemPrompt();
+			// The size brief is part of the user turn, so it is part of what the call costs.
+			const brief = sizeBrief(readSize(request.body));
+			const userTurn = brief ? `${prompt}\n\n${brief}` : prompt;
 			let inputTokens: number;
 			let exact: boolean;
 
@@ -195,7 +210,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 							input_schema: schema as unknown as Anthropic.Tool.InputSchema,
 						},
 					],
-					messages: [{ role: 'user', content: prompt }],
+					messages: [{ role: 'user', content: userTurn }],
 				});
 				inputTokens = counted.input_tokens;
 				exact = true;
@@ -203,7 +218,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 				// OpenAI has no free token-counting endpoint, and calling the model to find out
 				// what a call costs would defeat the point. ~3.8 chars per token, rounded up,
 				// plus the schema — an estimate that errs high, which is the safe direction.
-				inputTokens = Math.ceil((system.length + prompt.length + JSON.stringify(schema).length) / 3.8);
+				inputTokens = Math.ceil((system.length + userTurn.length + JSON.stringify(schema).length) / 3.8);
 				exact = false;
 			}
 
@@ -299,6 +314,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			// or a prompt that reliably fails validation becomes free and unlimited.
 			const recordId = await quota.start(user.id, prompt, ai.model);
 
+			const size = readSize(request.body);
 			const generation = store.create(prompt);
 			// Bound after the guard above: TypeScript will not carry the null-check narrowing
 			// into a hoisted function declaration, since one could be called from anywhere.
@@ -306,6 +322,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			const chosen = provider;
 			const model = ai.model;
 			const refining = refineOf;
+			const chosenSize = size;
 
 			// Deliberately not awaited: the response returns an id immediately and progress
 			// arrives over SSE.
@@ -319,6 +336,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 						{
 							prompt: brief,
 							...(refining ? { refineOf: refining } : {}),
+							...(chosenSize ? { size: chosenSize } : {}),
 							model,
 							effort: 'medium',
 							maxTokens,

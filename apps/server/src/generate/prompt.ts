@@ -14,7 +14,7 @@
  * list a block the expander would reject.
  */
 
-import { allBlocks, LIMITS } from '@craftmagic/core';
+import { allBlocks, LIMITS, sizeTarget, type SizeChoice } from '@craftmagic/core';
 
 /**
  * A compact view of the palette: families and shapes, not 499 ids.
@@ -164,6 +164,33 @@ const QUALITY_RULES = `## Making it look good
   ${LIMITS.maxDetailOps} ops and a single fill may not exceed ${LIMITS.maxDetailFillVolume}
   blocks; anything larger belongs in a component.`;
 
+/**
+ * The size the user asked for, phrased as a target rather than as a budget.
+ *
+ * The distinction is the entire point. Told "make it 20 blocks", a model designs *down* to 20
+ * blocks: it drops the corner posts, the base course and the window mullions, because there is
+ * no room for them at that size, and what comes back is a flat little box. So the brief asks
+ * for the structure at whatever size it needs to read properly and promises to shrink it
+ * afterwards — which the expander can do faithfully, and which leaves the detail in the
+ * program for anyone who drags the size slider back up.
+ */
+export function sizeBrief(choice: SizeChoice | undefined): string | null {
+	const target = sizeTarget(choice);
+	if (target === null) return null;
+
+	return [
+		`Target size: about ${target} blocks in the structure's largest dimension.`,
+		``,
+		`Design it at whatever size it needs to look right, with every bit of the detail you`,
+		`would give it at that size — corner posts, a base course, window frames, roof trim.`,
+		`Do not simplify the design to hit the number. If the structure only reads properly at`,
+		`${target * 2} blocks, write it at ${target * 2} and it will be scaled down to fit;`,
+		`the detail stays in the program either way. Somewhere between ${target} and`,
+		`${target * 2} blocks is the useful range — much beyond that and shrinking loses the`,
+		`detail you spent components on.`,
+	].join('\n');
+}
+
 const LIMITS_TEXT = `## Limits
 
 - size at most ${LIMITS.maxSizeX} x ${LIMITS.maxSizeY} x ${LIMITS.maxSizeZ}
@@ -278,11 +305,17 @@ export function repairPrompt(issues: { path: string; code: string; message: stri
  * nothing but a roof.
  */
 export function refinePrompt(program: unknown, instruction: string): string {
+	// The scale is the user's, not the model's: it is what the size control did to the build
+	// after it was written. Sending it would invite the model to reason about coordinates in a
+	// space it does not write in, and to drop or invent a value that the caller then has to
+	// second-guess. It is put back on whatever comes out.
+	const { scale: _scale, ...unscaled } = (program ?? {}) as Record<string, unknown>;
+
 	return [
 		`Here is an existing build program:`,
 		``,
 		'```json',
-		JSON.stringify(program, null, 1),
+		JSON.stringify(unscaled, null, 1),
 		'```',
 		``,
 		`Change it as follows:`,

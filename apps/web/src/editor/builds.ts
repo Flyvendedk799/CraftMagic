@@ -442,7 +442,14 @@ function applyOverrides(
   // program stayed where it was, which is why resizing used to move some of a build and not
   // the rest. The expander scales the coordinates themselves, and it needs the program's own
   // size to do it.
+  // An explicit 100% is a real answer, not the absence of one: a generated build carries the
+  // scale it was fitted to, and dragging the slider back to 100 has to take that off again
+  // rather than being read as "no opinion" and leaving the build shrunk.
   if (isScaled(scale)) next = { ...next, scale };
+  else if (scale && next.scale) {
+    const { scale: _fitted, ...rest } = next;
+    next = rest as BuildProgram;
+  }
 
   if (!next.params) return next;
 
@@ -477,6 +484,20 @@ export function previewScale(id: string, scale: ScalePercent): ScaleOutcome | nu
 /** The program's own size, so the UI can show what 100% means. */
 export function baseSize(id: string): { x: number; y: number; z: number } | null {
   return programOf(id)?.size ?? null;
+}
+
+/**
+ * The size a build was generated at, as a percentage of its own program.
+ *
+ * A generated program carries a scale when the user asked for a build smaller than the design
+ * the model wrote: the structure is described at full detail and the scale is what brings it
+ * down to the size that was asked for. The editor seeds its size control from this, so the
+ * slider opens on the build's real size and dragging it to 100% shows the design at the size
+ * it was actually designed at.
+ */
+export function programScale(id: string): ScalePercent | null {
+  const scale = programOf(id)?.scale;
+  return isScaled(scale) ? scale : null;
 }
 
 function toParams(params: BuildProgram['params']): BuildParam[] {

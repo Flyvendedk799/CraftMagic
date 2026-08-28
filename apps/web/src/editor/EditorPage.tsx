@@ -34,6 +34,7 @@ import {
   paramsOf,
   previewScale,
   baseSize,
+  programScale,
   NO_SCALE,
   type ScalePercent,
   registerGeneratedBuild,
@@ -777,7 +778,10 @@ export function EditorPage() {
       const id = registerGeneratedBuild(result.program);
       setGenerated({ id, result });
       setSaved(generatedBuilds());
-      update({ build: id });
+      // Carrying the program's own scale into the query string is what makes the size control
+      // open on the size the build was asked for, rather than showing 100% next to a build
+      // that is not at 100%. Dragging it up from there is how the full-detail design is seen.
+      update({ build: id, scale: programScale(id) });
     },
     [update],
   );
@@ -1079,7 +1083,7 @@ export function EditorPage() {
         estimate={generation.estimate}
         estimating={generation.estimating}
         onEstimate={generation.requestEstimate}
-        onGenerate={generation.generate}
+        onGenerate={(instruction, size) => void generation.generate(instruction, undefined, size)}
         onCancel={generation.cancel}
         onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
         initialPrompt={seededPrompt}
@@ -1185,7 +1189,9 @@ function applyNav(
     scale?: ScalePercent | null;
   }) => void,
 ): void {
-  if (nav.kind === 'build') update({ build: nav.build });
+  // Switching build seeds the scale from the program, for the same reason a generation does:
+  // a build that was fitted to a size opens at that size, and the slider says so.
+  if (nav.kind === 'build') update({ build: nav.build, scale: programScale(nav.build) });
   else if (nav.kind === 'scale') update({ scale: nav.scale });
   else update({ param: { name: nav.name, value: nav.value } });
 }

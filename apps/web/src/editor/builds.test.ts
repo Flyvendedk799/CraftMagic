@@ -107,3 +107,56 @@ describe('generated builds across tabs', () => {
     expect(second).toBe('gen:2');
   });
 });
+
+/**
+ * A generated build opens at the size it was asked for.
+ *
+ * The program describes the structure at whatever size the model designed it, and carries the
+ * scale that brings it down to the size the user chose before generating. Two things have to
+ * be true for the size control to be honest about that: it has to start on the build's real
+ * size, and dragging it back to 100% has to actually take the fitting off.
+ */
+describe('a build fitted to a chosen size', () => {
+  /** The same 8-block program, generated for someone who asked for a small build. */
+  function fitted(name: string): BuildProgram {
+    return { ...program(name), scale: { x: 50, y: 50, z: 50 } };
+  }
+
+  it('reports the scale it was fitted to, so the slider can open on it', async () => {
+    const builds = await openTab(storage());
+    const id = builds.registerGeneratedBuild(fitted('Fitted'));
+
+    expect(builds.programScale(id)).toEqual({ x: 50, y: 50, z: 50 });
+    // A build nobody resized has nothing to report, and the slider stays at 100.
+    expect(builds.programScale(builds.registerGeneratedBuild(program('Plain')))).toBeNull();
+  });
+
+  it('builds at the fitted size when the caller has no opinion', async () => {
+    const builds = await openTab(storage());
+    const id = builds.registerGeneratedBuild(fitted('Fitted'));
+
+    expect(builds.expandBuild(id).grid.size).toEqual({ x: 4, y: 4, z: 4 });
+  });
+
+  it('takes the fitting off when the size control is dragged back to 100%', async () => {
+    // An explicit 100% is an instruction, not the absence of one. Reading it as "no opinion"
+    // left the build shrunk while the slider claimed it was at full size.
+    const builds = await openTab(storage());
+    const id = builds.registerGeneratedBuild(fitted('Fitted'));
+
+    const full = builds.expandBuild(id, { scale: { x: 100, y: 100, z: 100 } });
+    expect(full.grid.size).toEqual({ x: 8, y: 8, z: 8 });
+    expect(full.program?.scale).toBeUndefined();
+  });
+
+  it('follows the size control anywhere else the user drags it', async () => {
+    const builds = await openTab(storage());
+    const id = builds.registerGeneratedBuild(fitted('Fitted'));
+
+    expect(builds.expandBuild(id, { scale: { x: 200, y: 200, z: 200 } }).grid.size).toEqual({
+      x: 16,
+      y: 16,
+      z: 16,
+    });
+  });
+});

@@ -202,6 +202,11 @@ upgrades over the internet, and the mod compiles and loads on a real 26.2 dedica
 - 3D viewer: worker-based culled chunk meshing with ambient occlusion, orbit/pan/zoom, a
   clipping-plane layer slider, DDA voxel picking, and a param slider that re-expands the
   program live — that slider *is* smart resize.
+- Resizing maps coordinates through one **cell map** per axis (`packages/core/src/ir/scale.ts`):
+  `edge(k)` says where the boundary before base block `k` lands, its high half is the mirror of
+  its low half, and points, runs and radii are all derived from it. That is what keeps a
+  symmetric build symmetric at every factor, keeps a wall anchored at `max` from vanishing
+  below half scale, and keeps two components that were flush against each other flush.
 - Performance: a 200×60×200 build (265k blocks) expands in ~190 ms; the 202k-block stress
   fixture meshes 389k quads in ~114 ms, and scrubbing layers re-meshes nothing.
 
@@ -418,8 +423,18 @@ node tools/generate.mjs "a small fishing hut on stilts" --go   # actually genera
 node tools/generate.mjs --spend                                # ledger
 ```
 
+**Choosing a size up front.** The prompt box has a size control — Natural, Tiny, Small,
+Medium, Large, Huge — and it decides how big the *finished* build is, not how much design to
+ask for. Told "make it 20 blocks", a model designs down to 20 blocks: it drops the corner
+posts, the base course and the window mullions, because there is no room for them, and what
+comes back is a flat little box. So the brief asks for the structure at whatever size it needs
+to read properly, and the program comes back carrying the `scale` that brings it down to the
+size that was asked for. The detail stays in the program, and dragging the editor's size
+slider to 100% shows the design at the size it was designed at.
+
 API: `POST /api/generations/estimate` (free), `POST /api/generations` → `{id}`,
-`GET /api/generations/:id/events` (SSE), `GET /api/spend`.
+`GET /api/generations/:id/events` (SSE), `GET /api/spend`. Both `POST`s accept an optional
+`size`; the size brief rides on the user turn rather than the cached system prompt.
 
 Browser-level checks, both driven over CDP:
 

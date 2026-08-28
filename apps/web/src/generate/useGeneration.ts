@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BuildProgram, ExpandIssue } from '@craftmagic/core';
+import type { BuildProgram, ExpandIssue, SizeChoice } from '@craftmagic/core';
 
 export interface SpendSummary {
   spentThisMonthUsd: number;
@@ -53,15 +53,20 @@ export interface UseGeneration {
   estimate: Estimate | null;
   estimating: boolean;
   /** Free — uses the token-counting endpoint, which is not billed. */
-  requestEstimate: (prompt: string) => Promise<void>;
+  requestEstimate: (prompt: string, size?: SizeChoice) => Promise<void>;
   clearEstimate: () => void;
   /**
    * Generate a build, or refine one.
    *
    * Passing `refineOf` sends the whole existing program so the model edits it rather than
    * inventing something new that merely matches a description.
+   *
+   * `size` decides how big the finished build is, not how much detail it gets: the server
+   * asks for the structure at whatever size it needs and returns a program carrying the scale
+   * that brings it down. It is meaningless alongside `refineOf`, which keeps the size the
+   * build is already at.
    */
-  generate: (prompt: string, refineOf?: unknown) => Promise<void>;
+  generate: (prompt: string, refineOf?: unknown, size?: SizeChoice) => Promise<void>;
   cancel: () => void;
 }
 
@@ -96,7 +101,7 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
     setPhase({ kind: 'idle' });
   }, []);
 
-  const requestEstimate = useCallback(async (prompt: string) => {
+  const requestEstimate = useCallback(async (prompt: string, size?: SizeChoice) => {
     const trimmed = prompt.trim();
     if (!trimmed) return;
     setEstimating(true);
@@ -104,7 +109,8 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
       const response = await fetch('/api/generations/estimate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: trimmed }),
+        // The size brief is part of the prompt the model sees, so it is part of the price.
+        body: JSON.stringify({ prompt: trimmed, ...(size ? { size } : {}) }),
       });
       if (!response.ok) {
         setEstimate(null);
@@ -122,7 +128,7 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
 
   const clearEstimate = useCallback(() => setEstimate(null), []);
 
-  const generate = useCallback(async (prompt: string, refineOf?: unknown) => {
+  const generate = useCallback(async (prompt: string, refineOf?: unknown, size?: SizeChoice) => {
     const trimmed = prompt.trim();
     if (!trimmed) return;
 
@@ -134,7 +140,11 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
       const response = await fetch('/api/generations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: trimmed, ...(refineOf ? { refineOf } : {}) }),
+        body: JSON.stringify({
+          prompt: trimmed,
+          ...(refineOf ? { refineOf } : {}),
+          ...(size && !refineOf ? { size } : {}),
+        }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {

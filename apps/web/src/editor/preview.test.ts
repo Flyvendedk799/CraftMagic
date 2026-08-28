@@ -118,7 +118,9 @@ describe('previewFor', () => {
     });
     expect(preview!.kind).toBe('box');
     // A radius-8 cube is 17^3, all of it air in this grid and all of it well past the cap.
-    expect(preview!.label).toBe('4,913 blocks');
+    // Grouped through the runner's own locale, because the label is: hard-coding "4,913"
+    // passes in en-US and fails on a machine that writes the same number "4.913".
+    expect(preview!.label).toBe(`${(4913).toLocaleString()} blocks`);
     expect(17 * 17 * 17).toBeGreaterThan(PREVIEW_CELL_CAP);
   });
 

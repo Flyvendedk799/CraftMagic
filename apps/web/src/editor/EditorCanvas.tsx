@@ -75,6 +75,8 @@ export interface EditorCanvasProps {
   onPick?: (hit: VoxelHit) => void;
   /** A second highlight, e.g. the first corner of a box in progress. */
   marker?: { x: number; y: number; z: number } | null;
+  /** A standing box selection, drawn until it is dismissed rather than until the pointer moves. */
+  region?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } | null;
   /** Outline of what the next click would change. */
   preview?: Preview | null;
   /** Chunks still queued or in flight, for a loading indicator. Fires only on change. */
@@ -131,6 +133,7 @@ function Scene({
   onStroke,
   onPick,
   marker,
+  region,
   preview,
   onProgress,
   onWorld,
@@ -209,6 +212,7 @@ function Scene({
         onPick={onPick}
       />
       {marker && <Highlight at={marker} color={PREVIEW_COLOR} />}
+      {region && <RegionOutline min={region.min} max={region.max} />}
       {preview && <PreviewOutline preview={preview} />}
     </>
   );
@@ -575,6 +579,48 @@ function Picker({
 
   if (!hit) return null;
   return <Highlight at={hit} color={HOVER_COLOR} />;
+}
+
+/**
+ * The standing box selection.
+ *
+ * Mint rather than the preview's amber, and that separation earns its keep: both are on screen
+ * at once whenever the pointer is over a build with a box already selected, and two amber
+ * outlines would be two guesses about which one the next click acts on.
+ */
+function RegionOutline({
+  min,
+  max,
+}: {
+  min: { x: number; y: number; z: number };
+  max: { x: number; y: number; z: number };
+}) {
+  const object = useMemo(() => {
+    const box = new THREE.Box3(
+      new THREE.Vector3(min.x, min.y, min.z),
+      new THREE.Vector3(max.x + 1, max.y + 1, max.z + 1),
+    );
+    const helper = new THREE.Box3Helper(box, new THREE.Color(HOVER_COLOR));
+    (helper.material as THREE.Material).dispose();
+    helper.material = new THREE.LineBasicMaterial({
+      color: HOVER_COLOR,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: false,
+    });
+    helper.renderOrder = 4;
+    return helper;
+  }, [min.x, min.y, min.z, max.x, max.y, max.z]);
+
+  useEffect(
+    () => () => {
+      object.geometry.dispose();
+      (object.material as THREE.Material).dispose();
+    },
+    [object],
+  );
+
+  return <primitive object={object} renderOrder={4} />;
 }
 
 /** The outline of what the next click would change. */

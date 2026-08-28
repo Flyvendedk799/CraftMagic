@@ -52,14 +52,14 @@ import { ScalePanel } from './ScalePanel.js';
 import { Section } from './Section.js';
 import { ShortcutHelp } from './ShortcutHelp.js';
 import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
-import { ToolPalette, type BoxAction } from './ToolPalette.js';
+import { ToolPalette, type RegionAction } from './ToolPalette.js';
 import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor } from './preview.js';
 import { useEditSession } from './useEditSession.js';
 import { placementCell } from './tools/place.js';
 import { erase } from './tools/erase.js';
 import { floodFill } from './tools/fill.js';
-import { boxBounds, boxEdit, type BoxCorner } from './tools/boxSelect.js';
+import { boxBounds, boxEdit, moveEdit, type BoxCorner } from './tools/boxSelect.js';
 import { brushEdit, MAX_BRUSH_RADIUS, type BrushShape, type Cell } from './tools/brush.js';
 import { lineEdit } from './tools/line.js';
 import {
@@ -278,7 +278,14 @@ export function EditorPage() {
 
   const [tool, setTool] = useState<ToolId>('place');
   const [block, setBlock] = useState<string>(DEFAULT_BLOCK);
-  const [boxAction, setBoxAction] = useState<BoxAction>('fill');
+  /**
+   * The box the Box tool has standing, if any.
+   *
+   * Kept as corners rather than as normalised bounds: it is nudged and grown, and re-clamping
+   * against the grid on every read is what stops a box that was pushed against an edge from
+   * quietly staying there when it is pushed back.
+   */
+  const [region, setRegion] = useState<{ min: BoxCorner; max: BoxCorner } | null>(null);
   const [familyMode, setFamilyMode] = useState(false);
   const [anchor, setAnchor] = useState<BoxCorner | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -293,6 +300,9 @@ export function EditorPage() {
     setTool(next);
     setAnchor(null);
     setNotice(null);
+    // The box belongs to the Box tool. Leaving it drawn behind a brush would be a selection
+    // nothing on screen could act on.
+    if (next !== 'select') setRegion(null);
   }, []);
 
   const setViewKind = useCallback((kind: ViewKind) => {
@@ -316,6 +326,99 @@ export function EditorPage() {
     setClip((prev) => (prev ? mirrorClip(prev, 'x') : prev));
     setNotice('Clipboard mirrored.');
   }, []);
+
+  /** Non-air blocks inside the standing box, so Clear and Copy are not blind. */
+  const regionFilled = useMemo(() => {
+    if (!region) return 0;
+    const { min, max } = boxBounds(grid, region.min, region.max);
+    let count = 0;
+    for (let y = min.y; y <= max.y; y++) {
+      for (let z = min.z; z <= max.z; z++) {
+        for (let x = min.x; x <= max.x; x++) {
+          if (grid.voxels[voxelIndex(grid.size, x, y, z)] !== 0) count++;
+        }
+      }
+    }
+    return count;
+  }, [region, grid, session.edits]);
+
+  const regionAction = useCallback(
+    (action: RegionAction) => {
+      if (!region) return;
+      const bounds = boxBounds(grid, region.min, region.max);
+      const extent = `${bounds.max.x - bounds.min.x + 1}×${bounds.max.y - bounds.min.y + 1}×${
+        bounds.max.z - bounds.min.z + 1
+      }`;
+
+      if (action === 'copy') {
+        try {
+          const copied = copyRegion(grid, region.min, region.max);
+          setClip(copied);
+          // Straight to the tool that uses it: copying is never the goal, and the box is left
+          // standing so coming back to it costs nothing.
+          setTool('stamp');
+          setNotice(
+            `Copied ${extent} — ${copied.blocks.toLocaleString()} blocks. Click to stamp it; R rotates.`,
+          );
+        } catch (err) {
+          setNotice(err instanceof ClipTooLargeError ? err.message : String(err));
+        }
+        return;
+      }
+
+      const index = action === 'clear' ? 0 : session.resolveBlock(block);
+      if (index < 0) {
+        setNotice('Palette is full — this build cannot hold another block type.');
+        return;
+      }
+      const op = boxEdit(grid, region.min, region.max, action, index);
+      session.apply(op);
+      setNotice(
+        op
+          ? `${VERB[action]} a ${extent} box — ${op.indices.length.toLocaleString()} blocks changed.`
+          : 'Nothing changed — that box already looks like that.',
+      );
+    },
+    [region, grid, block, session],
+  );
+
+  const regionNudge = useCallback(
+    (dx: number, dy: number, dz: number) => {
+      if (!region) return;
+      const op = moveEdit(grid, region.min, region.max, dx, dy, dz);
+      session.apply(op);
+      // The box travels with what it holds. A move that left the box behind would leave the
+      // next verb pointed at the hole rather than at the blocks.
+      setRegion({
+        min: { x: region.min.x + dx, y: region.min.y + dy, z: region.min.z + dz },
+        max: { x: region.max.x + dx, y: region.max.y + dy, z: region.max.z + dz },
+      });
+      setNotice(
+        op ? `Moved ${op.indices.length.toLocaleString()} cells.` : 'Nothing inside the box to move.',
+      );
+    },
+    [region, grid, session],
+  );
+
+  const regionResize = useCallback(
+    (by: number) => {
+      if (!region) return;
+      const next = {
+        min: { x: region.min.x - by, y: region.min.y - by, z: region.min.z - by },
+        max: { x: region.max.x + by, y: region.max.y + by, z: region.max.z + by },
+      };
+      // A shrink that would turn the box inside out is refused rather than clamped to a
+      // point: a one-cell box is a meaningful selection, and a zero-cell one is not.
+      if (next.max.x < next.min.x || next.max.y < next.min.y || next.max.z < next.min.z) {
+        setNotice('The box is already as small as it goes.');
+        return;
+      }
+      const bounds = boxBounds(grid, next.min, next.max);
+      setRegion({ min: bounds.min, max: bounds.max });
+      setNotice(null);
+    },
+    [region, grid],
+  );
 
   /**
    * A tool click. Every branch does the same three things — resolve a palette slot, ask a
@@ -421,42 +524,18 @@ export function EditorPage() {
         case 'select': {
           if (!anchor) {
             setAnchor({ x: hit.x, y: hit.y, z: hit.z });
-            setNotice(
-              boxAction === 'copy' ? 'Now click the opposite corner to copy.' : 'Now click the opposite corner.',
-            );
+            setRegion(null);
+            setNotice('Now click the opposite corner.');
             return;
           }
 
+          // The second corner selects and stops. It used to edit — which meant aiming the box
+          // and committing to a verb were the same act, and a box you wanted to hollow after
+          // filling had to be aimed a second time.
           const bounds = boxBounds(grid, anchor, hit);
-          const extent = `${bounds.max.x - bounds.min.x + 1}×${bounds.max.y - bounds.min.y + 1}×${
-            bounds.max.z - bounds.min.z + 1
-          }`;
-
-          if (boxAction === 'copy') {
-            setAnchor(null);
-            try {
-              const copied = copyRegion(grid, anchor, hit);
-              setClip(copied);
-              // Straight to the tool that uses it: copying is never the goal, and leaving the
-              // box tool armed after a copy invites a second selection nobody wanted.
-              setTool('stamp');
-              setNotice(
-                `Copied ${extent} — ${copied.blocks.toLocaleString()} blocks. Click to stamp it; R rotates.`,
-              );
-            } catch (err) {
-              setNotice(err instanceof ClipTooLargeError ? err.message : String(err));
-            }
-            return;
-          }
-
-          const index = boxAction === 'clear' ? 0 : slot();
-          if (index < 0) return;
-          const op = boxEdit(grid, anchor, hit, boxAction, index);
-          session.apply(op);
           setAnchor(null);
-          setNotice(
-            `${VERB[boxAction]} a ${extent} box — ${(op?.indices.length ?? 0).toLocaleString()} blocks changed.`,
-          );
+          setRegion({ min: bounds.min, max: bounds.max });
+          setNotice(null);
           return;
         }
 
@@ -523,7 +602,7 @@ export function EditorPage() {
         }
       }
     },
-    [tool, block, boxAction, familyMode, anchor, grid, session, brushRadius, brushShape, clip, stampMode],
+    [tool, block, familyMode, anchor, grid, session, brushRadius, brushShape, clip, stampMode],
   );
 
   /**
@@ -652,6 +731,7 @@ export function EditorPage() {
         return;
       case 'Escape':
         setAnchor(null);
+        setRegion(null);
         setNotice(null);
         return;
       default:
@@ -776,6 +856,7 @@ export function EditorPage() {
           onStroke={strokable ? onStroke : undefined}
           onPick={onPick}
           marker={anchor}
+          region={region}
           preview={preview}
           onProgress={setRemaining}
           onWorld={session.attachWorld}
@@ -820,8 +901,15 @@ export function EditorPage() {
           onTool={onTool}
           block={block}
           onBlock={setBlock}
-          boxAction={boxAction}
-          onBoxAction={setBoxAction}
+          region={region}
+          regionFilled={regionFilled}
+          onRegionAction={regionAction}
+          onRegionNudge={regionNudge}
+          onRegionResize={regionResize}
+          onDeselectRegion={() => {
+            setRegion(null);
+            setNotice(null);
+          }}
           anchor={anchor}
           onClearAnchor={() => setAnchor(null)}
           familyMode={familyMode}

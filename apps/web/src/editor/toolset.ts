@@ -60,7 +60,7 @@ export const TOOLS: readonly ToolSpec[] = [
     id: 'select',
     verb: 'set a box corner',
     label: 'Box',
-    hint: 'Click two opposite corners.',
+    hint: 'Click two opposite corners. The box stays, so you can fill it, hollow it, move it or copy it — as many times as you like.',
     needsBlock: true,
     usesBrush: false,
     key: '4',

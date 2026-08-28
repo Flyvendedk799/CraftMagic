@@ -83,3 +83,75 @@ export function boxEdit(
 
   return builder.build();
 }
+
+/**
+ * Shift everything inside a box, leaving air behind it.
+ *
+ * The one region operation that cannot be expressed as "walk the cells and decide a value
+ * from what is there": a move of less than the region's own width overlaps its own source, so
+ * the contents have to be read out in full before any of them is written back. Reading into a
+ * buffer first is not an optimisation here — it is the difference between moving a wall and
+ * smearing it.
+ *
+ * Each cell of the union of source and destination is then decided *once*, and that matters
+ * more than it looks. Writing air over the source and then the contents at the offset, as two
+ * passes, records two changes for every overlapping cell — and the second is skipped whenever
+ * the moved value happens to equal what was already there, which is most of the interior of
+ * anything uniform. A slab nudged one block along its own length would come back hollow.
+ *
+ * Cells that would leave the grid are dropped rather than clamped. Clamping would pile the
+ * overhanging slice against the far wall — a move that quietly deforms what it moved — where
+ * dropping is the rule the rest of the editor already applies at its edges.
+ */
+export function moveEdit(
+  grid: VoxelGrid,
+  a: BoxCorner,
+  b: BoxCorner,
+  dx: number,
+  dy: number,
+  dz: number,
+): EditOp | null {
+  if (dx === 0 && dy === 0 && dz === 0) return null;
+
+  const { min, max, cells } = boxBounds(grid, a, b);
+  const { size, voxels } = grid;
+
+  const width = max.x - min.x + 1;
+  const depth = max.z - min.z + 1;
+  const held = new Uint16Array(cells);
+  const at = (x: number, y: number, z: number) =>
+    x - min.x + (z - min.z) * width + (y - min.y) * width * depth;
+
+  for (let y = min.y; y <= max.y; y++) {
+    for (let z = min.z; z <= max.z; z++) {
+      for (let x = min.x; x <= max.x; x++) {
+        held[at(x, y, z)] = voxels[voxelIndex(size, x, y, z)]!;
+      }
+    }
+  }
+
+  const inSource = (x: number, y: number, z: number) =>
+    x >= min.x && x <= max.x && y >= min.y && y <= max.y && z >= min.z && z <= max.z;
+
+  const builder = new EditBuilder(grid, cells * 2);
+  // The union of where the contents came from and where they are going. Everything outside it
+  // is untouched by definition, and everything inside it gets exactly one verdict.
+  const lo = { x: Math.min(min.x, min.x + dx), y: Math.min(min.y, min.y + dy), z: Math.min(min.z, min.z + dz) };
+  const hi = { x: Math.max(max.x, max.x + dx), y: Math.max(max.y, max.y + dy), z: Math.max(max.z, max.z + dz) };
+
+  for (let y = lo.y; y <= hi.y; y++) {
+    for (let z = lo.z; z <= hi.z; z++) {
+      for (let x = lo.x; x <= hi.x; x++) {
+        const from = { x: x - dx, y: y - dy, z: z - dz };
+        // Destination wins over source, which is what makes an overlapping move a move.
+        if (inSource(from.x, from.y, from.z)) {
+          builder.setAt(x, y, z, held[at(from.x, from.y, from.z)]!);
+        } else if (inSource(x, y, z)) {
+          builder.setAt(x, y, z, AIR_INDEX);
+        }
+      }
+    }
+  }
+
+  return builder.build();
+}

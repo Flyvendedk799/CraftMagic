@@ -62,6 +62,7 @@ const RULE = 'rgba(20, 26, 33, 0.14)';
 const EDGE = 'rgba(20, 26, 33, 0.35)';
 const INK = '#12171d';
 const LABEL = '#5b636d';
+const COMPASS_FONT = '8px ui-monospace, "Cascadia Code", Consolas, monospace';
 
 /** Earlier-in-this-layer, and the layer below. Both are context, at decreasing strength. */
 const ALPHA_EARLIER = 0.45;
@@ -213,6 +214,55 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
   }
 
   drawLabels(ctx, cols, rows, cell, originX, originY, plan.footprint);
+  drawCompass(ctx, originX, originY);
+}
+
+/**
+ * Which way is north, drawn in the corner the two rulers meet.
+ *
+ * A ruled grid answers "which square" and says nothing about which way to face, and a plan
+ * you cannot orient is a plan you have to guess at — every reader would otherwise work it out
+ * once, from the isometric, and hope they got it the right way round.
+ *
+ * North is up because the grid is drawn in world axes: rows run along +z, which is south in
+ * Minecraft, so row 1 is the northernmost. Columns run along +x, which is east. That is a
+ * fact about the game's coordinate system rather than a choice made here, which is exactly
+ * why it is worth printing — nobody should have to recall it mid-build.
+ *
+ * Into the canvas rather than beside it in HTML: it belongs to the drawing, so it has to
+ * survive the drawing being printed, saved or pasted somewhere else.
+ */
+function drawCompass(ctx: CanvasRenderingContext2D, originX: number, originY: number): void {
+  // The corner where the two rulers meet, and the only free space on the drawing: 26 x 18
+  // device-independent pixels. Arrow and letter go side by side rather than stacked, because
+  // stacked they need 18px of height and the row-1 label is already using the bottom of it.
+  const midY = (PAD + originY) / 2;
+  const arrowX = PAD + 7;
+  const letterX = PAD + 17;
+
+  ctx.save();
+  ctx.strokeStyle = LABEL;
+  ctx.fillStyle = LABEL;
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(arrowX, midY + 4);
+  ctx.lineTo(arrowX, midY - 1);
+  ctx.stroke();
+
+  // Solid head: at this size an outlined arrowhead closes up into a blob.
+  ctx.beginPath();
+  ctx.moveTo(arrowX, midY - 5);
+  ctx.lineTo(arrowX - 2.6, midY - 1);
+  ctx.lineTo(arrowX + 2.6, midY - 1);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.font = COMPASS_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('N', letterX, midY);
+  ctx.restore();
 }
 
 function fillCell(

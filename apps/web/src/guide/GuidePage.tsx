@@ -147,6 +147,18 @@ export function GuidePage() {
   const ready = film.cover !== null;
 
   const plans = useLayerPlans(build, guide, printable && renderable);
+
+  /**
+   * Blocks standing once each step is done.
+   *
+   * "Step 31 of 43" says nothing about how much work is left: the last dozen steps of a build
+   * are usually its roof, and a roof can be a quarter of it. A running block count is the
+   * honest measure of progress, and it costs one pass over the steps.
+   */
+  const placedBy = useMemo(() => {
+    let running = 0;
+    return guide.steps.map((step) => (running += step.blocks.length));
+  }, [guide]);
   const editorHref = useMemo(() => {
     const search = new URLSearchParams();
     if (rawBuild !== null) search.set('build', rawBuild);
@@ -216,6 +228,8 @@ export function GuidePage() {
               total={guide.steps.length}
               plan={plans[i]!}
               shot={film.shots[i]}
+              placed={placedBy[i]!}
+              totalBlocks={guide.totalBlocks}
             />
           ))}
         </section>
@@ -406,11 +420,16 @@ function StepCard({
   total,
   plan,
   shot,
+  placed,
+  totalBlocks,
 }: {
   step: BuildStep;
   total: number;
   plan: LayerPlan;
   shot: string | undefined;
+  /** Blocks placed once this step is done, counting every step before it. */
+  placed: number;
+  totalBlocks: number;
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
@@ -433,7 +452,7 @@ function StepCard({
             <span className="step__of"> of {total}</span>
           </span>
           <span className="step__layer">
-            y = {step.layer}
+            {placed.toLocaleString()} of {totalBlocks.toLocaleString()} · y = {step.layer}
             {step.partOfLayer && (
               <span className="step__part">
                 {' '}
@@ -465,7 +484,7 @@ function StepCard({
         <ArtFrame size="panel" caption={`Layer ${step.layer} from above — place the outlined squares`}>
           <canvas className="panel__plan" ref={canvas} />
         </ArtFrame>
-        <ArtFrame size="panel" caption="How it looks once this step is done">
+        <ArtFrame size="panel" caption="After this step — seen from the south-east">
           <ArtImage className="panel__shot" src={shot} alt={`The build after step ${step.index}`} />
         </ArtFrame>
       </div>

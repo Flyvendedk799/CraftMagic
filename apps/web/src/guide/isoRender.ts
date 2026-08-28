@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { voxelIndex } from '@craftmagic/core';
+import { voxelIndex, voxelPosition } from '@craftmagic/core';
 import { CHUNK_SIZE, chunkCounts, meshChunk, type GridSize, type MeshSource } from '../editor/mesher.js';
 
 /** 45° around Y and 35.264° above the horizon: the true isometric axonometry. */
@@ -107,13 +107,31 @@ export class IsoFilmstrip {
   private halfV = 1;
   private disposed = false;
 
-  constructor(size: GridSize, paletteColors: Uint8Array, paletteFlags: Uint8Array) {
+  /**
+   * Palette entries per "age": what is already built, and what this step adds.
+   *
+   * A palette-indexed mesher can only colour a block by its index, so distinguishing new
+   * blocks from old ones means giving them different indices — the same material twice, once
+   * muted and once at full strength. `place` writes the bright index, and the step after
+   * demotes those cells to the muted one.
+   *
+   * This is the convention every set of assembly instructions uses and the one thing these
+   * renders were missing: seven consecutive pictures of a foundation growing by a strip are
+   * indistinguishable without it, and the reader is left comparing two greys to find the
+   * difference.
+   */
+  private readonly paletteSpan: number;
+  /** Cells the previous `place` lit up, so they can be dimmed when the next one runs. */
+  private lit: number[] = [];
+
+  constructor(size: GridSize, paletteColors: Uint8Array, paletteFlags: Uint8Array, highlight = true) {
     this.renderer = acquireRenderer();
+    this.paletteSpan = highlight ? paletteColors.length / 3 : 0;
     this.source = {
       size,
       voxels: new Uint16Array(size.x * size.y * size.z),
-      paletteColors,
-      paletteFlags,
+      paletteColors: highlight ? dimmedTwice(paletteColors) : paletteColors,
+      paletteFlags: highlight ? doubled(paletteFlags) : paletteFlags,
     };
     this.counts = chunkCounts(size);
     this.frame(size);
@@ -129,6 +147,12 @@ export class IsoFilmstrip {
    * this copies the voxels straight across and marks every chunk dirty.
    */
   fill(voxels: Uint16Array): void {
+    // Raw indices, which are the *muted* half of a highlighting palette. A finished build has
+    // no new blocks to distinguish, so a caller wanting one should construct with
+    // `highlight: false` and get the real colours; this asserts rather than silently dimming.
+    if (this.paletteSpan > 0) {
+      throw new Error('fill() needs a filmstrip constructed with highlight: false');
+    }
     this.source.voxels.set(voxels);
     for (let cy = 0; cy < this.counts.y; cy++) {
       for (let cz = 0; cz < this.counts.z; cz++) {
@@ -137,12 +161,57 @@ export class IsoFilmstrip {
     }
   }
 
-  /** Add one step's blocks to the standing model. */
+  /**
+   * Add one step's blocks to the standing model, lit; dim the previous step's.
+   *
+   * The dimming happens here rather than in the caller because the two halves have to stay in
+   * step: a snapshot taken between them would show two steps' worth of new blocks, which is
+   * worse than showing none.
+   */
   place(blocks: readonly IsoBlock[]): void {
     const { size, voxels } = this.source;
+
+    if (this.paletteSpan > 0) {
+      // Yesterday's news. Demoting is a palette-index change, not a removal, so the geometry
+      // is identical and only the vertex colours of those chunks are rebuilt.
+      for (const index of this.lit) {
+        const value = voxels[index];
+        if (value !== undefined && value >= this.paletteSpan) voxels[index] = value - this.paletteSpan;
+      }
+      this.touchIndices(this.lit);
+      this.lit = [];
+    }
+
     for (const block of blocks) {
-      voxels[voxelIndex(size, block.x, block.y, block.z)] = block.paletteIndex;
+      const index = voxelIndex(size, block.x, block.y, block.z);
+      // Air is never lit: a step that clears a cell — a stairwell, a window reveal — is
+      // showing an absence, and a glowing hole is not what anyone means by "new".
+      const lit = this.paletteSpan > 0 && block.paletteIndex !== 0;
+      voxels[index] = lit ? block.paletteIndex + this.paletteSpan : block.paletteIndex;
+      if (lit) this.lit.push(index);
       this.touch(block.x, block.y, block.z);
+    }
+  }
+
+  /**
+   * Stop distinguishing new blocks from built ones.
+   *
+   * For the cover, which is the finished building and has no "new" in it — snapshotted after
+   * the last step, it would otherwise come out muted everywhere except the handful of blocks
+   * that step happened to place. Done by lifting the muted half of the palette up to the
+   * bright half rather than by rewriting voxels: the same one full re-mesh either way, and
+   * this way the meaning lives in one place.
+   *
+   * One-way. Nothing places blocks after the cover, so there is nothing to undo it for.
+   */
+  settle(): void {
+    if (this.paletteSpan === 0) return;
+    const colors = this.source.paletteColors;
+    colors.copyWithin(0, colors.length / 2);
+    for (let cy = 0; cy < this.counts.y; cy++) {
+      for (let cz = 0; cz < this.counts.z; cz++) {
+        for (let cx = 0; cx < this.counts.x; cx++) this.dirty.add(chunkKey(cx, cy, cz));
+      }
     }
   }
 
@@ -250,6 +319,26 @@ export class IsoFilmstrip {
     }
   }
 
+  /**
+   * Mark the chunks holding these flat cell indices.
+   *
+   * Only the containing chunk, not the AO neighbourhood `touch` walks: dimming changes a
+   * block's colour and nothing about its geometry, so no face outside its own chunk is
+   * re-shaded by it. The step's *new* blocks still go through `touch`, which is where the
+   * neighbourhood actually matters.
+   */
+  private touchIndices(indices: readonly number[]): void {
+    for (const index of indices) {
+      const [x, y, z] = voxelPosition(this.source.size, index);
+      const cx = x >> 4;
+      const cy = y >> 4;
+      const cz = z >> 4;
+      if (cx < this.counts.x && cy < this.counts.y && cz < this.counts.z) {
+        this.dirty.add(chunkKey(cx, cy, cz));
+      }
+    }
+  }
+
   private remesh(): void {
     if (this.dirty.size === 0) return;
     for (const key of this.dirty) {
@@ -298,6 +387,42 @@ export class IsoFilmstrip {
     this.scene.add(mesh);
     return mesh;
   }
+}
+
+/**
+ * How much of its colour a block keeps once it is no longer new.
+ *
+ * Mixed toward white rather than toward black, and not far: the point is to push the built
+ * part back a step, not to erase it. Too dark and the model reads as a shadow with a few
+ * bright specks; too light and there is no difference to see. This is roughly the contrast a
+ * printed instruction sheet uses between the current piece and the assembly under it, and it
+ * survives being printed in greyscale, which a hue shift would not.
+ */
+const BUILT_KEEP = 0.55;
+const BUILT_TOWARD = 255 * (1 - BUILT_KEEP);
+
+/**
+ * The palette twice over: muted first, full strength second.
+ *
+ * Muted occupies the original indices so that any code path which has not been told about
+ * highlighting — `fill`, a step with no provenance — keeps working and simply renders the
+ * whole model in the built tone.
+ */
+export function dimmedTwice(colors: Uint8Array): Uint8Array {
+  const out = new Uint8Array(colors.length * 2);
+  for (let i = 0; i < colors.length; i++) {
+    out[i] = Math.round(colors[i]! * BUILT_KEEP + BUILT_TOWARD);
+    out[colors.length + i] = colors[i]!;
+  }
+  return out;
+}
+
+/** The flags twice over. Transparency and emission belong to the material, not to its age. */
+export function doubled(flags: Uint8Array): Uint8Array {
+  const out = new Uint8Array(flags.length * 2);
+  out.set(flags, 0);
+  out.set(flags, flags.length);
+  return out;
 }
 
 /** 10 bits per axis, matching the editor's packing — 16384 blocks, far past the size cap. */

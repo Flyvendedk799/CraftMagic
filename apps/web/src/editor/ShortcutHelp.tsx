@@ -65,19 +65,19 @@ export function ShortcutHelp({ groups, foot, onClose }: ShortcutHelpProps) {
   }, []);
 
   return (
-    <div className="sheet" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div className="shortcuts" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
       {/* A backdrop button rather than a click handler on the panel's parent: clicking
           outside a dialog to dismiss it has to be reachable by keyboard too. */}
-      <button type="button" className="sheet__scrim" aria-label="Close shortcuts" onClick={onClose} />
-      <div className="sheet__panel">
-        <div className="sheet__head">
-          <h2 className="sheet__title">Keyboard</h2>
-          <button type="button" className="sheet__close" onClick={onClose}>
+      <button type="button" className="shortcuts__scrim" aria-label="Close shortcuts" onClick={onClose} />
+      <div className="shortcuts__panel">
+        <div className="shortcuts__head">
+          <h2 className="shortcuts__title">Keyboard</h2>
+          <button type="button" className="shortcuts__close" onClick={onClose}>
             Close
           </button>
         </div>
 
-        <div className="sheet__cols">
+        <div className="shortcuts__cols">
           {groups.map((group) => (
             <Group key={group.title} title={group.title}>
               {group.rows.map((entry) => (
@@ -87,7 +87,7 @@ export function ShortcutHelp({ groups, foot, onClose }: ShortcutHelpProps) {
           ))}
         </div>
 
-        {foot && <p className="sheet__foot">{foot}</p>}
+        {foot && <p className="shortcuts__foot">{foot}</p>}
       </div>
     </div>
   );
@@ -95,9 +95,9 @@ export function ShortcutHelp({ groups, foot, onClose }: ShortcutHelpProps) {
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="sheet__group">
-      <h3 className="sheet__group-title">{title}</h3>
-      <dl className="sheet__list">{children}</dl>
+    <section className="shortcuts__group">
+      <h3 className="shortcuts__group-title">{title}</h3>
+      <dl className="shortcuts__list">{children}</dl>
     </section>
   );
 }

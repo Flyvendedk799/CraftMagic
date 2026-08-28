@@ -147,6 +147,18 @@ export function GuidePage() {
   const ready = film.cover !== null;
 
   const plans = useLayerPlans(build, guide, printable && renderable);
+
+  /**
+   * Blocks standing once each step is done.
+   *
+   * "Step 31 of 43" says nothing about how much work is left: the last dozen steps of a build
+   * are usually its roof, and a roof can be a quarter of it. A running block count is the
+   * honest measure of progress, and it costs one pass over the steps.
+   */
+  const placedBy = useMemo(() => {
+    let running = 0;
+    return guide.steps.map((step) => (running += step.blocks.length));
+  }, [guide]);
   const editorHref = useMemo(() => {
     const search = new URLSearchParams();
     if (rawBuild !== null) search.set('build', rawBuild);
@@ -199,10 +211,15 @@ export function GuidePage() {
           {/* The rules the segmentation actually followed, read off the design system rather
               than restated here — so a guide laid out under a different one describes itself
               correctly instead of describing the default. */}
+          {/* Both views use the same convention and neither is self-explanatory, so it is
+              stated once here rather than repeated under forty-three pictures. The model half
+              is the newer of the two claims and the one a reader is most likely to miss: pale
+              means built, full colour means place it now. */}
           <p className="sheet__lede steps__lede">
             Bottom-up, at most {guide.design.step.maxBlocks} blocks a step
-            {guide.parts.length > 0 && ', and one part at a time'}. Grey squares in a plan are
-            what you have already placed; outlined ones are this step.
+            {guide.parts.length > 0 && ', and one part at a time'}. In the plan, grey squares
+            are already placed and outlined ones are this step. In the model, what you have
+            built is faded and <strong>this step is in full colour</strong>.
           </p>
           {guide.steps.map((step, i) => (
             <StepCard
@@ -211,6 +228,8 @@ export function GuidePage() {
               total={guide.steps.length}
               plan={plans[i]!}
               shot={film.shots[i]}
+              placed={placedBy[i]!}
+              totalBlocks={guide.totalBlocks}
             />
           ))}
         </section>
@@ -401,11 +420,16 @@ function StepCard({
   total,
   plan,
   shot,
+  placed,
+  totalBlocks,
 }: {
   step: BuildStep;
   total: number;
   plan: LayerPlan;
   shot: string | undefined;
+  /** Blocks placed once this step is done, counting every step before it. */
+  placed: number;
+  totalBlocks: number;
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
@@ -428,7 +452,7 @@ function StepCard({
             <span className="step__of"> of {total}</span>
           </span>
           <span className="step__layer">
-            y = {step.layer}
+            {placed.toLocaleString()} of {totalBlocks.toLocaleString()} · y = {step.layer}
             {step.partOfLayer && (
               <span className="step__part">
                 {' '}
@@ -460,7 +484,7 @@ function StepCard({
         <ArtFrame size="panel" caption={`Layer ${step.layer} from above — place the outlined squares`}>
           <canvas className="panel__plan" ref={canvas} />
         </ArtFrame>
-        <ArtFrame size="panel" caption="How it looks once this step is done">
+        <ArtFrame size="panel" caption="After this step — seen from the south-east">
           <ArtImage className="panel__shot" src={shot} alt={`The build after step ${step.index}`} />
         </ArtFrame>
       </div>
@@ -513,7 +537,9 @@ function useFilmstrip(
 
     const finish = () => {
       // The scene already holds the finished build, so the cover is one extra readback
-      // rather than a second pass over the steps.
+      // rather than a second pass over the steps — but it has to stop highlighting first, or
+      // the finished building comes out muted except for whatever the last step placed.
+      film.settle();
       const cover = film.snapshot(COVER_W, COVER_H);
       setState({ shots, cover, elapsedMs: Math.round(performance.now() - startedAt) });
       film.dispose();

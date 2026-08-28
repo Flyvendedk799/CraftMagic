@@ -139,7 +139,10 @@ async function render(id: string): Promise<string> {
   const size = detail.grid.size;
   const palette = detail.grid.palette;
 
-  const strip = new IsoFilmstrip(size, paletteColors(palette), paletteFlags(palette));
+  // `highlight: false`: the two-tone palette exists so a guide can show what one step added,
+  // and a thumbnail of a finished build has nothing new in it — with highlighting on, every
+  // block would render as the muted "already built" tone.
+  const strip = new IsoFilmstrip(size, paletteColors(palette), paletteFlags(palette), false);
   try {
     strip.fill(Uint16Array.from(detail.grid.voxels));
     const src = strip.snapshot(WIDTH, HEIGHT);

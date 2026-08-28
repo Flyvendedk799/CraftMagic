@@ -16,7 +16,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { ProviderId, TokenUsage } from './pricing.js';
-import type { CodexIdentity } from '@flyvendedk799/ai-auth';
+import { CLAUDE_CODE_SYSTEM, type CodexIdentity } from '@flyvendedk799/ai-auth';
 
 export const TOOL_NAME = 'emit_build_program';
 
@@ -43,6 +43,18 @@ export interface ProviderSession {
 export interface SessionOptions {
   model: string;
   system: string;
+  /**
+   * A system block placed ahead of `system`, when the credential requires one.
+   *
+   * A Claude Code subscription token has to open with the CLI's own identity sentence or
+   * Anthropic refuses Opus and Sonnet — with a 429 naming a rate limit the plan is nowhere
+   * near. Haiku is exempt, which is what makes the bug so good at hiding: the cheap model you
+   * reach for to test with is the one model that does not need this.
+   *
+   * Its own field rather than something the caller prepends to `system`, because it has to be
+   * its own *block*. Concatenating it onto the front of the prompt is refused just the same.
+   */
+  systemPrefix?: string;
   schema: unknown;
   maxTokens: number;
   effort?: 'low' | 'medium' | 'high';
@@ -106,8 +118,15 @@ class AnthropicSession implements ProviderSession {
         model: this.options.model,
         max_tokens: this.options.maxTokens,
         // Marking the system prompt cacheable is the single biggest cost lever here: it is
-        // identical on every generation, so after the first call it bills at a tenth.
-        system: [{ type: 'text', text: this.options.system, cache_control: { type: 'ephemeral' } }],
+        // identical on every generation, so after the first call it bills at a tenth. Any
+        // identity block in front of it stays uncached: one sentence is below the cache
+        // minimum, and each marker spends one of the four breakpoints a request is allowed.
+        system: [
+          ...(this.options.systemPrefix
+            ? [{ type: 'text' as const, text: this.options.systemPrefix }]
+            : []),
+          { type: 'text' as const, text: this.options.system, cache_control: { type: 'ephemeral' as const } },
+        ],
         // Only where it is accepted. `output_config` is an adaptive-thinking feature, and a
         // model without it rejects the whole request with a 400 rather than ignoring the
         // field — which turned typing a model name into the settings box into a way to break
@@ -233,7 +252,11 @@ export function claudeCodeProvider(getToken: () => Promise<string>): Provider {
       // this way so that it cannot start happening when something else calls in.
       let inner: Promise<ProviderSession> | null = null;
       const sessionFor = () =>
-        (inner ??= clientFor().then((client) => new AnthropicSession(client, options)));
+        (inner ??= clientFor().then(
+          // The identity block belongs to the *credential*, not to the caller's prompt, so it
+          // is attached here — the one place that knows this call is paid for by a plan.
+          (client) => new AnthropicSession(client, { ...options, systemPrefix: CLAUDE_CODE_SYSTEM }),
+        ));
 
       return {
         emit: async (userContent) => (await sessionFor()).emit(userContent),

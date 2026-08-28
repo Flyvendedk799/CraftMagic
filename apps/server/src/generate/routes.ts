@@ -29,6 +29,7 @@ import type { Auth } from '../auth/session.js';
 import { generateBuild, GenerationError, TOOL_NAME } from './pipeline.js';
 import { systemPrompt } from './prompt.js';
 import { costOf, isPricingKnown, isSubscription, worstCaseCost, type ProviderId } from './pricing.js';
+import { providerErrorFacts } from '@flyvendedk799/ai-auth';
 import { describeProviderError } from './providerError.js';
 import { providerFor, type Provider } from './providers.js';
 import type { GenerationQuota } from './quota.js';
@@ -366,11 +367,31 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 						err instanceof GenerationError || err instanceof BudgetExceededError
 							? err.message
 							: (described ?? `generation failed: ${(err as Error).message}`);
-					app.log.error({ err }, 'generation failed');
+					// What the provider actually said, kept apart from what we chose to say about
+					// it. Only the prose used to be recorded, which meant a failure was
+					// undiagnosable the moment the terminal scrolled: the message asserted a
+					// cause, and nothing anywhere retained the status code or the rate-limit
+					// headers that would have shown the assertion was wrong.
+					const facts = providerErrorFacts(err);
+					app.log.error({ err, facts }, 'generation failed');
 
 					if (recordId) {
 						await quota
-							.finish(recordId, { status: 'failed', error: { message } })
+							.finish(recordId, {
+								status: 'failed',
+								error: {
+									message,
+									provider: ai.provider,
+									// Nulls are dropped rather than stored: a row full of them reads
+									// as "we looked and found nothing", when the truth is usually
+									// that the error never reached a provider at all.
+									...(facts.status !== null ? { status: facts.status } : {}),
+									...(facts.retryAfter !== null ? { retryAfter: facts.retryAfter } : {}),
+									...(facts.planStatus !== null ? { planStatus: facts.planStatus } : {}),
+									...(facts.utilization !== null ? { utilization: facts.utilization } : {}),
+									...(facts.detail !== null ? { detail: facts.detail } : {}),
+								},
+							})
 							.catch((e: unknown) => app.log.warn({ err: e }, 'could not record the failure'));
 					}
 

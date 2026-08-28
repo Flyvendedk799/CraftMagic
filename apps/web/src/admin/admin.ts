@@ -49,7 +49,6 @@ export interface AdminSettings {
   anthropicKeyHint: string | null;
   openaiKeyHint: string | null;
   providers: ProviderId[];
-  knownModels: string[];
   pricingKnown: boolean;
   /** False on a subscription: nothing is charged per token, so no figure is worth showing. */
   metered: boolean;

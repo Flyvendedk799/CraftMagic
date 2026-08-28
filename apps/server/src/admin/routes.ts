@@ -111,7 +111,6 @@ export function adminRoutes(options: AdminRoutesOptions): FastifyPluginAsync {
         providers: PROVIDERS,
         // So the page can warn when a typed model has no published rate and the budget guard
         // is falling back to its pessimistic assumption.
-        knownModels: Object.keys(PRICING),
         // A subscription has no per-token rate, so "we do not know this model's price" is not
         // a warning worth showing: nothing is going to be charged either way.
         pricingKnown: isSubscription(ai.provider) || isPricingKnown(ai.model),

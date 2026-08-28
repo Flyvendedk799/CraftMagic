@@ -220,3 +220,129 @@
   margin-bottom: 0.875rem;
 }
 
+
+/* --- the model picker --------------------------------------------------------
+ *
+ * Rows rather than a <select>, because each option has three things to say — how heavy it is,
+ * what it costs, and what it is for — and a select can show one line of one option at a time.
+ * The weight badge is the load-bearing part: a plan meters each model separately, so "which of
+ * these is lighter" is the question someone is actually asking when a heavier one is refused.
+ */
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.models__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.models__row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2);
+  align-items: start;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.models__row:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.models__row[data-selected='1'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--sunken));
+}
+
+.models__row input[type='radio'] {
+  margin-top: 0.2rem;
+  accent-color: var(--accent);
+}
+
+.models__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.models__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.models__name {
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+/* Three weights, three readings. Amber for heavy is the same warning colour the rest of the
+   product uses for "this will cost you", which is exactly what a heavy model does. */
+.models__tier {
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  text-transform: lowercase;
+}
+
+.models__tier--light {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  color: var(--ok);
+}
+
+.models__tier--balanced {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+
+.models__tier--heavy {
+  background: color-mix(in srgb, var(--pending) 18%, transparent);
+  color: var(--pending);
+}
+
+.models__rate {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.models__note {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+/* Explicitly flat, and deliberately outranking `.admin code` above — that rule gives a code
+   element a filled background, which on a full-width line reads as an editable field rather
+   than as a label. A bare `.models__id` loses the specificity contest and looks like an input. */
+.admin .models__id {
+  align-self: start;
+  padding: 0;
+  background: none;
+  color: color-mix(in srgb, var(--muted) 80%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  overflow-wrap: anywhere;
+}
+
+.models__custom {
+  margin-top: var(--space-1);
+}
+
+.models__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+}

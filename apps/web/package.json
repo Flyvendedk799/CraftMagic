@@ -17,7 +17,8 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.1.1",
     "three": "^0.171.0",
-    "zustand": "^5.0.2"
+    "zustand": "^5.0.2",
+    "@flyvendedk799/ai-auth": "github:Flyvendedk799/ai-auth"
   },
   "devDependencies": {
     "@types/react": "^18.3.17",

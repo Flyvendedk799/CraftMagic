@@ -16,7 +16,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import type { ProviderId, TokenUsage } from './pricing.js';
-import type { CodexIdentity } from './subscription/codex.js';
+import type { CodexIdentity } from '@flyvendedk799/ai-auth';
 
 export const TOOL_NAME = 'emit_build_program';
 
@@ -196,7 +196,7 @@ const CLAUDE_CODE_BETA = [
  * left unset and only the bearer goes on the wire.
  *
  * The token is fetched per session rather than held, because it is refreshed behind our back:
- * see `subscription/claudeCode.ts`.
+ * see `ClaudeCodeCredential` in `@flyvendedk799/ai-auth`.
  */
 export function claudeCodeProvider(getToken: () => Promise<string>): Provider {
   return {
@@ -225,8 +225,15 @@ export function claudeCodeProvider(getToken: () => Promise<string>): Provider {
         return client;
       };
 
-      let inner: ProviderSession | null = null;
-      const sessionFor = async () => (inner ??= new AnthropicSession(await clientFor(), options));
+      // A promise, assigned synchronously — the same shape `clientFor` above uses, and for the
+      // same reason. Holding the resolved session instead means the `??=` has to await inside
+      // its own right-hand side, so two concurrent callers both find it unset, both build a
+      // session, and one of them is then talking to a thread the other is not. The pipeline
+      // calls emit and repair strictly in sequence so it could not happen today; it is written
+      // this way so that it cannot start happening when something else calls in.
+      let inner: Promise<ProviderSession> | null = null;
+      const sessionFor = () =>
+        (inner ??= clientFor().then((client) => new AnthropicSession(client, options)));
 
       return {
         emit: async (userContent) => (await sessionFor()).emit(userContent),
@@ -537,8 +544,15 @@ export function codexProvider(
         return client;
       };
 
-      let inner: ProviderSession | null = null;
-      const sessionFor = async () => (inner ??= new CodexSession(await clientFor(), options));
+      // A promise, assigned synchronously — the same shape `clientFor` above uses, and for the
+      // same reason. Holding the resolved session instead means the `??=` has to await inside
+      // its own right-hand side, so two concurrent callers both find it unset, both build a
+      // session, and one of them is then talking to a thread the other is not. The pipeline
+      // calls emit and repair strictly in sequence so it could not happen today; it is written
+      // this way so that it cannot start happening when something else calls in.
+      let inner: Promise<ProviderSession> | null = null;
+      const sessionFor = () =>
+        (inner ??= clientFor().then((client) => new CodexSession(client, options)));
 
       return {
         emit: async (userContent) => (await sessionFor()).emit(userContent),

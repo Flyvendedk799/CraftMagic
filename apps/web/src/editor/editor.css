@@ -1075,9 +1075,16 @@
 
 /* --- keyboard sheet --------------------------------------------------------
    A real overlay rather than another HUD panel: it is the one thing on this screen that is
-   read rather than used, and it should not have to compete with the build for space. */
+   read rather than used, and it should not have to compete with the build for space.
 
-.sheet {
+   Named `shortcuts`, not `sheet`, and that is not a preference. Vite bundles every
+   stylesheet in the app into one file, so class names are global across routes whether or
+   not two pages ever appear together — and the build guide calls a page of its booklet a
+   `.sheet`. While both existed this rule won, so the guide's cover, bill of parts and bill
+   of materials were laid out as modal overlays: three pages stacked at top:0, only the last
+   one visible. Any new class here is global; name it for this screen. */
+
+.shortcuts {
   position: absolute;
   inset: 0;
   z-index: 20;
@@ -1086,7 +1093,7 @@
   padding: 1.5rem;
 }
 
-.sheet__scrim {
+.shortcuts__scrim {
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, var(--brand-void) 72%, transparent);
@@ -1096,7 +1103,7 @@
   cursor: pointer;
 }
 
-.sheet__panel {
+.shortcuts__panel {
   position: relative;
   width: min(50rem, 100%);
   max-height: 100%;
@@ -1108,20 +1115,20 @@
   box-shadow: 0 24px 60px rgb(0 0 0 / 45%);
 }
 
-.sheet__head {
+.shortcuts__head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 1rem;
 }
 
-.sheet__title {
+.shortcuts__title {
   margin: 0;
   font-size: 1rem;
   letter-spacing: -0.01em;
 }
 
-.sheet__close {
+.shortcuts__close {
   font-size: var(--text-xs);
   padding: 0.3rem 0.7rem;
   background: var(--raised);
@@ -1130,7 +1137,7 @@
   border-radius: var(--radius-sm);
 }
 
-.sheet__cols {
+.shortcuts__cols {
   margin-top: 1rem;
   display: grid;
   /* Two wide columns rather than three narrow ones: the descriptions are sentences, and a
@@ -1139,7 +1146,7 @@
   gap: 1.25rem 2rem;
 }
 
-.sheet__group-title {
+.shortcuts__group-title {
   margin: 0 0 0.4rem;
   font-size: var(--text-2xs);
   text-transform: uppercase;
@@ -1147,7 +1154,7 @@
   color: var(--muted);
 }
 
-.sheet__list {
+.shortcuts__list {
   margin: 0;
   display: grid;
   /* The key column sizes to its widest entry, so every description starts on one line. */
@@ -1157,17 +1164,17 @@
   font-size: var(--text-xs);
 }
 
-.sheet__list dt {
+.shortcuts__list dt {
   white-space: nowrap;
 }
 
-.sheet__list dd {
+.shortcuts__list dd {
   margin: 0;
   color: var(--muted);
   line-height: 1.35;
 }
 
-.sheet__list kbd {
+.shortcuts__list kbd {
   display: inline-block;
   padding: 0.1rem 0.35rem;
   font-family: var(--font-mono);
@@ -1179,7 +1186,7 @@
   color: var(--text);
 }
 
-.sheet__foot {
+.shortcuts__foot {
   margin: 1.25rem 0 0;
   font-size: var(--text-2xs);
   color: var(--muted);

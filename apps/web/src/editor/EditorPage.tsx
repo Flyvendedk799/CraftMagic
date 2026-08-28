@@ -31,9 +31,11 @@ import {
   expandBuild,
   generatedBuilds,
   isBuildId,
+  muralBuilds,
   paramsOf,
   previewScale,
   baseSize,
+  programScale,
   NO_SCALE,
   type ScalePercent,
   registerGeneratedBuild,
@@ -74,11 +76,14 @@ import {
 import { pickBlock } from './tools/pick.js';
 import { familyOf, swapFamily, swapPaletteIndex } from './tools/paletteSwap.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
+import { ImagePanel } from '../image/ImagePanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
 import { AccountPanel } from '../library/AccountPanel.js';
+import { useAuth } from '../library/auth.js';
 import { AppNav } from '../shell/AppNav.js';
 import type { VoxelHit } from './raycast.js';
 import './editor.css';
+import '../image/image.css';
 
 /**
  * A first visit opens on an empty plot, not on somebody else's cottage.
@@ -766,6 +771,7 @@ export function EditorPage() {
   // Seeded from anything restored out of localStorage, so neither a reload nor a new tab
   // loses builds that were paid for.
   const [saved, setSaved] = useState(() => generatedBuilds());
+  const [murals, setMurals] = useState(() => muralBuilds());
   const [generated, setGenerated] = useState<{ id: string; result: GenerationResult } | null>(null);
 
   // A generated program is registered like any other build and then simply selected, so it
@@ -777,12 +783,37 @@ export function EditorPage() {
       const id = registerGeneratedBuild(result.program);
       setGenerated({ id, result });
       setSaved(generatedBuilds());
-      update({ build: id });
+      // Carrying the program's own scale into the query string is what makes the size control
+      // open on the size the build was asked for, rather than showing 100% next to a build
+      // that is not at 100%. Dragging it up from there is how the full-detail design is seen.
+      update({ build: id, scale: programScale(id) });
     },
     [update],
   );
 
   const generation = useGeneration(onGenerated);
+
+  // Same two conditions the prompt box enforces: a generation is charged to an account's
+  // daily allowance, and there has to be budget left to charge.
+  const auth = useAuth();
+  const canGenerate =
+    auth.status === 'signedIn' && !(generation.spend !== null && generation.spend.remainingUsd <= 0);
+
+  /**
+   * A picture rebuilt as blocks is selected exactly like any other build.
+   *
+   * It arrives as voxels rather than a program — nothing parametric describes a photograph —
+   * so the editor treats it the way it treats a hand-edited build: every tool works, export
+   * works, the guide works, and the size control has nothing to offer and says so by being
+   * absent.
+   */
+  const onMuralBuilt = useCallback(
+    (id: string) => {
+      setMurals(muralBuilds());
+      update({ build: id, scale: null });
+    },
+    [update],
+  );
 
   // --- re-expansion guard --------------------------------------------------
 
@@ -891,6 +922,20 @@ export function EditorPage() {
               title={entry.name}
             >
               ✦ {entry.name}
+            </button>
+          ))}
+          {/* Pictures are listed with the builds because that is what they are, and marked
+              apart because a mural behaves differently from a program: nothing to resize and
+              nothing to refine. */}
+          {murals.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              aria-pressed={buildId === entry.id}
+              onClick={() => guard({ kind: 'build', build: entry.id })}
+              title={`${entry.name} — built from a picture`}
+            >
+              ▧ {entry.name}
             </button>
           ))}
         </div>
@@ -1073,17 +1118,30 @@ export function EditorPage() {
         </p>
       </section>
 
-      <PromptPanel
-        phase={generation.phase}
-        spend={generation.spend}
-        estimate={generation.estimate}
-        estimating={generation.estimating}
-        onEstimate={generation.requestEstimate}
-        onGenerate={generation.generate}
-        onCancel={generation.cancel}
-        onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
-        initialPrompt={seededPrompt}
-      />
+      <div className="hud-right">
+        <PromptPanel
+          phase={generation.phase}
+          spend={generation.spend}
+          estimate={generation.estimate}
+          estimating={generation.estimating}
+          onEstimate={generation.requestEstimate}
+          onGenerate={(instruction, size) => void generation.generate(instruction, undefined, size)}
+          onCancel={generation.cancel}
+          onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
+          initialPrompt={seededPrompt}
+        />
+
+        <section className="hud">
+          <Section id="picture" title="Picture to structure" defaultOpen={false}>
+            <ImagePanel
+              onBuilt={onMuralBuilt}
+              onFocus={(request) => void generation.generateFromImage(request)}
+              busy={generation.phase.kind !== 'idle' && generation.phase.kind !== 'failed'}
+              canGenerate={canGenerate}
+            />
+          </Section>
+        </section>
+      </div>
 
       {/* The one line that is always on screen, so it carries what the pointer is over and
           what the next click would do — the two things a HUD panel is too far away to say. */}
@@ -1185,7 +1243,9 @@ function applyNav(
     scale?: ScalePercent | null;
   }) => void,
 ): void {
-  if (nav.kind === 'build') update({ build: nav.build });
+  // Switching build seeds the scale from the program, for the same reason a generation does:
+  // a build that was fitted to a size opens at that size, and the slider says so.
+  if (nav.kind === 'build') update({ build: nav.build, scale: programScale(nav.build) });
   else if (nav.kind === 'scale') update({ scale: nav.scale });
   else update({ param: { name: nav.name, value: nav.value } });
 }

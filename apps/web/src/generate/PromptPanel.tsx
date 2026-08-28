@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { SIZE_OPTIONS, type SizeChoice } from '@craftmagic/core';
 import { useAuth } from '../library/auth.js';
 import type { Estimate, GenerationPhase, SpendSummary } from './useGeneration.js';
 
@@ -16,8 +17,8 @@ export interface PromptPanelProps {
   spend: SpendSummary | null;
   estimate: Estimate | null;
   estimating: boolean;
-  onEstimate: (prompt: string) => void;
-  onGenerate: (prompt: string) => void;
+  onEstimate: (prompt: string, size: SizeChoice) => void;
+  onGenerate: (prompt: string, size: SizeChoice) => void;
   onCancel: () => void;
   /**
    * Offer refining the build on screen instead of replacing it.
@@ -41,6 +42,17 @@ const EXAMPLES = [
   'a fishing hut on stilts with a jetty',
   'a round watchtower with battlements',
 ];
+
+/**
+ * Where the size control sits in the story: it is about the finished build, not about how much
+ * design to ask for.
+ *
+ * Worth being explicit about in the UI, because the obvious reading is the wrong one. Picking
+ * "Small" does not buy a simpler structure — the model is asked for the same detailed one and
+ * the build is scaled down to fit, so the detail is still in the program and dragging the
+ * editor's size slider back to 100% shows it at full size.
+ */
+const SIZE_NOTE = 'Detail is designed at full size, then scaled to fit — 100% on the size slider shows it all.';
 
 /** Edits rather than subjects: a refine box wants a change, not another description. */
 const REFINEMENTS = [
@@ -93,6 +105,9 @@ export function PromptPanel({
   // Initial value only, deliberately: re-syncing to the prop would overwrite whatever the user
   // had typed the moment anything above this re-rendered.
   const [prompt, setPrompt] = useState(initialPrompt);
+  // Natural by default: no size is a real answer, and it is the one that was in force before
+  // this control existed. Nobody's first generation should quietly come out shrunk.
+  const [size, setSize] = useState<SizeChoice>('natural');
   const running = phase.kind !== 'idle' && phase.kind !== 'failed';
   // Every generation is billed to an account's daily allowance, so there is no such thing as
   // an anonymous one. Disabled up front rather than left to fail with a 401 after typing.
@@ -120,7 +135,7 @@ export function PromptPanel({
         onKeyDown={(event) => {
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && canSubmit) {
             if (onRefine) onRefine(prompt);
-            else onGenerate(prompt);
+            else onGenerate(prompt, size);
           }
         }}
         placeholder={
@@ -148,8 +163,41 @@ export function PromptPanel({
         ))}
       </div>
 
+      {/* Only for a new build. A refine changes the structure on screen and leaves its size
+          where the user put it — offering a size here would read as a resize control, which is
+          what the scale panel already is. */}
+      {!onRefine && (
+        <div className="prompt__size">
+          <p className="prompt__size-label">Size</p>
+          <div className="prompt__sizes" role="radiogroup" aria-label="How big the build should be">
+            {SIZE_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                role="radio"
+                aria-checked={size === option.id}
+                className={`prompt__size-option ${size === option.id ? 'prompt__size-option--on' : ''}`}
+                disabled={running}
+                title={option.hint}
+                onClick={() => setSize(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <p className="prompt__size-hint">
+            {SIZE_OPTIONS.find((option) => option.id === size)?.hint}
+            {size !== 'natural' && <span className="prompt__muted"> · {SIZE_NOTE}</span>}
+          </p>
+        </div>
+      )}
+
       <div className="prompt__actions">
-        <button type="button" onClick={() => onEstimate(prompt)} disabled={!canSubmit || estimating}>
+        <button
+          type="button"
+          onClick={() => onEstimate(prompt, size)}
+          disabled={!canSubmit || estimating}
+        >
           {estimating ? 'Estimating…' : 'Estimate (free)'}
         </button>
         {running ? (
@@ -160,7 +208,7 @@ export function PromptPanel({
           <>
             <button
               type="button"
-              onClick={() => onGenerate(prompt)}
+              onClick={() => onGenerate(prompt, size)}
               disabled={!canSubmit || outOfBudget}
               title="Start over from this description"
             >
@@ -180,7 +228,7 @@ export function PromptPanel({
           <button
             type="button"
             className="prompt__primary"
-            onClick={() => onGenerate(prompt)}
+            onClick={() => onGenerate(prompt, size)}
             disabled={!canSubmit || outOfBudget}
             title={outOfBudget ? 'Monthly budget reached' : 'Ctrl/Cmd + Enter'}
           >

@@ -282,7 +282,10 @@
 
 /* --- generation prompt ------------------------------------------------- */
 
-.prompt {
+/* The right-hand column: the prompt, and the picture panel under it.
+   The column owns the position and the scroll so the two panels stack instead of overlapping,
+   and so a tall prompt pushes the picture down rather than out of the viewport. */
+.hud-right {
   position: absolute;
   top: calc(var(--chrome) + 1.25rem);
   right: 1.25rem;
@@ -292,6 +295,26 @@
      and a budget note, and without a ceiling the tall states run under the layer bar. */
   max-height: calc(100vh - var(--chrome) - 6.5rem);
   overflow-y: auto;
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+  pointer-events: none;
+}
+
+.hud-right > * {
+  pointer-events: auto;
+}
+
+.prompt,
+.hud-right .hud {
+  position: static;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+}
+
+.prompt {
   display: grid;
   gap: 0.75rem;
   align-content: start;
@@ -346,6 +369,72 @@
   color: var(--text);
   border-color: var(--accent);
   filter: none;
+}
+
+/* The size chooser reads as one control: a label, a row of choices, and a line saying what
+   the selected one means. The hint line is load-bearing rather than decoration — "Small" is
+   easily read as "less of a build", and it is not. */
+/* One quiet line under the size readout. It has to be legible without competing with the
+   dimensions, which are what people watch while dragging. */
+.scale__note {
+  margin: 0;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.prompt__size {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.prompt__size-label {
+  margin: 0;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.prompt__sizes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.prompt__size-option {
+  font-size: 0.6875rem;
+  padding: 0.2rem 0.5rem;
+  background: #212832;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.prompt__size-option:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+  filter: none;
+}
+
+.prompt__size-option--on {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.prompt__size-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.prompt__size-hint {
+  margin: 0;
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: var(--muted);
 }
 
 .prompt__actions {

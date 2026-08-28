@@ -95,6 +95,21 @@ export interface WindowGridSpec {
 }
 
 /**
+ * How much of the leftover space sits before gap `index` of `slots`.
+ *
+ * Whole blocks, handed out from a running total rather than by rounding a fraction per window,
+ * and the far half is measured back from the far end so it mirrors the near half exactly. That
+ * is what keeps a facade symmetric: with a plain `round(gap * n)` the block a wall has left
+ * over when the windows do not divide evenly always fell on the same side, so a resize that
+ * changed the remainder slid the whole row a block off centre.
+ */
+function spacing(index: number, slots: number, free: number): number {
+	if (slots <= 0) return 0;
+	if (2 * index <= slots) return Math.round((free * index) / slots);
+	return free - Math.round((free * (slots - index)) / slots);
+}
+
+/**
  * Evenly distributed windows across a wall region.
  *
  * Spacing is computed from the leftover space rather than taken as a parameter, so the same
@@ -122,14 +137,14 @@ export function buildWindowGrid(brush: Brush, palette: Palette, spec: WindowGrid
 	const depth = horizontal === 'x' ? region.size[2] : region.size[0];
 	const depthOrigin = horizontal === 'x' ? region.pos[2] : region.pos[0];
 
-	const gapX = cols + 1 === 0 ? 0 : (spanLength - cols * windowW) / (cols + 1);
-	const gapY = rows + 1 === 0 ? 0 : (heightLength - rows * windowH) / (rows + 1);
-	if (gapX < 0 || gapY < 0) return; // Windows do not fit; better none than a mangled wall.
+	const freeSpan = spanLength - cols * windowW;
+	const freeHeight = heightLength - rows * windowH;
+	if (freeSpan < 0 || freeHeight < 0) return; // Windows do not fit; better none than a mangled wall.
 
 	for (let col = 0; col < cols; col++) {
-		const startSpan = Math.round(spanOrigin + gapX * (col + 1) + windowW * col);
+		const startSpan = spanOrigin + spacing(col + 1, cols + 1, freeSpan) + windowW * col;
 		for (let row = 0; row < rows; row++) {
-			const startHeight = Math.round(heightOrigin + gapY * (row + 1) + windowH * row);
+			const startHeight = heightOrigin + spacing(row + 1, rows + 1, freeHeight) + windowH * row;
 
 			for (let w = 0; w < windowW; w++) {
 				for (let h = 0; h < windowH; h++) {

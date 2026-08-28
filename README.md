@@ -21,7 +21,7 @@ reliably get wrong.
 
 | Path | What it is |
 |---|---|
-| `packages/core` | Shared, isomorphic: IR + expander, block registry, `.schem` writer, guide logic, agent protocol |
+| `packages/core` | Shared, isomorphic: IR + expander, block registry, picture-to-blocks, `.schem` writer, guide logic, agent protocol |
 | `apps/server` | Fastify — API, auth, Claude pipeline, agent WebSocket gateway; also serves the built frontend |
 | `apps/web` | React + Vite + three.js editor, floorplan layouter and site |
 | `mod` | Fabric mod for Minecraft 26.2 (Gradle, outside the npm workspaces) |
@@ -202,6 +202,11 @@ upgrades over the internet, and the mod compiles and loads on a real 26.2 dedica
 - 3D viewer: worker-based culled chunk meshing with ambient occlusion, orbit/pan/zoom, a
   clipping-plane layer slider, DDA voxel picking, and a param slider that re-expands the
   program live — that slider *is* smart resize.
+- Resizing maps coordinates through one **cell map** per axis (`packages/core/src/ir/scale.ts`):
+  `edge(k)` says where the boundary before base block `k` lands, its high half is the mirror of
+  its low half, and points, runs and radii are all derived from it. That is what keeps a
+  symmetric build symmetric at every factor, keeps a wall anchored at `max` from vanishing
+  below half scale, and keeps two components that were flush against each other flush.
 - Performance: a 200×60×200 build (265k blocks) expands in ~190 ms; the 202k-block stress
   fixture meshes 389k quads in ~114 ms, and scrubbing layers re-meshes nothing.
 
@@ -418,8 +423,46 @@ node tools/generate.mjs "a small fishing hut on stilts" --go   # actually genera
 node tools/generate.mjs --spend                                # ledger
 ```
 
+**Choosing a size up front.** The prompt box has a size control — Natural, Tiny, Small,
+Medium, Large, Huge — and it decides how big the *finished* build is, not how much design to
+ask for. Told "make it 20 blocks", a model designs down to 20 blocks: it drops the corner
+posts, the base course and the window mullions, because there is no room for them, and what
+comes back is a flat little box. So the brief asks for the structure at whatever size it needs
+to read properly, and the program comes back carrying the `scale` that brings it down to the
+size that was asked for. The detail stays in the program, and dragging the editor's size
+slider to 100% shows the design at the size it was designed at.
+
+### Picture to structure
+
+Drop in a photograph. Two things can be made from it, and they are different enough that they
+are two buttons rather than one:
+
+**Full picture** rebuilds the image itself as a wall or a floor, one block per pixel. No model
+is involved and none should be: matching colours to blocks is arithmetic, so it runs in the
+browser, costs nothing, takes milliseconds, and gives back *the picture* rather than something
+that resembles it. Colours are compared in Oklab rather than RGB — nearest-neighbour on raw
+channel values will swap a mid grey for a saturated olive, and it does it worst in skin tones
+and skies. Optional Floyd–Steinberg dithering mixes blocks for shades no block has. The
+material set is the registry filtered to full, opaque, non-directional cubes, minus the ones
+whose sides do not match their average colour (a grass block is green on top and dirt on every
+side a mural is seen from).
+
+**Focus** is the model's job. Drag an outline around a person or an object; everything outside
+it is masked to white and the crop goes to the model with an instruction to build *that* as a
+structure — a statue of the person, a model of the ship — rather than a flat copy of the
+photograph. All four providers take the picture: an image block for Anthropic, `image_url` for
+OpenAI chat, `input_image` on the Responses API.
+
+A mural is voxels and not a program, which is exactly right: nothing parametric describes a
+photograph, so there is no size slider to offer. Changing its size means re-reading the picture
+at the new one, which the panel does better than any resampler could. They are kept gzipped in
+`localStorage` — a 256×160 wall is 40k voxels, and JSON of that would spend a quarter of the
+storage quota on one picture.
+
 API: `POST /api/generations/estimate` (free), `POST /api/generations` → `{id}`,
-`GET /api/generations/:id/events` (SSE), `GET /api/spend`.
+`GET /api/generations/:id/events` (SSE), `GET /api/spend`. Both `POST`s accept an optional
+`size` and an optional `image` (base64 + media type); the size and picture briefs ride on the
+user turn rather than the cached system prompt.
 
 Browser-level checks, both driven over CDP:
 

@@ -1,0 +1,199 @@
+/* Picture to structure: the drop zone, the two mode chips, and the two canvases. */
+
+.picture {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.picture__file {
+  display: none;
+}
+
+.picture__drop {
+  display: grid;
+  gap: 0.25rem;
+  justify-items: center;
+  padding: 1.1rem 0.75rem;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: #171c23;
+}
+
+.picture__drop--over {
+  border-color: var(--accent);
+  background: #1b232b;
+}
+
+.picture__drop-title {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.picture__link {
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--accent);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.picture__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+}
+
+.picture__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.picture__dims,
+.picture__muted {
+  color: var(--muted);
+}
+
+.picture__modes {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.picture__mode {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: #212832;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.picture__mode--on {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.picture__note {
+  margin: 0;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* Both canvases sit on the same plinth so switching modes does not move the panel around. */
+.picture__preview,
+.picture__canvas {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0d1116;
+}
+
+/* One block per pixel, blown up — smoothing would sell a mural that does not exist. */
+.picture__preview {
+  image-rendering: pixelated;
+}
+
+.picture__preview--empty {
+  height: 120px;
+}
+
+.picture__canvas {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.picture__choice {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.picture__choice-label {
+  margin: 0;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.picture__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.picture__chip {
+  font-size: 0.6875rem;
+  padding: 0.2rem 0.5rem;
+  color: var(--muted);
+  background: #212832;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.picture__chip:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+  filter: none;
+}
+
+.picture__chip--on {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.picture__check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.6875rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.picture__hint {
+  min-height: 0;
+}
+
+.picture__primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.picture__primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.picture__stats {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.6875rem;
+  color: var(--text);
+}
+
+.picture__error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--fail);
+}

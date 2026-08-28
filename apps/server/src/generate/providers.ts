@@ -33,9 +33,23 @@ export interface ProviderReply {
   noToolCallReason?: string;
 }
 
+/**
+ * A picture the model is asked to build from.
+ *
+ * Base64 rather than a URL: the picture is a crop made in the browser a moment ago and has no
+ * address anywhere, and giving a provider a URL it would have to fetch is a way of asking it
+ * to reach a machine it cannot see.
+ */
+export interface ProviderImage {
+  /** Base64 payload, with no data-URL prefix. */
+  data: string;
+  /** `image/png`, `image/jpeg`, `image/webp` or `image/gif`. */
+  mediaType: string;
+}
+
 export interface ProviderSession {
-  /** The opening request. */
-  emit(userContent: string): Promise<ProviderReply>;
+  /** The opening request. A picture, when given, is what the words are about. */
+  emit(userContent: string, image?: ProviderImage): Promise<ProviderReply>;
   /** Feed the problems back and ask for a corrected program. Valid only after `emit`. */
   repair(problems: string): Promise<ProviderReply>;
 }
@@ -108,8 +122,21 @@ class AnthropicSession implements ProviderSession {
     private readonly options: SessionOptions,
   ) {}
 
-  async emit(userContent: string): Promise<ProviderReply> {
-    this.messages.push({ role: 'user', content: userContent });
+  async emit(userContent: string, image?: ProviderImage): Promise<ProviderReply> {
+    this.messages.push({
+      role: 'user',
+      content: image
+        ? [
+            // The picture first: a model reads the instructions knowing what they are about,
+            // and Anthropic's own guidance is that an image ahead of its prompt does better.
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: image.mediaType as 'image/png', data: image.data },
+            },
+            { type: 'text', text: userContent },
+          ]
+        : userContent,
+    });
     return this.call();
   }
 
@@ -301,7 +328,7 @@ export function claudeCodeProvider(getToken: () => Promise<string>): Provider {
         ));
 
       return {
-        emit: async (userContent) => (await sessionFor()).emit(userContent),
+        emit: async (userContent, image) => (await sessionFor()).emit(userContent, image),
         repair: async (problems) => (await sessionFor()).repair(problems),
       };
     },
@@ -321,8 +348,16 @@ class OpenAiSession implements ProviderSession {
     this.messages.push({ role: 'system', content: options.system });
   }
 
-  async emit(userContent: string): Promise<ProviderReply> {
-    this.messages.push({ role: 'user', content: userContent });
+  async emit(userContent: string, image?: ProviderImage): Promise<ProviderReply> {
+    this.messages.push({
+      role: 'user',
+      content: image
+        ? [
+            { type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } },
+            { type: 'text', text: userContent },
+          ]
+        : userContent,
+    });
     return this.call();
   }
 
@@ -469,8 +504,17 @@ class CodexSession implements ProviderSession {
     private readonly options: SessionOptions,
   ) {}
 
-  async emit(userContent: string): Promise<ProviderReply> {
-    return this.call([{ role: 'user', content: userContent }]);
+  async emit(userContent: string, image?: ProviderImage): Promise<ProviderReply> {
+    if (!image) return this.call([{ role: 'user', content: userContent }]);
+    return this.call([
+      {
+        role: 'user',
+        content: [
+          { type: 'input_image', image_url: `data:${image.mediaType};base64,${image.data}` },
+          { type: 'input_text', text: userContent },
+        ],
+      },
+    ]);
   }
 
   async repair(problems: string): Promise<ProviderReply> {
@@ -620,7 +664,7 @@ export function codexProvider(
         (inner ??= clientFor().then((client) => new CodexSession(client, options)));
 
       return {
-        emit: async (userContent) => (await sessionFor()).emit(userContent),
+        emit: async (userContent, image) => (await sessionFor()).emit(userContent, image),
         repair: async (problems) => (await sessionFor()).repair(problems),
       };
     },

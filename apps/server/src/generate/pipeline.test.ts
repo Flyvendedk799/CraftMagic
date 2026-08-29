@@ -174,6 +174,41 @@ describe('generateBuild transient failures', () => {
 		expect(repair).not.toHaveBeenCalled();
 	});
 
+	it('emits partial previews from the streaming tool JSON', async () => {
+		const json = JSON.stringify(goodProgram);
+		const provider: Provider = {
+			id: 'anthropic',
+			session: (options) => ({
+				emit: async () => {
+					// Simulate the stream: growing prefixes, then the whole thing. The throttle
+					// admits the first parseable one immediately (previewAt starts at 0).
+					for (let end = 40; end <= json.length; end += 60) {
+						options.onPartial?.(json.slice(0, end));
+					}
+					options.onPartial?.(json);
+					return reply(goodProgram);
+				},
+				repair: vi.fn(),
+			}),
+		};
+
+		const events: unknown[] = [];
+		await generateBuild(
+			{ provider, ledger: fakeLedger() },
+			{ prompt: 'a box', onProgress: (event) => events.push(event) },
+		);
+
+		const previews = events.filter(
+			(event): event is { stage: 'emitting'; components: number; partial: object } =>
+				typeof event === 'object' &&
+				event !== null &&
+				(event as { stage?: string }).stage === 'emitting' &&
+				(event as { partial?: unknown }).partial !== undefined,
+		);
+		expect(previews.length).toBeGreaterThanOrEqual(1);
+		expect(previews[0]!.partial).toMatchObject({ size: goodProgram.size });
+	});
+
 	it('keeps the first program when the repair call itself fails transiently', async () => {
 		const overloaded = Object.assign(new Error('503 unavailable'), { status: 503 });
 		const provider = providerOf(() => ({

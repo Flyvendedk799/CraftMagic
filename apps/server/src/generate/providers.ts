@@ -75,6 +75,15 @@ export interface SessionOptions {
   signal?: AbortSignal;
   /** Coarse progress: how many components have streamed in so far. */
   onComponents?: (count: number) => void;
+  /**
+   * The raw tool-call JSON accumulated so far, on every delta.
+   *
+   * Unthrottled and unparsed on purpose: what to make of a prefix — and how often — is the
+   * pipeline's decision, and the sessions' only job is to not lose the stream. This is what
+   * feeds the live 3D preview; `onComponents` remains the cheap count for anything that
+   * only wants a number.
+   */
+  onPartial?: (partialJson: string) => void;
 }
 
 export interface Provider {
@@ -213,6 +222,7 @@ class AnthropicSession implements ProviderSession {
 
     let seen = 0;
     stream.on('inputJson', (partial: string) => {
+      this.options.onPartial?.(partial);
       const count = countComponents(partial);
       if (count > seen) {
         seen = count;
@@ -245,7 +255,15 @@ class AnthropicSession implements ProviderSession {
  * @param client Injectable so the session's message bookkeeping can be tested without a
  *   network. The shape of what we send is exactly what a live call hides behind a 400.
  */
-export function anthropicProvider(apiKey: string, client: Anthropic = new Anthropic({ apiKey })): Provider {
+export function anthropicProvider(
+  apiKey: string,
+  client: Anthropic = new Anthropic({
+    apiKey,
+    // Finer tool-JSON deltas, so the live preview assembles smoothly instead of in bursts.
+    // The subscription provider already sends this flag; the plain key path gets it here.
+    defaultHeaders: { 'anthropic-beta': 'fine-grained-tool-streaming-2025-05-14' },
+  }),
+): Provider {
   return {
     id: 'anthropic',
     session: (options) => new AnthropicSession(client, options),
@@ -422,6 +440,7 @@ class OpenAiSession implements ProviderSession {
       if (call.id) callId = call.id;
       if (call.function?.arguments) {
         argsJson += call.function.arguments;
+        this.options.onPartial?.(argsJson);
         const count = countComponents(argsJson);
         if (count > seen) {
           seen = count;
@@ -562,6 +581,7 @@ class CodexSession implements ProviderSession {
 
       if (event.type === 'response.function_call_arguments.delta' && typeof event.delta === 'string') {
         argsJson += event.delta;
+        this.options.onPartial?.(argsJson);
         const count = countComponents(argsJson);
         if (count > seen) {
           seen = count;

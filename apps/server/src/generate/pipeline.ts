@@ -17,6 +17,7 @@ import {
 	expand,
 	fitToBudget,
 	isScaled,
+	partialProgram,
 	type BuildProgram,
 	type ExpandIssue,
 	type ExpandResult,
@@ -79,7 +80,16 @@ export interface GenerateOptions {
 
 export type ProgressEvent =
 	| { stage: 'thinking' }
-	| { stage: 'emitting'; components: number }
+	| {
+			stage: 'emitting';
+			components: number;
+			/**
+			 * A preview of the program so far — only fully-closed components, parsed from the
+			 * streaming tool JSON. Present at most every ~400ms; a client that ignores it sees
+			 * exactly the old behaviour.
+			 */
+			partial?: BuildProgram;
+	  }
 	| { stage: 'validating' }
 	| { stage: 'repairing'; issues: number }
 	| { stage: 'done'; blockCount: number };
@@ -115,6 +125,9 @@ const DEFAULT_MODEL: ModelId = 'claude-sonnet-5';
  * without letting a runaway response cost more than a few cents.
  */
 const DEFAULT_MAX_TOKENS = 16_000;
+
+/** How often the streaming preview is re-parsed and re-emitted, at most. */
+const PREVIEW_INTERVAL_MS = 400;
 
 export interface PipelineDeps {
 	provider: Provider;
@@ -189,9 +202,12 @@ export async function generateBuild(
 	// must stay identical from one call to the next to stay that way.
 	// The order is the order a person would say it in: what to build, then what to build it
 	// from, then how big. A refine replaces the first of those with the program itself.
+	// The picture brief rides on a refine too, now: "make the tower look like this" with a
+	// reference image is exactly the request a refine is for, and the brief's framing —
+	// build the subject, not the photograph — reads the same either way.
 	const briefs = [
 		options.refineOf ? refinePrompt(options.refineOf, options.prompt) : options.prompt,
-		options.image && !options.refineOf ? pictureBrief() : null,
+		options.image ? pictureBrief() : null,
 		sizeBrief(options.size),
 	].filter((part): part is string => part !== null && part !== '');
 	const userContent = briefs.join('\n\n');
@@ -200,6 +216,25 @@ export async function generateBuild(
 	// guard's job is to be conservative rather than exact.
 	const estimatedInput = Math.ceil((system.length + userContent.length) / 3.8) + 500;
 	deps.ledger.assertCanAfford(model, estimatedInput, maxTokens, deps.provider.id);
+
+	// The live preview: parse the streaming tool JSON into a partial program at most every
+	// PREVIEW_INTERVAL_MS. Parsing is a full JSON.parse of the prefix, so the throttle runs
+	// *before* the parse — the stream delivers deltas far faster than a preview is worth
+	// updating. State lives across retry sessions on purpose: a retry restarts the stream,
+	// and its previews simply resume.
+	let previewAt = 0;
+	const emitPreview = (partialJson: string) => {
+		const now = Date.now();
+		if (now - previewAt < PREVIEW_INTERVAL_MS) return;
+		const preview = partialProgram(partialJson);
+		if (!preview) return;
+		previewAt = now;
+		options.onProgress?.({
+			stage: 'emitting',
+			components: preview.components,
+			partial: preview.program,
+		});
+	};
 
 	const makeSession = () =>
 		deps.provider.session({
@@ -210,6 +245,7 @@ export async function generateBuild(
 			...(options.effort ? { effort: options.effort } : {}),
 			...(options.signal ? { signal: options.signal } : {}),
 			onComponents: (components) => options.onProgress?.({ stage: 'emitting', components }),
+			onPartial: emitPreview,
 		});
 	let session = makeSession();
 

@@ -12,3 +12,4 @@ export * from './guide/steps.js';
 export * from './image/index.js';
 export * from './voxels/codec.js';
 export * from './protocol/agent.js';
+export * from './protocol/partialProgram.js';

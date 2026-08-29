@@ -22,7 +22,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AIR_BLOCK, displayName, STYLE_PACKS, voxelIndex } from '@craftmagic/core';
+import {
+  AIR_BLOCK,
+  displayName,
+  expand,
+  paletteColors,
+  paletteFlags,
+  STYLE_PACKS,
+  voxelIndex,
+} from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
@@ -101,6 +109,9 @@ const DEFAULT_BLOCK = 'minecraft:oak_planks';
 
 /** Where the Classic/Enhanced choice lives between visits. */
 const RENDER_STYLE_KEY = 'craftmagic.renderStyle';
+
+/** While the ghost build is showing, the session must not be handed the ghost's world. */
+const noopWorld = () => {};
 
 const BUILD_LABELS: Record<string, string> = {
   blank: 'Empty',
@@ -855,6 +866,30 @@ export function EditorPage() {
 
   const generation = useGeneration(onGenerated);
 
+  /**
+   * The ghost build: the program-so-far, expanded and shown in place of the current build
+   * while the model is still emitting. This is what turns the 15–60 second wait into
+   * watching the structure assemble. Each preview is a fresh expand + world load — at
+   * preview cadence (~400ms) and generated-build sizes that is tens of milliseconds — and
+   * a preview too large to be worth remeshing live falls back to the count-only progress.
+   */
+  const ghost = useMemo(() => {
+    const phase = generation.phase;
+    if (phase.kind !== 'emitting' || !phase.partial) return null;
+    try {
+      const result = expand(phase.partial);
+      if (result.blockCount === 0 || result.blockCount > 150_000) return null;
+      return {
+        grid: result.grid,
+        colors: paletteColors(result.grid.palette),
+        flags: paletteFlags(result.grid.palette),
+      };
+    } catch {
+      // expand() does not throw by contract, but a preview must never take the page down.
+      return null;
+    }
+  }, [generation.phase]);
+
   // Same two conditions the prompt box enforces: a generation is charged to an account's
   // daily allowance, and there has to be budget left to charge.
   const auth = useAuth();
@@ -939,20 +974,23 @@ export function EditorPage() {
 
       <div className="editor__canvas">
         <EditorCanvas
-          grid={assembly.grid}
-          paletteColors={session.paletteColors}
-          paletteFlags={session.paletteFlags}
-          layerClip={layer}
-          layerFloor={isolate && layer !== null ? layer : 0}
+          // Precedence: the streaming ghost while the model emits, then the opening reveal,
+          // then the build itself. The ghost swaps grids at preview cadence; when the real
+          // program lands the navigation to `gen:<n>` plays the reveal over the final build.
+          grid={ghost?.grid ?? assembly.grid}
+          paletteColors={ghost?.colors ?? session.paletteColors}
+          paletteFlags={ghost?.flags ?? session.paletteFlags}
+          layerClip={ghost ? null : layer}
+          layerFloor={!ghost && isolate && layer !== null ? layer : 0}
           onHover={setHover}
-          onClick={assembly.assembling ? assembly.skip : onCanvasClick}
-          onStroke={assembly.assembling ? undefined : strokable ? onStroke : undefined}
-          onPick={assembly.assembling ? assembly.skip : onPick}
-          marker={anchor}
-          region={region}
-          preview={assembly.assembling ? null : preview}
+          onClick={ghost ? undefined : assembly.assembling ? assembly.skip : onCanvasClick}
+          onStroke={ghost || assembly.assembling ? undefined : strokable ? onStroke : undefined}
+          onPick={ghost ? undefined : assembly.assembling ? assembly.skip : onPick}
+          marker={ghost ? null : anchor}
+          region={ghost ? null : region}
+          preview={ghost || assembly.assembling ? null : preview}
           onProgress={setRemaining}
-          onWorld={assembly.assembling ? assembly.onWorld : session.attachWorld}
+          onWorld={ghost ? noopWorld : assembly.assembling ? assembly.onWorld : session.attachWorld}
           view={view}
           onSnapshot={registerSnapshot}
           enhanced={enhanced}

@@ -405,6 +405,7 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 									type: 'progress',
 									stage: event.stage,
 									...(event.stage === 'emitting' ? { components: event.components } : {}),
+									...(event.stage === 'emitting' && event.partial ? { partial: event.partial } : {}),
 									...(event.stage === 'done' ? { blockCount: event.blockCount } : {}),
 								});
 							},

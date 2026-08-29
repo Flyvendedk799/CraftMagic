@@ -21,10 +21,12 @@
  * cuts: the whole thing, one storey with its ceiling off, or one room boxed in and framed.
  * Without those, every room you drew is behind a wall and half the building is behind a floor.
  *
- * **No prompt box.** Deliberately. The editor has generation and refinement, and neither
- * belongs on a tool whose entire premise is that you know what you want and the fastest way to
- * get it is to draw it. Everything here is direct manipulation, and the two pages share the
- * expander, the mesher, the exports and the library rather than sharing a model.
+ * **The prompt box refines the drawing — it never replaces it.** The page's premise is still
+ * direct manipulation: you draw the plan, and the plan stays the document. But a compiled
+ * plan is an ordinary `BuildProgram`, and the server's refine pipeline takes any program —
+ * so "add window boxes and a chimney" on top of what you drew is a one-call trip through
+ * exactly the machinery the editor uses. The result opens in the editor as a generated
+ * build; the plan you drew is untouched and still here.
  *
  * The level editor engine from flyvendedk799/firstpgame is reused throughout — its plan
  * viewport, grid and wall-insert snapping, snapshot history, autosave, kit-driven materials
@@ -38,6 +40,8 @@ import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorC
 import { ExportBar } from '../editor/ExportBar.js';
 import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild } from '../editor/builds.js';
+import { PromptPanel } from '../generate/PromptPanel.js';
+import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
 import { AccountPanel } from '../library/AccountPanel.js';
 import { AppNav } from '../shell/AppNav.js';
 import { alignOffsets, distributeOffsets, type Offsets } from './arrange.js';
@@ -444,6 +448,18 @@ export function LayouterPage() {
     [built.program, navigate],
   );
 
+  // A finished AI pass lands in the editor, exactly like the hand-off button: the result is
+  // a generated build, not a plan, and the editor is where a generated build lives. The plan
+  // here is left untouched — it remains the drawing the refine started from.
+  const onGenerated = useCallback(
+    (result: GenerationResult) => {
+      const id = registerGeneratedBuild(result.program);
+      navigate(`/editor?build=${encodeURIComponent(id)}`);
+    },
+    [navigate],
+  );
+  const generation = useGeneration(onGenerated);
+
   const onImport = useCallback(
     async (file: File | undefined) => {
       if (!file) return;
@@ -720,6 +736,29 @@ export function LayouterPage() {
             ))}
             {session.saved.length === 0 && <li className="plans__empty">Nothing saved yet.</li>}
           </ul>
+        </Section>
+
+        <Section id="layouter-ai" title="Refine with AI" defaultOpen={false}>
+          <PromptPanel
+            phase={generation.phase}
+            spend={generation.spend}
+            estimate={generation.estimate}
+            estimating={generation.estimating}
+            onEstimate={generation.requestEstimate}
+            onGenerate={(instruction, size) => void generation.generate(instruction, undefined, size)}
+            onCancel={generation.cancel}
+            // The drawn plan, compiled, is the program the model edits. Zero blocks means an
+            // empty plan, and refining nothing would silently become "invent something".
+            onRefine={
+              built.blockCount > 0
+                ? (instruction) => void generation.generate(instruction, built.program)
+                : null
+            }
+          />
+          <p className="site-panel__hint">
+            Sends the compiled building, not the drawing — the result opens in the editor as a
+            new build, and the plan here stays exactly as you drew it.
+          </p>
         </Section>
 
         <Section id="layouter-handoff" title="Hand off" defaultOpen={false}>

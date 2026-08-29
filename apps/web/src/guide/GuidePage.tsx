@@ -29,7 +29,7 @@ import {
 } from '@craftmagic/core';
 import { expandBuild, isBuildId, type LoadedBuild } from '../editor/builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
-import { carrySettings, parseScale, scaleKey as readScaleKey, PARAM_PREFIX } from '../editor/urlState.js';
+import { carrySettings, parseScale, scaleKey as readScaleKey, PARAM_PREFIX, STYLE_PARAM } from '../editor/urlState.js';
 import { IsoFilmstrip } from './isoRender.js';
 import { drawLayerPlan, earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
 import {
@@ -119,10 +119,13 @@ export function GuidePage() {
   );
 
   const scaleKey = readScaleKey(params);
+  const styleId = params.get(STYLE_PARAM);
 
   // Both halves of the editor's URL, or the guide prints a different build from the one the
   // link came from: `parseOverrides` alone was silently dropped, because it is a bare map of
   // values where `expandBuild` expects them under `params`.
+  // The style pack rides too, or a restyled build's booklet would name the original
+  // materials — a shopping list for a building that is not the one on screen.
   // Provenance is asked for here and nowhere else in the app. It is what lets a step be
   // called "South windows" instead of "y = 7, part 2 of 3", and the guide is the one place
   // that expands a build once rather than on every frame of a slider drag.
@@ -130,10 +133,10 @@ export function GuidePage() {
     () =>
       expandBuild(
         buildId,
-        { params: parseOverrides(overrideKey), scale: parseScale(scaleKey) },
+        { params: parseOverrides(overrideKey), scale: parseScale(scaleKey), style: styleId },
         { provenance: true },
       ),
-    [buildId, overrideKey, scaleKey],
+    [buildId, overrideKey, scaleKey, styleId],
   );
   const guide = useMemo(
     () => buildGuide(build.grid, build.name, { parts: build.parts, origin: build.origin }),

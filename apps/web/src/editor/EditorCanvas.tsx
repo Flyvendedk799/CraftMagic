@@ -88,6 +88,14 @@ export interface EditorCanvasProps {
   onWorld?: (world: VoxelWorld | null) => void;
   /** Camera preset to move to. Changing the nonce re-applies it. */
   view?: ViewRequest | null;
+  /**
+   * Handed a screenshot-taker on mount and `null` on teardown.
+   *
+   * A function rather than an imperative ref because the canvas draws without
+   * `preserveDrawingBuffer`: the pixels are only defined immediately after a render, so the
+   * taker renders one frame itself and reads the canvas in the same breath.
+   */
+  onSnapshot?: (take: (() => string) | null) => void;
 }
 
 const BACKGROUND = '#0f1216';
@@ -138,6 +146,7 @@ function Scene({
   onProgress,
   onWorld,
   view,
+  onSnapshot,
 }: EditorCanvasProps) {
   const scene = useThree((state) => state.scene);
   const worldRef = useRef<VoxelWorld | null>(null);
@@ -201,6 +210,7 @@ function Scene({
   return (
     <>
       <Framing size={grid.size} empty={startedEmpty} view={view ?? null} />
+      <Snapshot register={onSnapshot} />
       <Furniture size={grid.size} />
       <Picker
         grid={grid}
@@ -222,6 +232,31 @@ interface OrbitLike {
   target: THREE.Vector3;
   update: () => void;
   enabled: boolean;
+}
+
+/**
+ * Hands the page a function that renders one frame and returns it as a PNG data URL.
+ *
+ * The explicit render is the load-bearing line: without `preserveDrawingBuffer` (off for
+ * performance, and rightly), the drawing buffer's contents are undefined the moment the
+ * browser composites, so reading the canvas cold returns black. Rendering and reading in the
+ * same task is defined behavior everywhere.
+ */
+function Snapshot({ register }: { register?: (take: (() => string) | null) => void }) {
+  const gl = useThree((state) => state.gl);
+  const scene = useThree((state) => state.scene);
+  const camera = useThree((state) => state.camera);
+
+  useEffect(() => {
+    if (!register) return;
+    register(() => {
+      gl.render(scene, camera);
+      return gl.domElement.toDataURL('image/png');
+    });
+    return () => register(null);
+  }, [register, gl, scene, camera]);
+
+  return null;
 }
 
 /**

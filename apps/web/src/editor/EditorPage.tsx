@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AIR_BLOCK, displayName, voxelIndex } from '@craftmagic/core';
+import { AIR_BLOCK, displayName, STYLE_PACKS, voxelIndex } from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
@@ -48,6 +48,7 @@ import {
   writeScale,
   PARAM_PREFIX,
   SCALE_PREFIX,
+  STYLE_PARAM,
 } from './urlState.js';
 import { ExportBar } from './ExportBar.js';
 import { ScalePanel } from './ScalePanel.js';
@@ -57,6 +58,7 @@ import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
 import { ToolPalette, type RegionAction } from './ToolPalette.js';
 import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor } from './preview.js';
+import { useAssembly } from './useAssembly.js';
 import { useEditSession } from './useEditSession.js';
 import { placementCell } from './tools/place.js';
 import { erase } from './tools/erase.js';
@@ -116,7 +118,8 @@ const VIEWS: readonly { kind: ViewKind; label: string }[] = [
 type PendingNav =
   | { kind: 'build'; build: string }
   | { kind: 'param'; name: string; value: number }
-  | { kind: 'scale'; scale: ScalePercent };
+  | { kind: 'scale'; scale: ScalePercent }
+  | { kind: 'style'; style: string | null };
 
 export function EditorPage() {
   const [params, setParams] = useSearchParams();
@@ -166,12 +169,22 @@ export function EditorPage() {
   // an object literal is a new object every render.
   const scaleKey = readScaleKey(params);
   const scale = useMemo(() => parseScale(scaleKey), [scaleKey]);
+  const styleId = params.get(STYLE_PARAM);
 
   const build = useMemo(
-    () => expandBuild(buildId, { params: parseOverrides(overrideKey), scale: parseScale(scaleKey) }),
-    [buildId, overrideKey, scaleKey],
+    () =>
+      expandBuild(buildId, {
+        params: parseOverrides(overrideKey),
+        scale: parseScale(scaleKey),
+        style: styleId,
+      }),
+    [buildId, overrideKey, scaleKey, styleId],
   );
   const session = useEditSession(build);
+  // The opening reveal. It owns the canvas's grid and world handle while it runs; the
+  // session takes over the moment it finishes, through the same remount the canvas would
+  // have done anyway. Any click during the reveal skips to the finished build.
+  const assembly = useAssembly(build);
 
   const { grid, name } = build;
 
@@ -236,21 +249,27 @@ export function EditorPage() {
       toggleIsolate?: boolean;
       param?: { name: string; value: number };
       scale?: ScalePercent | null;
+      style?: string | null;
     }) => {
       setParams(
         () => {
           const search = new URLSearchParams(window.location.search);
           if (next.build !== undefined) {
             search.set('build', next.build);
-            // Layers and params are per-build; carrying either across is meaningless.
+            // Layers, params and the restyle are per-build; carrying any across is meaningless.
             search.delete('layer');
             search.delete('only');
+            search.delete(STYLE_PARAM);
             for (const key of [...search.keys()]) {
               if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX)) search.delete(key);
             }
           }
           if (next.param) search.set(PARAM_PREFIX + next.param.name, String(next.param.value));
           if (next.scale !== undefined) writeScale(search, next.scale);
+          if (next.style !== undefined) {
+            if (next.style === null) search.delete(STYLE_PARAM);
+            else search.set(STYLE_PARAM, next.style);
+          }
           if (next.layer !== undefined) {
             if (next.layer === null) {
               search.delete('layer');
@@ -309,6 +328,24 @@ export function EditorPage() {
     // nothing on screen could act on.
     if (next !== 'select') setRegion(null);
   }, []);
+
+  // The screenshot-taker the canvas hands over on mount. A ref, not state: nothing renders
+  // differently for having it, and it changes on every canvas remount.
+  const snapshotRef = useRef<(() => string) | null>(null);
+  const registerSnapshot = useCallback((take: (() => string) | null) => {
+    snapshotRef.current = take;
+  }, []);
+  const takeScreenshot = useCallback(() => {
+    const dataUrl = snapshotRef.current?.();
+    if (!dataUrl) return;
+    const anchor = document.createElement('a');
+    anchor.href = dataUrl;
+    anchor.download = `${name.replace(/[^\w\- ]+/g, '').trim() || 'build'}.png`;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }, [name]);
 
   const setViewKind = useCallback((kind: ViewKind) => {
     // A new nonce every time, so pressing the same preset twice really does re-frame — the
@@ -877,21 +914,22 @@ export function EditorPage() {
 
       <div className="editor__canvas">
         <EditorCanvas
-          grid={grid}
+          grid={assembly.grid}
           paletteColors={session.paletteColors}
           paletteFlags={session.paletteFlags}
           layerClip={layer}
           layerFloor={isolate && layer !== null ? layer : 0}
           onHover={setHover}
-          onClick={onCanvasClick}
-          onStroke={strokable ? onStroke : undefined}
-          onPick={onPick}
+          onClick={assembly.assembling ? assembly.skip : onCanvasClick}
+          onStroke={assembly.assembling ? undefined : strokable ? onStroke : undefined}
+          onPick={assembly.assembling ? assembly.skip : onPick}
           marker={anchor}
           region={region}
-          preview={preview}
+          preview={assembly.assembling ? null : preview}
           onProgress={setRemaining}
-          onWorld={session.attachWorld}
+          onWorld={assembly.assembling ? assembly.onWorld : session.attachWorld}
           view={view}
+          onSnapshot={registerSnapshot}
         />
       </div>
 
@@ -1017,7 +1055,7 @@ export function EditorPage() {
         {pending && (
           <div className="detach" role="alertdialog">
             <p className="detach__text">
-              {pending.kind === 'build' ? 'Switching build' : pending.kind === 'scale' ? 'Scaling' : 'Resizing'} re-expands the program
+              {pending.kind === 'build' ? 'Switching build' : pending.kind === 'scale' ? 'Scaling' : pending.kind === 'style' ? 'Restyling' : 'Resizing'} re-expands the program
               and discards {session.edits} manual edit{session.edits === 1 ? '' : 's'}. The program
               itself is unchanged.
             </p>
@@ -1046,6 +1084,37 @@ export function EditorPage() {
             base={scaleBase}
             onChange={(next) => guard({ kind: 'scale', scale: next })}
           />
+        )}
+
+        {/* Restyle: swap the whole palette for a curated material set. Program builds only —
+            a mural is a picture, and repainting a picture in spruce is not a feature. The
+            pack rides in the URL like the scale does, so a restyled build is shareable and
+            the guide prints it in the same materials. */}
+        {build.program && (
+          <div className="restyle">
+            <p className="params__title">Restyle — same build, new materials</p>
+            <div className="hud__actions">
+              <button
+                type="button"
+                aria-pressed={styleId === null}
+                title="The build's own materials"
+                onClick={() => guard({ kind: 'style', style: null })}
+              >
+                Original
+              </button>
+              {STYLE_PACKS.map((pack) => (
+                <button
+                  key={pack.id}
+                  type="button"
+                  aria-pressed={styleId === pack.id}
+                  title={pack.description}
+                  onClick={() => guard({ kind: 'style', style: pack.id })}
+                >
+                  {pack.label}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
 
         {build.params.length > 0 && (
@@ -1194,6 +1263,9 @@ export function EditorPage() {
               {entry.label}
             </button>
           ))}
+          <button type="button" title="Save the current view as a PNG" onClick={takeScreenshot}>
+            📷
+          </button>
         </span>
       </section>
 
@@ -1241,12 +1313,14 @@ function applyNav(
     build?: string;
     param?: { name: string; value: number };
     scale?: ScalePercent | null;
+    style?: string | null;
   }) => void,
 ): void {
   // Switching build seeds the scale from the program, for the same reason a generation does:
   // a build that was fitted to a size opens at that size, and the slider says so.
   if (nav.kind === 'build') update({ build: nav.build, scale: programScale(nav.build) });
   else if (nav.kind === 'scale') update({ scale: nav.scale });
+  else if (nav.kind === 'style') update({ style: nav.style });
   else update({ param: { name: nav.name, value: nav.value } });
 }
 

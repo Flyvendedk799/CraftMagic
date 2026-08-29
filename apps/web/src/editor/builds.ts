@@ -11,6 +11,7 @@
  */
 
 import {
+  applyStylePack,
   decodeVoxels,
   encodeVoxels,
   expand,
@@ -20,6 +21,7 @@ import {
   paletteFlags,
   samples,
   scaledSize,
+  stylePackById,
   type BuildPart,
   type BuildProgram,
   type ExpandIssue,
@@ -441,6 +443,14 @@ export function paramsOf(id: string): BuildParam[] {
 export interface BuildOverrides {
   params?: Readonly<Record<string, number>>;
   scale?: ScalePercent;
+  /**
+   * A style pack id, restyling the palette without touching the program.
+   *
+   * An unknown id is ignored rather than refused, for the same reason an unknown size is: it
+   * changes how the build looks, not whether it is valid, and a stale link should degrade to
+   * the build's own materials rather than to an error.
+   */
+  style?: string | null;
 }
 
 /** What a scale actually produced, once clamped to what the expander will accept. */
@@ -484,7 +494,12 @@ export function expandBuild(
   const program = programOf(id);
   if (!program) throw new Error(`unknown build "${id}"`);
 
-  const applied = applyOverrides(program, overrides.params ?? {}, overrides.scale);
+  let applied = applyOverrides(program, overrides.params ?? {}, overrides.scale);
+  // The restyle happens on the *applied* program and is never written back anywhere: the
+  // program stays the source of truth in its own materials, and the pack rides in the URL
+  // exactly as the scale does.
+  const pack = stylePackById(overrides.style);
+  if (pack) applied = applyStylePack(applied, pack);
   const result = expand(applied, { provenance: options.provenance });
 
   return {

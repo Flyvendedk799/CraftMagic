@@ -99,6 +99,9 @@ const DEFAULT_BUILD = BLANK_BUILD;
 /** Common enough to be a sane starting block, and present in most sample palettes. */
 const DEFAULT_BLOCK = 'minecraft:oak_planks';
 
+/** Where the Classic/Enhanced choice lives between visits. */
+const RENDER_STYLE_KEY = 'craftmagic.renderStyle';
+
 const BUILD_LABELS: Record<string, string> = {
   blank: 'Empty',
   cottage: 'Cottage',
@@ -319,6 +322,28 @@ export function EditorPage() {
   const [stampMode, setStampMode] = useState<StampMode>('merge');
   const [help, setHelp] = useState(false);
   const [view, setView] = useState<ViewRequest | null>(null);
+  // Enhanced is the default — the lit, grained, sky-lit look is the product's face now.
+  // Classic remains one click away, persisted, for anyone (or any GPU) that prefers flat.
+  const [enhanced, setEnhanced] = useState(() => {
+    try {
+      return localStorage.getItem(RENDER_STYLE_KEY) !== 'classic';
+    } catch {
+      return true;
+    }
+  });
+  const toggleEnhanced = useCallback(() => {
+    setEnhanced((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(RENDER_STYLE_KEY, next ? 'enhanced' : 'classic');
+      } catch {
+        // Storage blocked — the choice still applies to this page view.
+      }
+      return next;
+    });
+  }, []);
+  // Deliberately not persisted: orthographic is a working view you reach for, not a home.
+  const [ortho, setOrtho] = useState(false);
 
   const onTool = useCallback((next: ToolId) => {
     setTool(next);
@@ -930,6 +955,8 @@ export function EditorPage() {
           onWorld={assembly.assembling ? assembly.onWorld : session.attachWorld}
           view={view}
           onSnapshot={registerSnapshot}
+          enhanced={enhanced}
+          ortho={ortho}
         />
       </div>
 
@@ -1263,6 +1290,22 @@ export function EditorPage() {
               {entry.label}
             </button>
           ))}
+          <button
+            type="button"
+            aria-pressed={ortho}
+            title="Orthographic projection — no perspective, true proportions"
+            onClick={() => setOrtho((prev) => !prev)}
+          >
+            Ortho
+          </button>
+          <button
+            type="button"
+            aria-pressed={enhanced}
+            title="Lit, grained rendering with sky and fog. Classic is the flat look."
+            onClick={toggleEnhanced}
+          >
+            ✨
+          </button>
           <button type="button" title="Save the current view as a PNG" onClick={takeScreenshot}>
             📷
           </button>

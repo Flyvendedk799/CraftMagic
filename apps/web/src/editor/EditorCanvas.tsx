@@ -16,6 +16,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import type { VoxelGrid } from '@craftmagic/core';
+import { classicMaterials, enhancedMaterials } from './materials.js';
 import { VoxelWorld, type ClipBox } from './VoxelWorld.js';
 import type { Preview } from './preview.js';
 import { raycastVoxel, type VoxelHit } from './raycast.js';
@@ -96,25 +97,43 @@ export interface EditorCanvasProps {
    * taker renders one frame itself and reads the canvas in the same breath.
    */
   onSnapshot?: (take: (() => string) | null) => void;
+  /**
+   * The Enhanced render style: lit flat-shaded materials with per-voxel grain, a sky
+   * gradient, fog and filmic tonemapping. Off means the Classic unlit look, unchanged.
+   */
+  enhanced?: boolean;
+  /** Orthographic camera — the view that makes a floor plan measurable. */
+  ortho?: boolean;
 }
 
 const BACKGROUND = '#0f1216';
 const HOVER_COLOR = '#6ee7b7';
 const PREVIEW_COLOR = '#fbbf24';
 
+// The Enhanced sky: a cold dusk gradient. Horizon doubles as the fog colour so distant
+// chunks dissolve into the sky instead of ending at a hard silhouette.
+const SKY_ZENITH = '#16233c';
+const SKY_HORIZON = '#3a4a66';
+const SUN_COLOR = '#ffe9c4';
+
 export function EditorCanvas(props: EditorCanvasProps) {
+  const ortho = props.ortho ?? false;
   return (
     <Canvas
+      // Remounted when the projection changes: a camera cannot switch class in place, and a
+      // fresh GL context on an explicit toggle is cheaper than two cameras kept in step.
+      key={ortho ? 'ortho' : 'persp'}
       dpr={[1, 2]}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
-      camera={{ fov: 50, near: 0.1, far: 4000 }}
+      orthographic={ortho}
+      camera={ortho ? { near: 0.1, far: 8000, zoom: 8 } : { fov: 50, near: 0.1, far: 4000 }}
       // `localClippingEnabled` is a renderer field, not a WebGLRenderer constructor
       // parameter, so it cannot ride in on `gl` — it has to be set after creation.
       onCreated={({ gl }) => {
         gl.localClippingEnabled = true;
       }}
     >
-      <color attach="background" args={[BACKGROUND]} />
+      <color attach="background" args={[props.enhanced ? SKY_HORIZON : BACKGROUND]} />
       <Scene {...props} />
       <OrbitControls
         makeDefault
@@ -147,6 +166,7 @@ function Scene({
   onWorld,
   view,
   onSnapshot,
+  enhanced = false,
 }: EditorCanvasProps) {
   const scene = useThree((state) => state.scene);
   const worldRef = useRef<VoxelWorld | null>(null);
@@ -175,7 +195,7 @@ function Scene({
   // Growth goes through `VoxelWorld.setPalette` instead, pushed by whoever grew the palette
   // so it lands before the edit that uses the new slot.
   useEffect(() => {
-    const world = new VoxelWorld();
+    const world = new VoxelWorld(enhanced ? enhancedMaterials() : classicMaterials());
     worldRef.current = world;
     scene.add(world.group);
     world.load(grid, paletteColors, paletteFlags);
@@ -188,7 +208,7 @@ function Scene({
       worldRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
-  }, [scene, grid]);
+  }, [scene, grid, enhanced]);
 
   // Keyed on the resolved faces rather than on the object, which is rebuilt every render.
   const boxKey = JSON.stringify(box);
@@ -211,6 +231,8 @@ function Scene({
     <>
       <Framing size={grid.size} empty={startedEmpty} view={view ?? null} />
       <Snapshot register={onSnapshot} />
+      {enhanced && <Environment size={grid.size} />}
+      <Fly />
       <Furniture size={grid.size} />
       <Picker
         grid={grid}
@@ -355,6 +377,8 @@ function frameCamera(
   if (camera instanceof THREE.PerspectiveCamera) {
     camera.far = Math.max(2000, radius * 12);
     camera.updateProjectionMatrix();
+  } else if (camera instanceof THREE.OrthographicCamera) {
+    frameOrtho(camera, radius * 1.35);
   }
   if (controls) {
     controls.target.copy(target);
@@ -362,6 +386,21 @@ function frameCamera(
   } else {
     camera.lookAt(target);
   }
+}
+
+/**
+ * Size an orthographic camera so a sphere of `radius` blocks fills the frame.
+ *
+ * An ortho camera has no distance-based framing — position only decides what is clipped —
+ * so the zoom is solved against the camera's own half-extents, which r3f keeps equal to the
+ * viewport's pixel dimensions. The narrower axis governs, same as the perspective solve.
+ */
+function frameOrtho(camera: THREE.OrthographicCamera, radius: number): void {
+  const halfWidth = (camera.right - camera.left) / 2;
+  const halfHeight = (camera.top - camera.bottom) / 2;
+  camera.zoom = Math.min(halfWidth, halfHeight) / Math.max(1, radius);
+  camera.far = 8000;
+  camera.updateProjectionMatrix();
 }
 
 /** Breathing room around a framed box, as a fraction of its bounding sphere. */
@@ -409,6 +448,8 @@ function frameBox(camera: THREE.Camera, controls: OrbitLike | null, box: FocusBo
     camera.near = Math.max(0.05, distance / 500);
     camera.far = Math.max(2000, distance * 8);
     camera.updateProjectionMatrix();
+  } else if (camera instanceof THREE.OrthographicCamera) {
+    frameOrtho(camera, radius);
   }
 
   camera.position.copy(target).addScaledVector(direction, distance);
@@ -419,6 +460,160 @@ function frameBox(camera: THREE.Camera, controls: OrbitLike | null, box: FocusBo
     camera.lookAt(target);
   }
 }
+
+/**
+ * Everything that makes the Enhanced style a *place* rather than a void: sun, sky light,
+ * a gradient dome, fog, and filmic tonemapping. Mounted only when Enhanced is on, and its
+ * teardown puts every renderer-level setting back, so toggling to Classic really is Classic.
+ */
+function Environment({ size }: { size: VoxelGrid['size'] }) {
+  const gl = useThree((state) => state.gl);
+  const scene = useThree((state) => state.scene);
+  const radius = Math.max(size.x, size.y, size.z);
+
+  useEffect(() => {
+    gl.toneMapping = THREE.ACESFilmicToneMapping;
+    gl.toneMappingExposure = 1.35;
+    // Fog from the build's own scale: near enough to feel the air, far enough that the
+    // whole structure is always crisp at its opening framing.
+    scene.fog = new THREE.Fog(SKY_HORIZON, radius * 3.5, radius * 14);
+    return () => {
+      gl.toneMapping = THREE.NoToneMapping;
+      gl.toneMappingExposure = 1;
+      scene.fog = null;
+    };
+  }, [gl, scene, radius]);
+
+  const sky = useMemo(() => {
+    const geometry = new THREE.SphereGeometry(1600, 24, 16);
+    const material = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: {
+        zenith: { value: new THREE.Color(SKY_ZENITH) },
+        horizon: { value: new THREE.Color(SKY_HORIZON) },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() {
+          vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 zenith;
+        uniform vec3 horizon;
+        varying vec3 vDir;
+        void main() {
+          float h = clamp(vDir.y, 0.0, 1.0);
+          gl_FragColor = vec4(mix(horizon, zenith, pow(h, 0.55)), 1.0);
+        }
+      `,
+    });
+    return { geometry, material };
+  }, []);
+
+  useEffect(
+    () => () => {
+      sky.geometry.dispose();
+      sky.material.dispose();
+    },
+    [sky],
+  );
+
+  return (
+    <>
+      {/* Physically-sized lights (r155+ semantics): Lambert divides by π, so intensities
+          look large. The hemisphere carries the scene; the sun carries the direction. */}
+      <hemisphereLight args={['#c3d7ff', '#57503f', 2.5]} />
+      <directionalLight
+        color={SUN_COLOR}
+        intensity={2.8}
+        position={[size.x * 1.1, radius * 1.5, size.z * 0.55]}
+      />
+      <mesh
+        geometry={sky.geometry}
+        material={sky.material}
+        position={[size.x / 2, 0, size.z / 2]}
+        renderOrder={-1}
+      />
+    </>
+  );
+}
+
+/**
+ * WASD flight (E up, Q down), layered over the orbit controls rather than replacing them:
+ * the keys translate the camera *and* its orbit target together, so flying and orbiting
+ * compose instead of fighting. Speed scales with the build so a cottage and a castle both
+ * feel right.
+ */
+const FLY_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e']);
+
+function Fly() {
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
+  const held = useRef(new Set<string>());
+
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      const key = event.key.toLowerCase();
+      if (FLY_KEYS.has(key)) held.current.add(key);
+    };
+    const up = (event: KeyboardEvent) => held.current.delete(event.key.toLowerCase());
+    const clear = () => held.current.clear();
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    // Alt-tabbing away mid-flight must not leave a key latched down forever.
+    window.addEventListener('blur', clear);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
+
+  const forward = useMemo(() => new THREE.Vector3(), []);
+  const right = useMemo(() => new THREE.Vector3(), []);
+  const move = useMemo(() => new THREE.Vector3(), []);
+
+  useFrame((_, delta) => {
+    const keys = held.current;
+    if (keys.size === 0) return;
+    const anchor = controls?.target ?? camera.position;
+    const speed = Math.max(12, anchor.distanceTo(camera.position) * 0.9) * Math.min(delta, 0.1);
+
+    camera.getWorldDirection(forward);
+    // Travel stays level: flying forward moves across the world, not into the ground.
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+    forward.normalize();
+    right.crossVectors(forward, UP);
+
+    move.set(0, 0, 0);
+    if (keys.has('w')) move.add(forward);
+    if (keys.has('s')) move.sub(forward);
+    if (keys.has('d')) move.add(right);
+    if (keys.has('a')) move.sub(right);
+    if (keys.has('e')) move.y += 1;
+    if (keys.has('q')) move.y -= 1;
+    if (move.lengthSq() === 0) return;
+
+    move.normalize().multiplyScalar(speed);
+    camera.position.add(move);
+    if (controls) {
+      controls.target.add(move);
+      controls.update();
+    }
+  });
+
+  return null;
+}
+
+const UP = new THREE.Vector3(0, 1, 0);
 
 /** Ground grid and a bounds outline — without them a floating build has no readable scale. */
 function Furniture({ size }: { size: VoxelGrid['size'] }) {

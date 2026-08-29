@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
+import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 import { SendToGame } from '../agent/SendToGame.js';
 import { SaveToLibrary } from '../library/SaveToLibrary.js';
 import { downloadProgram, downloadSchematic, formatBytes } from './download.js';
@@ -29,9 +29,11 @@ export interface ExportBarProps {
   guideHref: string | null;
   /** Non-air blocks. Zero on a fresh empty plot, where there is nothing to export yet. */
   blockCount: number;
+  /** The hand-edit layer for the library save, fetched at click time. Optional: pages with no session pass nothing. */
+  getEdits?: () => EditLayer | null;
 }
 
-export function ExportBar({ grid, program, name, detached, guideHref, blockCount }: ExportBarProps) {
+export function ExportBar({ grid, program, name, detached, guideHref, blockCount, getEdits }: ExportBarProps) {
   const [written, setWritten] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -109,7 +111,7 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
       {!empty && (
         <>
           <Section id="save" title="Save" defaultOpen={false}>
-            <SaveToLibrary name={name} grid={grid} program={program} detached={detached} />
+            <SaveToLibrary name={name} grid={grid} program={program} detached={detached} getEdits={getEdits} />
           </Section>
           {/* Open by default: this is the headline feature and it used to sit below the fold,
               where nobody found it. */}

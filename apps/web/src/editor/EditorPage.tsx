@@ -28,6 +28,7 @@ import {
   expand,
   paletteColors,
   paletteFlags,
+  readSchematic,
   STYLE_PACKS,
   voxelIndex,
 } from '@craftmagic/core';
@@ -38,6 +39,7 @@ import {
   BUILD_IDS,
   expandBuild,
   generatedBuilds,
+  importedBuilds,
   isBuildId,
   muralBuilds,
   paramsOf,
@@ -47,6 +49,7 @@ import {
   NO_SCALE,
   type ScalePercent,
   registerGeneratedBuild,
+  registerImportedBuild,
 } from './builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
 import {
@@ -208,13 +211,12 @@ export function EditorPage() {
   /**
    * The program a refine would edit, or null when refining makes no sense.
    *
-   * Null in two cases, both of which would otherwise silently become "generate something
-   * new": the empty plot has nothing to change, and a hand-edited build has no program behind
-   * it any more, so the model would be handed the pre-edit version and quietly discard the
-   * user's edits.
+   * Null for the empty plot (nothing to change) and for voxel-only builds (murals, old
+   * detached saves — no program to send). Hand edits no longer disable refine: they live in
+   * the overlay, the model refines the *program*, and the edits composite back over the
+   * refined expansion when it lands.
    */
-  const refineTarget =
-    buildId !== BLANK_BUILD && !session.detached ? build.program : null;
+  const refineTarget = buildId !== BLANK_BUILD ? build.program : null;
   const topLayer = grid.size.y - 1;
   const layer = readLayer(params.get('layer'), topLayer);
   // Isolate is meaningless without a cut, so it follows the layer rather than standing alone.
@@ -845,6 +847,47 @@ export function EditorPage() {
   // loses builds that were paid for.
   const [saved, setSaved] = useState(() => generatedBuilds());
   const [murals, setMurals] = useState(() => muralBuilds());
+  const [imported, setImported] = useState(() => importedBuilds());
+  const [importError, setImportError] = useState<string | null>(null);
+
+  /**
+   * Open a file as a build: a `.schem` becomes voxels, a program `.json` becomes a program.
+   *
+   * The two paths land in different stores on purpose — a schematic has no recipe and gets
+   * the voxel treatment, while a program JSON re-enters the product exactly where a
+   * generated program does, sliders and refine included.
+   */
+  const onImportFile = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setImportError(null);
+      try {
+        if (/\.schem(atic)?$/i.test(file.name)) {
+          const grid = readSchematic(new Uint8Array(await file.arrayBuffer()));
+          const id = registerImportedBuild(file.name.replace(/\.[^.]+$/, ''), grid);
+          setImported(importedBuilds());
+          update({ build: id, scale: null });
+        } else {
+          const parsed: unknown = JSON.parse(await file.text());
+          if (
+            typeof parsed !== 'object' ||
+            parsed === null ||
+            !('components' in parsed) ||
+            !Array.isArray((parsed as { components: unknown }).components) ||
+            !('size' in parsed)
+          ) {
+            throw new Error('not a build program — expected the JSON the editor exports');
+          }
+          const id = registerGeneratedBuild(parsed as Parameters<typeof registerGeneratedBuild>[0]);
+          setSaved(generatedBuilds());
+          update({ build: id, scale: programScale(id) });
+        }
+      } catch (error) {
+        setImportError((error as Error).message);
+      }
+    },
+    [update],
+  );
   const [generated, setGenerated] = useState<{ id: string; result: GenerationResult } | null>(null);
 
   // A generated program is registered like any other build and then simply selected, so it
@@ -912,17 +955,13 @@ export function EditorPage() {
     [update],
   );
 
-  // --- re-expansion guard --------------------------------------------------
+  // --- re-expansion -------------------------------------------------------
 
-  const [pending, setPending] = useState<PendingNav | null>(null);
-  /** Anything that re-runs `expand()` discards the edits, so it has to ask first. */
-  const guard = useCallback(
-    (nav: PendingNav) => {
-      if (session.detached && session.edits > 0) setPending(nav);
-      else applyNav(nav, update);
-    },
-    [session.detached, session.edits, update],
-  );
+  // This used to be a guard with a confirmation dialog: re-expanding destroyed hand edits,
+  // so everything that could re-expand had to ask first. Edits live in an overlay now and
+  // ride across every re-expansion, so the guard is a plain dispatcher — kept as a function
+  // only so the dozen call sites did not all need rewriting for a behavioural no-op.
+  const guard = useCallback((nav: PendingNav) => applyNav(nav, update), [update]);
 
   const meshed = totalChunks === 0 ? 1 : 1 - remaining / totalChunks;
   const issues = [...build.errors, ...build.warnings];
@@ -1041,6 +1080,35 @@ export function EditorPage() {
               ▧ {entry.name}
             </button>
           ))}
+          {imported.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              aria-pressed={buildId === entry.id}
+              onClick={() => guard({ kind: 'build', build: entry.id })}
+              title={`${entry.name} — imported from a schematic`}
+            >
+              ⬇ {entry.name}
+            </button>
+          ))}
+          {/* Import is a build source like the picker rows above it: a .schem opens as
+              voxels, a program .json opens with its sliders live. */}
+          <label className="plans__import" title="Open a .schem or a program .json">
+            Import…
+            <input
+              type="file"
+              accept=".schem,.schematic,application/json,.json"
+              onChange={(event) => {
+                void onImportFile(event.target.files?.[0]);
+                event.target.value = '';
+              }}
+            />
+          </label>
+          {importError && (
+            <p className="tools__notice" role="alert">
+              {importError}
+            </p>
+          )}
         </div>
 
         <Section id="tools" title="Edit" summary={session.edits > 0 ? `${session.edits} edits` : undefined}>
@@ -1077,6 +1145,7 @@ export function EditorPage() {
           }}
           edits={session.edits}
           detached={session.detached}
+          outside={session.outside}
           canUndo={session.canUndo}
           canRedo={session.canRedo}
           onUndo={session.undo}
@@ -1117,30 +1186,6 @@ export function EditorPage() {
         </dl>
         </Section>
 
-        {pending && (
-          <div className="detach" role="alertdialog">
-            <p className="detach__text">
-              {pending.kind === 'build' ? 'Switching build' : pending.kind === 'scale' ? 'Scaling' : pending.kind === 'style' ? 'Restyling' : 'Resizing'} re-expands the program
-              and discards {session.edits} manual edit{session.edits === 1 ? '' : 's'}. The program
-              itself is unchanged.
-            </p>
-            <div className="detach__actions">
-              <button
-                type="button"
-                className="detach__confirm"
-                onClick={() => {
-                  applyNav(pending, update);
-                  setPending(null);
-                }}
-              >
-                Discard edits
-              </button>
-              <button type="button" onClick={() => setPending(null)}>
-                Keep editing
-              </button>
-            </div>
-          </div>
-        )}
 
         {build.program && (
           <ScalePanel
@@ -1227,6 +1272,7 @@ export function EditorPage() {
           detached={session.detached}
           guideHref={guideHref}
           blockCount={session.blockCount}
+          getEdits={session.exportEdits}
         />
 
         {generated && buildId === generated.id && (

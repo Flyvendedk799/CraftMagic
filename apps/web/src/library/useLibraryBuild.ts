@@ -1,16 +1,30 @@
 /**
  * Fetch a `lib:` build so the rest of the app can expand it by id.
  *
- * Shared by the editor and the guide, deliberately. They must agree on one rule — prefer the
- * program so the param sliders keep working, except for a hand-edited build where no program
- * describes what was saved — and two copies of that rule is exactly how the guide ends up
- * printing something other than what the editor shows. That failure has happened here once
- * already, in the shape of every generated build's booklet coming out as the sample cottage.
+ * Shared by the editor and the guide, deliberately. They must agree on one rule, and two
+ * copies of that rule is exactly how the guide ends up printing something other than what
+ * the editor shows. That failure has happened here once already, in the shape of every
+ * generated build's booklet coming out as the sample cottage.
+ *
+ * The rule, since edits became a layer: **prefer the program, and carry the edits beside
+ * it.** A build saved with hand edits comes back as its program plus its edit layer — the
+ * session composites the layer over the expansion, so sliders, resize and refine all still
+ * work on a build that was detailed by hand. Old rows have no layer; for those, when the
+ * saved voxels are the same size as the program's own expansion, the layer is recovered by
+ * diffing the two — the lazy migration — and only when even that fails (a resize-then-edit
+ * save, or no program at all) does the build fall back to voxels-only, exactly as before.
  */
 
 import { useEffect, useState } from 'react';
-import { isBuildId, isLibraryId, libraryRowId, registerLibraryBuild } from '../editor/builds.js';
-import { getBuild } from './library.js';
+import { EditOverlay, expand, type VoxelGrid } from '@craftmagic/core';
+import {
+  isBuildId,
+  isLibraryId,
+  libraryRowId,
+  registerLibraryBuild,
+  rememberEdits,
+} from '../editor/builds.js';
+import { getBuild, type LibraryBuildDetail } from './library.js';
 
 export interface LibraryFetch {
   /** True while the build named in the URL is still on its way. */
@@ -42,20 +56,7 @@ export function useLibraryBuild(buildId: string | null): LibraryFetch {
     getBuild(rowId)
       .then((detail) => {
         if (cancelled) return;
-        registerLibraryBuild(
-          rowId,
-          detail.program && !detail.detached
-            ? { kind: 'program', name: detail.name, program: detail.program }
-            : {
-                kind: 'voxels',
-                name: detail.name,
-                grid: {
-                  size: detail.grid.size,
-                  palette: detail.grid.palette,
-                  voxels: Uint16Array.from(detail.grid.voxels),
-                },
-              },
-        );
+        register(buildId, rowId, detail);
         landed((n) => n + 1);
       })
       .catch((err: unknown) => {
@@ -68,4 +69,41 @@ export function useLibraryBuild(buildId: string | null): LibraryFetch {
   }, [needsFetch, buildId]);
 
   return { loading: needsFetch && error === null, error };
+}
+
+/** The one rule — see the module header. */
+function register(buildId: string, rowId: string, detail: LibraryBuildDetail): void {
+  const savedGrid: VoxelGrid = {
+    size: detail.grid.size,
+    palette: detail.grid.palette,
+    voxels: Uint16Array.from(detail.grid.voxels),
+  };
+
+  if (detail.program) {
+    // A stored layer wins. Failing that, a clean build needs none, and an old detached
+    // save gets the diff treatment.
+    let layer = detail.edits ?? null;
+    if (!layer && detail.detached) {
+      try {
+        const overlay = EditOverlay.fromDiff(expand(detail.program).grid, savedGrid);
+        if (overlay === null) {
+          // The save was made at a different size than the program expands to — the diff
+          // cannot say which cells are edits. Voxels-only, exactly as before the layer.
+          registerLibraryBuild(rowId, { kind: 'voxels', name: detail.name, grid: savedGrid });
+          return;
+        }
+        if (overlay.size > 0) layer = overlay.toJSON();
+      } catch {
+        // The stored program no longer expands (a schema drift, a corrupt row). The voxels
+        // are still the truth of what was saved.
+        registerLibraryBuild(rowId, { kind: 'voxels', name: detail.name, grid: savedGrid });
+        return;
+      }
+    }
+    registerLibraryBuild(rowId, { kind: 'program', name: detail.name, program: detail.program });
+    rememberEdits(buildId, layer);
+    return;
+  }
+
+  registerLibraryBuild(rowId, { kind: 'voxels', name: detail.name, grid: savedGrid });
 }

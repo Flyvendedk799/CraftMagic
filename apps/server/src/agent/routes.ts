@@ -79,6 +79,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				description?: unknown;
 				program?: unknown;
 				detached?: unknown;
+				edits?: unknown;
 				library?: unknown;
 				grid?: { size?: { x: number; y: number; z: number }; palette?: string[]; voxels?: number[] };
 			} | null;
@@ -116,6 +117,9 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				program: body?.program,
 				userId: user.id,
 				detached: body?.detached === true,
+				// Shape-checked no further than "an object": the layer is the client's format,
+				// the server only ferries it, and the client-side reader already survives junk.
+				edits: typeof body?.edits === 'object' ? body.edits : null,
 				// The transport row "send to game" writes stays out of the library; only an
 				// explicit save belongs in a list the user curates.
 				inLibrary: body?.library === true,
@@ -156,6 +160,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				blockCount: build.blockCount,
 				detached: build.detached,
 				program: build.program,
+				edits: build.edits,
 				grid: { size: grid.size, palette: grid.palette, voxels: Array.from(grid.voxels) },
 			};
 		});

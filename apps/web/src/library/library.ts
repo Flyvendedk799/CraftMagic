@@ -7,7 +7,7 @@
  * case for it.
  */
 
-import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
+import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 
 export interface LibraryBuild {
   id: string;
@@ -29,6 +29,8 @@ export interface LibraryBuildDetail {
   blockCount: number;
   detached: boolean;
   program: BuildProgram | null;
+  /** The hand-edit layer, on builds saved since it existed. Null on older rows. */
+  edits: EditLayer | null;
   grid: { size: { x: number; y: number; z: number }; palette: string[]; voxels: number[] };
 }
 
@@ -75,16 +77,17 @@ export function deleteBuild(id: string): Promise<{ ok: true }> {
 /**
  * Save the build on screen.
  *
- * Both the voxels and the program go up, plus whether the build has been hand-edited. The
- * server keeps all three because they answer different questions on the way back: the program
- * re-expands at any size and restores the param sliders, but once `detached` is true no
- * program describes the grid, and only the voxels do.
+ * Voxels, program, and the hand-edit layer all go up. The composited voxels are what the
+ * guide, the agent and old readers consume; the program is what keeps the sliders and refine
+ * alive; the layer is what lets the editor restore *both at once* — edits riding over a
+ * still-parametric build. `detached` is kept for exactly the old readers.
  */
 export function saveToLibrary(input: {
   name: string;
   grid: VoxelGrid;
   program: BuildProgram | null;
   detached: boolean;
+  edits?: EditLayer | null;
 }): Promise<{ id: string; blockCount: number }> {
   return request(
     '/api/builds',
@@ -93,6 +96,7 @@ export function saveToLibrary(input: {
       library: true,
       detached: input.detached,
       program: input.program ?? undefined,
+      edits: input.edits ?? undefined,
       grid: {
         size: input.grid.size,
         palette: input.grid.palette,

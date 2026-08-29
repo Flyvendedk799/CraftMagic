@@ -1336,3 +1336,23 @@
   font-family: inherit;
   font-size: var(--text-xs);
 }
+
+/* --- import -------------------------------------------------------------- */
+
+/* The file-input-as-button, same recipe as the layouter's plan import: the input itself is
+   hidden and the label wears the button clothes, because a bare file input cannot be styled
+   into the row of picker buttons it sits in. */
+.hud__actions .plans__import {
+  padding: 0.4rem 0.5rem;
+  font-size: var(--text-xs);
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: center;
+}
+
+.hud__actions .plans__import input {
+  display: none;
+}

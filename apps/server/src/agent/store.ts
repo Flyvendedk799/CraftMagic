@@ -32,6 +32,8 @@ export interface BuildRow {
 	voxels: Buffer;
 	program: unknown;
 	detached: boolean;
+	/** The hand-edit layer, when the client saved one. Null on old rows and clean builds. */
+	edits: unknown;
 }
 
 /** A library listing entry: everything but the voxels, which are megabytes. */
@@ -106,12 +108,13 @@ export class AgentStore {
 		program: unknown;
 		userId?: string | null;
 		detached?: boolean;
+		edits?: unknown;
 		/** False for the row "send to game" writes as transport; true for saved work. */
 		inLibrary?: boolean;
 	}): Promise<string> {
 		const { rows } = await this.db.query<{ id: string }>(
-			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, in_library)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, edits, in_library)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			 RETURNING id`,
 			[
 				input.userId ?? null,
@@ -124,6 +127,7 @@ export class AgentStore {
 				input.program === undefined ? null : JSON.stringify(input.program),
 				Buffer.from(input.voxels),
 				input.detached ?? false,
+				input.edits === undefined || input.edits === null ? null : JSON.stringify(input.edits),
 				input.inLibrary ?? false,
 			],
 		);
@@ -140,7 +144,7 @@ export class AgentStore {
 	 */
 	async getBuildForAgent(id: string): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits
 			 FROM builds WHERE id = $1`,
 			[id],
 		);
@@ -149,7 +153,7 @@ export class AgentStore {
 
 	async getBuild(id: string, scope: OwnerScope): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits
 			 FROM builds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
 			[id, scope],
 		);
@@ -498,6 +502,7 @@ function toBuild(row: Record<string, unknown>): BuildRow {
 		voxels: row.voxels as Buffer,
 		program: row.program,
 		detached: row.detached as boolean,
+		edits: row.edits ?? null,
 	};
 }
 

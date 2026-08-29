@@ -62,6 +62,8 @@ export interface ToolPaletteProps {
 
   edits: number;
   detached: boolean;
+  /** Edits whose coordinates fall outside the current size — invisible until it grows back. */
+  outside: number;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -241,9 +243,11 @@ export function ToolPalette(props: ToolPaletteProps) {
 
       {props.detached && (
         <p className="tools__detached">
-          Modified — no longer matches the program.{' '}
+          Hand edits ride over the program — sliders, resize and refine keep them.
+          {props.outside > 0 &&
+            ` ${props.outside} sit${props.outside === 1 ? 's' : ''} outside the current size.`}{' '}
           <button type="button" className="tools__inline" onClick={props.onDiscard}>
-            revert
+            clear edits
           </button>
         </p>
       )}

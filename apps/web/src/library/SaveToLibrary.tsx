@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
+import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 import { Link } from 'react-router-dom';
 import { useAuth } from './auth.js';
 import { LibraryError, saveToLibrary } from './library.js';
@@ -19,6 +19,8 @@ export interface SaveToLibraryProps {
   grid: VoxelGrid;
   program: BuildProgram | null;
   detached: boolean;
+  /** The hand-edit layer, read at save time so renders never pay for serialising it. */
+  getEdits?: () => EditLayer | null;
 }
 
 type State =
@@ -27,14 +29,14 @@ type State =
   | { kind: 'saved'; id: string }
   | { kind: 'error'; message: string };
 
-export function SaveToLibrary({ name, grid, program, detached }: SaveToLibraryProps) {
+export function SaveToLibrary({ name, grid, program, detached, getEdits }: SaveToLibraryProps) {
   const auth = useAuth();
   const [state, setState] = useState<State>({ kind: 'idle' });
 
   const save = useCallback(async () => {
     setState({ kind: 'saving' });
     try {
-      const saved = await saveToLibrary({ name, grid, program, detached });
+      const saved = await saveToLibrary({ name, grid, program, detached, edits: getEdits?.() ?? null });
       setState({ kind: 'saved', id: saved.id });
     } catch (err) {
       const message =
@@ -43,7 +45,7 @@ export function SaveToLibrary({ name, grid, program, detached }: SaveToLibraryPr
           : (err as Error).message;
       setState({ kind: 'error', message });
     }
-  }, [name, grid, program, detached]);
+  }, [name, grid, program, detached, getEdits]);
 
   if (auth.status !== 'signedIn') {
     return (

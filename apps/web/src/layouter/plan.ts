@@ -180,6 +180,9 @@ export interface Floor {
 
 export type RoofStyle = 'flat' | 'gable' | 'hip' | 'none';
 
+/** How steeply a pitched roof climbs: rise ≈ span/4, span/2, or span. */
+export type RoofPitch = 'low' | 'classic' | 'steep';
+
 export interface LayoutPlan {
   version: typeof PLAN_VERSION;
   id: string;
@@ -195,6 +198,10 @@ export interface LayoutPlan {
   /** Blocks of plinth below the ground floor slab. Zero sits the building straight on grade. */
   foundation: number;
   roof: RoofStyle;
+  /** Only meaningful for gable and hip. Older plans have no field and read as 'classic'. */
+  roofPitch: RoofPitch;
+  /** Eave projection past the wall, 0–2 blocks. */
+  roofOverhang: number;
   kitId: string;
   floors: Floor[];
   updatedAt: string;
@@ -329,6 +336,8 @@ export function createPlan(options: Partial<LayoutPlan> = {}): LayoutPlan {
     wallThickness: 1,
     foundation: 1,
     roof: 'gable',
+    roofPitch: 'classic',
+    roofOverhang: 1,
     kitId: 'oak-cottage',
     floors: [createFloor(floorName(0))],
     updatedAt: new Date().toISOString(),
@@ -504,6 +513,10 @@ export function normalizePlan(raw: unknown): LayoutPlan {
     roof: (['flat', 'gable', 'hip', 'none'] as const).includes(plan.roof as RoofStyle)
       ? (plan.roof as RoofStyle)
       : 'gable',
+    roofPitch: (['low', 'classic', 'steep'] as const).includes(plan.roofPitch as RoofPitch)
+      ? (plan.roofPitch as RoofPitch)
+      : 'classic',
+    roofOverhang: clampInt(plan.roofOverhang, 0, 2, 1),
     kitId: typeof plan.kitId === 'string' && plan.kitId ? plan.kitId : 'oak-cottage',
     floors: floors.length > 0 ? floors : [createFloor(floorName(0))],
     updatedAt: typeof plan.updatedAt === 'string' ? plan.updatedAt : new Date().toISOString(),

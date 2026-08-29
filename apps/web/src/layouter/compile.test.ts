@@ -105,11 +105,45 @@ describe('compilePlan', () => {
     });
     const { grid } = build(plan);
 
-    // North wall is build z 0; the window starts at build x 3.
-    expect(blockAt(grid, 3, 2, 1)).toBe('minecraft:oak_planks');
+    // North wall is build z 0; the window starts at build x 3. The opening is glazed at its
+    // two rows, with a frame sill below and a frame lintel above — the trim that makes an
+    // opening read as a window rather than a missing bit of wall.
+    expect(blockAt(grid, 3, 2, 1)).toBe('minecraft:oak_log[axis=y]');
     expect(blockAt(grid, 3, 3, 1)).toBe('minecraft:glass');
     expect(blockAt(grid, 5, 4, 1)).toBe('minecraft:glass');
-    expect(blockAt(grid, 3, 5, 1)).toBe('minecraft:oak_planks');
+    expect(blockAt(grid, 3, 5, 1)).toBe('minecraft:oak_log[axis=y]');
+    // Beside the opening, the wall is plain wall.
+    expect(blockAt(grid, 2, 3, 1)).toBe('minecraft:oak_planks');
+  });
+
+  it('glazes one sheet centred in a thick wall, with the rest carved through', () => {
+    const plan = cottage({
+      wallThickness: 3,
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 9, d: 9 }),
+          createWindow('x', 13, 10, { length: 3, sill: 1, height: 2 }),
+        ]),
+      ],
+    });
+    const { grid } = build(plan);
+
+    // Wall occupies build z 1..3; glass sits in the middle course, air either side of it.
+    expect(blockAt(grid, 4, 3, 1)).toBe('minecraft:air');
+    expect(blockAt(grid, 4, 3, 2)).toBe('minecraft:glass');
+    expect(blockAt(grid, 4, 3, 3)).toBe('minecraft:air');
+  });
+
+  it('lets the plan choose the roof pitch and overhang', () => {
+    const classic = compilePlan(cottage({ roof: 'gable' }));
+    const steep = compilePlan(cottage({ roof: 'gable', roofPitch: 'steep' }));
+    const low = compilePlan(cottage({ roof: 'gable', roofPitch: 'low' }));
+    expect(steep.program.size.y).toBeGreaterThan(classic.program.size.y);
+    expect(low.program.size.y).toBeLessThanOrEqual(classic.program.size.y);
+
+    const wide = compilePlan(cottage({ roof: 'gable', roofOverhang: 2 }));
+    const flush = compilePlan(cottage({ roof: 'gable', roofOverhang: 0 }));
+    expect(wide.program.size.x).toBeGreaterThan(flush.program.size.x);
   });
 
   it('carves a floor void through the slab it sits on', () => {

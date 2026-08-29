@@ -57,7 +57,7 @@ export interface ToolPaletteProps {
   stampMode: StampMode;
   onStampMode: (mode: StampMode) => void;
   onRotateClip: () => void;
-  onMirrorClip: () => void;
+  onMirrorClip: (axis: 'x' | 'z') => void;
   onForgetClip: () => void;
 
   edits: number;
@@ -197,8 +197,11 @@ export function ToolPalette(props: ToolPaletteProps) {
                 <button type="button" onClick={props.onRotateClip} title="Rotate 90°  (R)">
                   ⟳ Rotate
                 </button>
-                <button type="button" onClick={props.onMirrorClip} title="Mirror  (M)">
-                  ⇄ Mirror
+                <button type="button" onClick={() => props.onMirrorClip('x')} title="Mirror east–west  (M)">
+                  ⇄ Mirror X
+                </button>
+                <button type="button" onClick={() => props.onMirrorClip('z')} title="Mirror north–south  (Shift+M)">
+                  ⇅ Mirror Z
                 </button>
                 <button type="button" onClick={props.onForgetClip} title="Empty the clipboard">
                   Forget

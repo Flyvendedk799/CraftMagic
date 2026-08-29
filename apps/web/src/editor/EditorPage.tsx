@@ -85,6 +85,7 @@ import {
   copyRegion,
   mirrorClip,
   rotateClip,
+  stampBounds,
   stampEdit,
   type Clip,
   type StampMode,
@@ -489,9 +490,9 @@ export function EditorPage() {
     setNotice('Clipboard rotated 90°.');
   }, []);
 
-  const mirrorClipboard = useCallback(() => {
-    setClip((prev) => (prev ? mirrorClip(prev, 'x') : prev));
-    setNotice('Clipboard mirrored.');
+  const mirrorClipboard = useCallback((axis: 'x' | 'z' = 'x') => {
+    setClip((prev) => (prev ? mirrorClip(prev, axis) : prev));
+    setNotice(`Clipboard mirrored ${axis === 'x' ? 'east–west' : 'north–south'}.`);
   }, []);
 
   /** Non-air blocks inside the standing box, so Clear and Copy are not blind. */
@@ -517,15 +518,50 @@ export function EditorPage() {
         bounds.max.z - bounds.min.z + 1
       }`;
 
-      if (action === 'copy') {
+      if (action === 'copy' || action === 'cut') {
         try {
           const copied = copyRegion(grid, region.min, region.max);
           setClip(copied);
           // Straight to the tool that uses it: copying is never the goal, and the box is left
           // standing so coming back to it costs nothing.
           setTool('stamp');
+          if (action === 'cut') {
+            session.apply(boxEdit(grid, region.min, region.max, 'clear', 0));
+          }
           setNotice(
-            `Copied ${extent} — ${copied.blocks.toLocaleString()} blocks. Click to stamp it; R rotates.`,
+            `${action === 'cut' ? 'Cut' : 'Copied'} ${extent} — ${copied.blocks.toLocaleString()} blocks. Click to stamp it; R rotates.`,
+          );
+        } catch (err) {
+          setNotice(err instanceof ClipTooLargeError ? err.message : String(err));
+        }
+        return;
+      }
+
+      if (action === 'rotate' || action === 'mirrorX' || action === 'mirrorZ') {
+        // In-place transform = copy → clear → stamp back, recentred about the box's own
+        // middle so a rotated wing pivots where it stands instead of walking to a corner.
+        // Two ops on the undo stack (the clear and the stamp), which is honest: undo once
+        // and the transformed copy lifts off, undo twice and the original is back.
+        try {
+          const copied = copyRegion(grid, region.min, region.max);
+          const transformed =
+            action === 'rotate'
+              ? rotateClip(copied, 1)
+              : mirrorClip(copied, action === 'mirrorX' ? 'x' : 'z');
+          session.apply(boxEdit(grid, region.min, region.max, 'clear', 0));
+          const at = {
+            x: Math.max(0, Math.round((bounds.min.x + bounds.max.x) / 2 - (transformed.size.x - 1) / 2)),
+            y: bounds.min.y,
+            z: Math.max(0, Math.round((bounds.min.z + bounds.max.z) / 2 - (transformed.size.z - 1) / 2)),
+          };
+          const result = stampEdit(grid, transformed, at, session.resolveBlock, 'merge');
+          session.apply(result.op);
+          const landed = stampBounds(transformed, at);
+          setRegion({ min: landed.min, max: landed.max });
+          setNotice(
+            action === 'rotate'
+              ? `Rotated ${extent} in place — the box follows the new footprint.`
+              : `Flipped ${extent} in place.`,
           );
         } catch (err) {
           setNotice(err instanceof ClipTooLargeError ? err.message : String(err));
@@ -886,8 +922,11 @@ export function EditorPage() {
         if (clip) rotateClipboard();
         return;
       case 'm':
+        if (clip) mirrorClipboard('x');
+        return;
       case 'M':
-        if (clip) mirrorClipboard();
+        // Shift+M is the other axis — both flips, no extra key to learn.
+        if (clip) mirrorClipboard('z');
         return;
       case 'f':
       case 'F':

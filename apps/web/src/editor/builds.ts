@@ -554,6 +554,11 @@ export interface BuildOverrides {
    * the build's own materials rather than to an error.
    */
   style?: string | null;
+  /**
+   * Component paths (`components[3]`, `components[1].children[0]`) to leave out of the
+   * expansion — the outliner's hide. A path that no longer matches anything is a no-op.
+   */
+  hide?: readonly string[];
 }
 
 /** What a scale actually produced, once clamped to what the expander will accept. */
@@ -607,6 +612,7 @@ export function expandBuild(
   // exactly as the scale does.
   const pack = stylePackById(overrides.style);
   if (pack) applied = applyStylePack(applied, pack);
+  if (overrides.hide && overrides.hide.length > 0) applied = hideComponents(applied, overrides.hide);
   const result = expand(applied, { provenance: options.provenance });
 
   return {
@@ -661,6 +667,28 @@ function fromVoxels(id: string, name: string, source: VoxelGrid): LoadedBuild {
     parts: [],
     origin: null,
   };
+}
+
+/**
+ * A program without the components at the given paths.
+ *
+ * Paths are the expander's own (`components[3].children[0]`), so what the outliner shows and
+ * what this removes are one vocabulary. Repeat transforms collapse in provenance, which
+ * means hiding a repeated part hides every repetition — exactly what the eye icon promises.
+ */
+function hideComponents(program: BuildProgram, paths: readonly string[]): BuildProgram {
+  const hidden = new Set(paths);
+  type AnyComponent = BuildProgram['components'][number];
+  const filterList = (list: readonly AnyComponent[], prefix: string): AnyComponent[] =>
+    list
+      .map((component, index) => ({ component, path: `${prefix}[${index}]` }))
+      .filter(({ path }) => !hidden.has(path))
+      .map(({ component, path }) =>
+        component.type === 'group' && Array.isArray(component.children)
+          ? { ...component, children: filterList(component.children, `${path}.children`) }
+          : component,
+      );
+  return { ...program, components: filterList(program.components, 'components') };
 }
 
 /** Copies rather than mutates: `samples` is a shared module-level object. */

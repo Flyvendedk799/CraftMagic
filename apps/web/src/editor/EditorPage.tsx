@@ -26,12 +26,15 @@ import {
   AIR_BLOCK,
   displayName,
   expand,
+  labelParts,
   paletteColors,
   paletteFlags,
   readSchematic,
   STYLE_PACKS,
   voxelIndex,
+  type Vec3,
 } from '@craftmagic/core';
+import { Outliner, type OutlinePart } from './Outliner.js';
 import { EditorCanvas, type ViewKind, type ViewRequest } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
@@ -116,6 +119,15 @@ const RENDER_STYLE_KEY = 'craftmagic.renderStyle';
 /** While the ghost build is showing, the session must not be handed the ghost's world. */
 const noopWorld = () => {};
 
+/** Provenance bounds are Vec3 tuples; the camera and outlines speak {x,y,z}. */
+function partBounds(part: { min?: Vec3; max?: Vec3 }): { min: BoxCorner; max: BoxCorner } | null {
+  if (!part.min || !part.max) return null;
+  return {
+    min: { x: part.min[0], y: part.min[1], z: part.min[2] },
+    max: { x: part.max[0], y: part.max[1], z: part.max[2] },
+  };
+}
+
 const BUILD_LABELS: Record<string, string> = {
   blank: 'Empty',
   cottage: 'Cottage',
@@ -188,20 +200,95 @@ export function EditorPage() {
   const scale = useMemo(() => parseScale(scaleKey), [scaleKey]);
   const styleId = params.get(STYLE_PARAM);
 
+  // Components hidden through the outliner. View state, not program state: kept per build id
+  // and reset on switch, because `components[3]` means something different in every program.
+  const [hidden, setHidden] = useState<{ id: string; paths: readonly string[] }>({
+    id: buildId,
+    paths: [],
+  });
+  const hiddenPaths = hidden.id === buildId ? hidden.paths : [];
+  const hiddenKey = hiddenPaths.join('|');
+
   const build = useMemo(
     () =>
       expandBuild(buildId, {
         params: parseOverrides(overrideKey),
         scale: parseScale(scaleKey),
         style: styleId,
+        hide: hiddenPaths,
       }),
-    [buildId, overrideKey, scaleKey, styleId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hiddenPaths is keyed by hiddenKey
+    [buildId, overrideKey, scaleKey, styleId, hiddenKey],
   );
   const session = useEditSession(build);
   // The opening reveal. It owns the canvas's grid and world handle while it runs; the
   // session takes over the moment it finishes, through the same remount the canvas would
   // have done anyway. Any click during the reveal skips to the finished build.
   const assembly = useAssembly(build);
+
+  /**
+   * The outliner's part list, from a provenance expansion of the FULL program — hidden
+   * components included, or their rows would vanish and nothing could bring them back.
+   *
+   * Computed a beat after the build settles rather than inline: provenance costs a parallel
+   * array plus a measuring pass, and the main expansion runs on every frame of a slider
+   * drag. The delay means a drag re-schedules instead of paying that price per frame.
+   */
+  const [outline, setOutline] = useState<{ key: string; parts: OutlinePart[] } | null>(null);
+  const outlineKey = `${buildId}|${overrideKey}|${scaleKey}|${styleId ?? ''}`;
+  useEffect(() => {
+    if (!build.program) {
+      setOutline(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const full = expandBuild(
+        buildId,
+        { params: parseOverrides(overrideKey), scale: parseScale(scaleKey), style: styleId },
+        { provenance: true },
+      );
+      setOutline({ key: outlineKey, parts: labelParts(full.parts, full.grid.size) });
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- outlineKey carries the inputs
+  }, [outlineKey, build.program === null]);
+  const outlineParts = outline?.key === outlineKey ? outline.parts : null;
+
+  /** The part outlined in the canvas while the pointer rests on its outliner row. */
+  const [partHighlight, setPartHighlight] = useState<{ min: BoxCorner; max: BoxCorner } | null>(null);
+
+  const onPartToggle = useCallback(
+    (path: string) => {
+      setPartHighlight(null);
+      setHidden((prev) => {
+        const paths = prev.id === buildId ? prev.paths : [];
+        return {
+          id: buildId,
+          paths: paths.includes(path) ? paths.filter((p) => p !== path) : [...paths, path],
+        };
+      });
+    },
+    [buildId],
+  );
+  const onPartSolo = useCallback(
+    (path: string) => {
+      setPartHighlight(null);
+      setHidden({
+        id: buildId,
+        paths: (outlineParts ?? []).map((part) => part.path).filter((p) => p !== path),
+      });
+    },
+    [buildId, outlineParts],
+  );
+  const onPartsShowAll = useCallback(() => setHidden({ id: buildId, paths: [] }), [buildId]);
+  const onPartFocus = useCallback((part: { min?: Vec3; max?: Vec3 }) => {
+    const bounds = partBounds(part);
+    if (!bounds) return;
+    setView((prev) => ({ kind: 'iso', nonce: (prev?.nonce ?? 0) + 1, focus: bounds }));
+  }, []);
+  const onPartHighlight = useCallback((part: { min?: Vec3; max?: Vec3 } | null) => {
+    setPartHighlight(part ? partBounds(part) : null);
+  }, []);
 
   const { grid, name } = build;
 
@@ -1026,7 +1113,7 @@ export function EditorPage() {
           onStroke={ghost || assembly.assembling ? undefined : strokable ? onStroke : undefined}
           onPick={ghost ? undefined : assembly.assembling ? assembly.skip : onPick}
           marker={ghost ? null : anchor}
-          region={ghost ? null : region}
+          region={ghost ? null : (partHighlight ?? region)}
           preview={ghost || assembly.assembling ? null : preview}
           onProgress={setRemaining}
           onWorld={ghost ? noopWorld : assembly.assembling ? assembly.onWorld : session.attachWorld}
@@ -1225,6 +1312,31 @@ export function EditorPage() {
               ))}
             </div>
           </div>
+        )}
+
+        {build.program && build.program.components.length > 0 && (
+          <Section
+            id="outline"
+            title="Components"
+            summary={
+              hiddenPaths.length > 0
+                ? `${hiddenPaths.length} hidden`
+                : outlineParts
+                  ? `${outlineParts.length}`
+                  : undefined
+            }
+            defaultOpen={false}
+          >
+            <Outliner
+              parts={outlineParts}
+              hidden={new Set(hiddenPaths)}
+              onToggle={onPartToggle}
+              onSolo={onPartSolo}
+              onShowAll={onPartsShowAll}
+              onFocus={onPartFocus}
+              onHighlight={onPartHighlight}
+            />
+          </Section>
         )}
 
         {build.params.length > 0 && (

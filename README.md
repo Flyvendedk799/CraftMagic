@@ -423,14 +423,33 @@ node tools/generate.mjs "a small fishing hut on stilts" --go   # actually genera
 node tools/generate.mjs --spend                                # ledger
 ```
 
-**Choosing a size up front.** The prompt box has a size control — Natural, Tiny, Small,
-Medium, Large, Huge — and it decides how big the *finished* build is, not how much design to
-ask for. Told "make it 20 blocks", a model designs down to 20 blocks: it drops the corner
-posts, the base course and the window mullions, because there is no room for them, and what
-comes back is a flat little box. So the brief asks for the structure at whatever size it needs
-to read properly, and the program comes back carrying the `scale` that brings it down to the
-size that was asked for. The detail stays in the program, and dragging the editor's size
-slider to 100% shows the design at the size it was designed at.
+**Choosing a size up front.** The prompt box has a size control, counted in **blocks placed** —
+the measure a builder already thinks in, where a shrine is a hundred blocks and a castle is
+thousands:
+
+| | Blocks | About |
+|---|---|---|
+| Tiny | 20–150 | a shrine or a market stall |
+| Small | 150–300 | a hut or a watchpost |
+| Medium | 300–800 | a cottage or a small tower |
+| Large | 800–2,000 | a house, a hall or a keep |
+| Huge | 2,000+ | a castle or a cathedral |
+
+It decides how big the *finished* build is, not how much design to ask for. Told "make it 300
+blocks", a model designs down to 300 blocks: it drops the corner posts, the base course and the
+window mullions, because there is no room for them, and what comes back is a flat little box.
+So the brief asks for the structure at whatever size it needs to read properly, and the program
+comes back carrying the `scale` that brings it down to the size that was asked for. The detail
+stays in the program, and dragging the editor's size slider to 100% shows the design at the
+size it was designed at.
+
+Fitting a build to a block budget is *measured*, not calculated (`expand/fit.ts`): how a
+build's block count follows its scale depends on what kind of build it is — a solid mass
+scales with the cube of the factor, a wall or a roof with the square, a ridge line linearly.
+Halving the sample cottage takes it from 979 blocks to 223, where a cube law predicts 122. So
+the fitter binary-searches the scale slider's own 5% steps, expanding at each probe, and keeps
+the largest scale that fits — four expansions of a few milliseconds each, for an answer that is
+exactly right rather than confidently wrong on half the builds it sees.
 
 ### Picture to structure
 

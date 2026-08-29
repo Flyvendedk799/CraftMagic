@@ -23,12 +23,13 @@ import {
 	type SizeChoice,
 } from '@craftmagic/core';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
+import { providerErrorFacts } from '@flyvendedk799/ai-auth';
 import { pictureBrief, refinePrompt, repairPrompt, sizeBrief, systemPrompt } from './prompt.js';
 import { schemaIssues } from './validate.js';
 import type { ModelId } from './pricing.js';
-import type { Provider, ProviderImage, ProviderSession } from './providers.js';
+import type { Provider, ProviderImage, ProviderReply, ProviderSession } from './providers.js';
 import { TOOL_NAME } from './providers.js';
-import type { SpendLedger } from './spend.js';
+import { BudgetExceededError, type SpendLedger } from './spend.js';
 
 export { TOOL_NAME } from './providers.js';
 
@@ -120,6 +121,60 @@ export interface PipelineDeps {
 	ledger: SpendLedger;
 }
 
+/**
+ * Statuses worth one more try. Everything here means "the service, not the request": the same
+ * bytes sent again have a real chance of succeeding. A 400 or a 401 is excluded on purpose —
+ * retrying those re-sends a request that is wrong, at full price in latency.
+ */
+const TRANSIENT_STATUSES = new Set([408, 429, 500, 502, 503, 529]);
+const MAX_TRANSIENT_RETRIES = 2;
+/**
+ * A Retry-After beyond this is not a blip, it is the provider saying "come back later" —
+ * usually a plan out of headroom. Waiting it out inside one request would hold the SSE stream
+ * open for minutes to hide a fact the user is better off seeing.
+ */
+const MAX_RETRY_WAIT_MS = 15_000;
+
+/**
+ * How long to wait before retrying, or null when the error is not worth retrying.
+ *
+ * Trusts the provider's own Retry-After when it names one, otherwise backs off exponentially.
+ * The jitter is there for the day two requests fail together — without it they retry together
+ * too, against a service that just told them both it is overloaded.
+ */
+function transientDelayMs(err: unknown, attempt: number): number | null {
+	const facts = providerErrorFacts(err);
+	if (facts.status !== null) {
+		if (!TRANSIENT_STATUSES.has(facts.status)) return null;
+	} else {
+		// No HTTP status means the request may never have reached the provider — a dropped
+		// connection or a timeout. Anything else without a status is our own bug; retrying a
+		// bug just repeats it.
+		const text = err instanceof Error ? `${err.name} ${err.message}` : '';
+		if (!/connection|network|timeout|timed out|fetch failed|socket|econnreset|epipe|aborted/i.test(text)) {
+			return null;
+		}
+		if (err instanceof Error && err.name === 'AbortError') return null;
+	}
+	const wait = facts.retryAfter !== null ? facts.retryAfter * 1000 : 1500 * 2 ** attempt;
+	if (wait > MAX_RETRY_WAIT_MS) return null;
+	return wait + Math.floor(Math.random() * 500);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			signal?.removeEventListener('abort', onAbort);
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(new DOMException('aborted', 'AbortError'));
+		};
+		signal?.addEventListener('abort', onAbort, { once: true });
+	});
+}
+
 export async function generateBuild(
 	deps: PipelineDeps,
 	options: GenerateOptions,
@@ -146,15 +201,17 @@ export async function generateBuild(
 	const estimatedInput = Math.ceil((system.length + userContent.length) / 3.8) + 500;
 	deps.ledger.assertCanAfford(model, estimatedInput, maxTokens, deps.provider.id);
 
-	const session = deps.provider.session({
-		model,
-		system,
-		schema,
-		maxTokens,
-		...(options.effort ? { effort: options.effort } : {}),
-		...(options.signal ? { signal: options.signal } : {}),
-		onComponents: (components) => options.onProgress?.({ stage: 'emitting', components }),
-	});
+	const makeSession = () =>
+		deps.provider.session({
+			model,
+			system,
+			schema,
+			maxTokens,
+			...(options.effort ? { effort: options.effort } : {}),
+			...(options.signal ? { signal: options.signal } : {}),
+			onComponents: (components) => options.onProgress?.({ stage: 'emitting', components }),
+		});
+	let session = makeSession();
 
 	let totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 
@@ -170,7 +227,25 @@ export async function generateBuild(
 	};
 
 	options.onProgress?.({ stage: 'thinking' });
-	const first = await session.emit(userContent, options.image);
+	// The opening call gets a couple of retries on transient failures — an overloaded
+	// provider or a dropped connection used to be a lost generation and a consumed quota
+	// slot. Each retry abandons the failed session and starts a fresh one: the failed
+	// thread already holds the user turn, so re-emitting into it would duplicate it. The
+	// budget guard runs again before every retry, because that is the promise the ledger
+	// makes: no request goes out that the balance could not cover.
+	let first: ProviderReply;
+	for (let attempt = 0; ; attempt++) {
+		try {
+			first = await session.emit(userContent, options.image);
+			break;
+		} catch (err) {
+			const delay = attempt < MAX_TRANSIENT_RETRIES ? transientDelayMs(err, attempt) : null;
+			if (delay === null || options.signal?.aborted) throw err;
+			await sleep(delay, options.signal);
+			deps.ledger.assertCanAfford(model, estimatedInput, maxTokens, deps.provider.id);
+			session = makeSession();
+		}
+	}
 	record(first, options.refineOf ? 'refine' : 'generate');
 
 	if (first.input === undefined) {
@@ -192,12 +267,23 @@ export async function generateBuild(
 	if (problems.length > 0) {
 		options.onProgress?.({ stage: 'repairing', issues: problems.length });
 
-		deps.ledger.assertCanAfford(model, estimatedInput * 2, maxTokens, deps.provider.id);
-		options.onProgress?.({ stage: 'thinking' });
-		const second = await session.repair(repairPrompt(problems));
-		record(second, 'repair');
+		// A repair that cannot run is a repair skipped, not a generation failed. The first
+		// program was paid for and may well build with omissions; throwing it away because
+		// the *second* call hit the budget ceiling or a transient provider failure would
+		// discard the very thing `onProgram` exists to protect.
+		const second = await (async (): Promise<ProviderReply | null> => {
+			try {
+				deps.ledger.assertCanAfford(model, estimatedInput * 2, maxTokens, deps.provider.id);
+				options.onProgress?.({ stage: 'thinking' });
+				return await session.repair(repairPrompt(problems));
+			} catch (err) {
+				if (err instanceof BudgetExceededError || transientDelayMs(err, 0) !== null) return null;
+				throw err;
+			}
+		})();
+		if (second) record(second, 'repair');
 
-		if (second.input !== undefined) {
+		if (second && second.input !== undefined) {
 			const candidate = unwrapProgram(second.input) as BuildProgram;
 			options.onProgram?.(candidate, 'repair');
 			const candidateStructural = schemaIssues(candidate);

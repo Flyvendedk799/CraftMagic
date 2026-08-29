@@ -16,7 +16,8 @@ export type LayoutToolId =
   | 'stair'
   | 'opening'
   | 'platform'
-  | 'column';
+  | 'column'
+  | 'furnish';
 
 export interface LayoutToolSpec {
   id: LayoutToolId;
@@ -102,6 +103,14 @@ export const LAYOUT_TOOLS: readonly LayoutToolSpec[] = [
     gesture: 'click',
     verb: 'place a column',
     key: '9',
+  },
+  {
+    id: 'furnish',
+    label: 'Furnish',
+    hint: 'Click to place a piece from the catalogue. Which piece, and its facing, are in the inspector.',
+    gesture: 'click',
+    verb: 'place furniture',
+    key: '0',
   },
 ];
 

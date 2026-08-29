@@ -10,6 +10,7 @@ import {
   createStair,
   createWindow,
   floorName,
+  normalizeItem,
   type LayoutPlan,
 } from './plan.js';
 
@@ -167,6 +168,28 @@ describe('compilePlan', () => {
       }
     }
     expect(highTreads).toBeGreaterThan(0);
+  });
+
+  it('furnishes a room through the program details', () => {
+    const plan = cottage({
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 7, d: 7 }),
+          normalizeItem({ kind: 'furnish', x: 12, z: 12, facing: 'east', itemId: 'chair' })!,
+          normalizeItem({ kind: 'furnish', x: 14, z: 12, facing: 'south', itemId: 'bed' })!,
+        ]),
+      ],
+    });
+    const { program, grid, errors } = build(plan);
+    expect(errors).toEqual([]);
+    expect(program.details?.length).toBe(3); // one chair block, two bed blocks
+
+    // The chair is a stair block on the walking surface, rotated with its facing.
+    expect(blockAt(grid, 3, 2, 3)).toContain('minecraft:oak_stairs');
+    expect(blockAt(grid, 3, 2, 3)).toContain('facing=east');
+    // The bed is a wool pair running south from its head.
+    expect(blockAt(grid, 5, 2, 3)).toBe('minecraft:white_wool');
+    expect(blockAt(grid, 5, 2, 4)).toBe('minecraft:red_wool');
   });
 
   it('lets the plan choose the roof pitch and overhang', () => {

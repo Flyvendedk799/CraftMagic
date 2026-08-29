@@ -34,7 +34,8 @@
  *     y = deckY                 the top ceiling — the roof deck
  */
 
-import { LIMITS as IR_LIMITS, type BuildProgram, type Component } from '@craftmagic/core';
+import { LIMITS as IR_LIMITS, type BuildProgram, type Component, type DetailOp } from '@craftmagic/core';
+import { furnishingById, furnishingCells } from './furniture.js';
 import { paletteFor } from './kits.js';
 import { deckY as roofDeckY, floorHeight, slabY as slabYOf, type LayoutPlan, type PlanItem, type Rect, type RoomItem } from './plan.js';
 import { planFootprint, rectBottom, rectRight, stairFootprint, unionRect } from './geometry.js';
@@ -355,6 +356,33 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
     }
   }
 
+  // --- pass 5: furnishings ------------------------------------------------
+  //
+  // Raw voxel patches, painted after everything else: a chair does not negotiate with the
+  // slab it stands on, it lands on whatever the structure passes drew. `details` is exactly
+  // the IR feature for this — singular placed things no parametric component describes.
+
+  const details: DetailOp[] = [];
+  for (let index = 0; index < floors; index++) {
+    const surfaceY = slabYOf(plan, index) + 1;
+    for (const item of plan.floors[index]!.items) {
+      if (item.kind !== 'furnish') continue;
+      const piece = furnishingById(item.itemId);
+      const cells = furnishingCells(piece, item.x, item.z, item.facing);
+      if (details.length + cells.length > IR_LIMITS.maxDetailOps - 8) {
+        dropped++;
+        continue;
+      }
+      for (const cell of cells) {
+        details.push({
+          op: 'set',
+          at: [cell.x - origin.x, surfaceY + cell.y, cell.z - origin.z],
+          block: cell.block,
+        });
+      }
+    }
+  }
+
   if (dropped > 0) {
     warnings.push(
       `${dropped} item${dropped === 1 ? '' : 's'} were left out — a plan can compile to at most ` +
@@ -375,6 +403,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
     },
     palette: paletteFor(plan.kitId),
     components,
+    ...(details.length > 0 ? { details } : {}),
   };
 
   return { program, origin, warnings };

@@ -34,7 +34,8 @@ export type ItemKind =
   | 'stair'
   | 'opening'
   | 'platform'
-  | 'column';
+  | 'column'
+  | 'furnish';
 
 /** Min corner plus size, in blocks. `w` runs along x, `d` along z. */
 export interface Rect {
@@ -162,6 +163,21 @@ export interface ColumnItem {
   role?: string;
 }
 
+/**
+ * A furnishing from the catalogue — a chair, a table, a bed — placed at a cell.
+ *
+ * `x`/`z` is the min corner of its footprint and `facing` turns the whole piece, blocks and
+ * footprint together. The catalogue (furniture.ts) owns what each `itemId` builds.
+ */
+export interface FurnishItem {
+  kind: 'furnish';
+  id: string;
+  x: number;
+  z: number;
+  facing: Face;
+  itemId: string;
+}
+
 export type PlanItem =
   | RoomItem
   | WallItem
@@ -170,7 +186,8 @@ export type PlanItem =
   | StairItem
   | OpeningItem
   | PlatformItem
-  | ColumnItem;
+  | ColumnItem
+  | FurnishItem;
 
 export interface Floor {
   id: string;
@@ -336,6 +353,10 @@ export function createPlatform(rect: Rect, options: Partial<PlatformItem> = {}):
   return normalizeItem({ kind: 'platform', id: planId('plat'), rect, raise: 1, ...options }) as PlatformItem;
 }
 
+export function createFurnish(x: number, z: number, options: Partial<FurnishItem> = {}): FurnishItem {
+  return normalizeItem({ kind: 'furnish', id: planId('furnish'), x, z, facing: 'south', itemId: 'chair', ...options }) as FurnishItem;
+}
+
 export function createColumn(x: number, z: number, options: Partial<ColumnItem> = {}): ColumnItem {
   return normalizeItem({ kind: 'column', id: planId('col'), x, z, size: 1, ...options }) as ColumnItem;
 }
@@ -481,6 +502,18 @@ export function normalizeItem(raw: unknown, site: { x: number; z: number } = DEF
         z: clampInt(item.z, 0, site.z - 1, 0),
         size: clampInt(item.size, 1, 4, 1),
         role: optionalRole(item.role),
+      };
+
+    case 'furnish':
+      return {
+        kind: 'furnish',
+        id,
+        x: clampInt(item.x, 0, site.x - 1, 0),
+        z: clampInt(item.z, 0, site.z - 1, 0),
+        facing: isFace(item.facing) ? item.facing : 'south',
+        // An id the catalogue no longer carries falls back to its first entry at read time,
+        // so a plan from a newer version degrades to *a* piece rather than to nothing.
+        itemId: typeof item.itemId === 'string' && item.itemId ? item.itemId : 'chair',
       };
 
     default:

@@ -42,7 +42,8 @@ import {
 } from './geometry.js';
 import { selectionBounds } from './arrange.js';
 import { Dimensions, SizeBadge } from './Dimensions.js';
-import { floorHeight,
+import { furnishingById, furnishingFootprint } from './furniture.js';
+import { createFurnish, floorHeight,
   createColumn,
   createDoor,
   createOpening,
@@ -476,6 +477,14 @@ export function PlanCanvas({
       onCreate(item);
       onSelect(item.id);
       onNotice(null);
+      return;
+    }
+
+    if (tool === 'furnish') {
+      const item = createFurnish(at.x, at.z);
+      onCreate(item);
+      onSelect(item.id);
+      onNotice('Placed. Pick the piece and turn it in the inspector.');
     }
   }
 
@@ -941,6 +950,7 @@ function ghostFor(
   }
   if (tool === 'stair') return stairFootprint(at.x, at.z, 'south', 2, plan.storeyHeight);
   if (tool === 'column') return { x: at.x, z: at.z, w: 1, d: 1 };
+  if (tool === 'furnish') return furnishingFootprint(furnishingById('chair'), at.x, at.z, 'south');
   return null;
 }
 
@@ -1072,6 +1082,30 @@ function ItemShape({
       return (
         <rect x={item.x} y={item.z} width={item.size} height={item.size} className={`${className} plan__column`} />
       );
+
+    case 'furnish': {
+      // A furnishing draws as its footprint with the piece's initial letter and a facing
+      // tick — enough to read the room without pretending the plan is a render.
+      const piece = furnishingById(item.itemId);
+      const rect = furnishingFootprint(piece, item.x, item.z, item.facing);
+      const cx = rect.x + rect.w / 2;
+      const cz = rect.z + rect.d / 2;
+      return (
+        <g>
+          <rect
+            x={rect.x + 0.1}
+            y={rect.z + 0.1}
+            width={rect.w - 0.2}
+            height={rect.d - 0.2}
+            rx={0.15}
+            className={`${className} plan__furnish`}
+          />
+          <text x={cx} y={cz} className="plan__furnish-glyph" textAnchor="middle" dominantBaseline="central" fontSize={Math.min(rect.w, rect.d) * 0.6}>
+            {piece.label[0]}
+          </text>
+        </g>
+      );
+    }
   }
 }
 

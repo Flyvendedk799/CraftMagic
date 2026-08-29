@@ -13,6 +13,7 @@
 
 import type { Face } from '@craftmagic/core';
 import { OVERRIDE_ROLES } from './kits.js';
+import { FURNISHINGS } from './furniture.js';
 import { floorHeight, type LayoutPlan, type PlanItem, type PlanAxis } from './plan.js';
 
 const FACES: Face[] = ['north', 'east', 'south', 'west'];
@@ -204,6 +205,24 @@ export function Inspector({
           <NumberField label="Size" value={item.size} min={1} max={4} onChange={(size) => onChange({ ...item, size })} />
           <PositionFields plan={plan} x={item.x} z={item.z} onChange={(x, z) => onChange({ ...item, x, z })} />
           <RoleField label="Material" value={item.role ?? 'frame'} onChange={(role) => onChange({ ...item, role })} />
+        </>
+      )}
+
+      {item.kind === 'furnish' && (
+        <>
+          <ChoiceField
+            label="Piece"
+            value={item.itemId}
+            options={FURNISHINGS.map((piece) => ({ value: piece.id, label: piece.label }))}
+            onChange={(itemId) => onChange({ ...item, itemId })}
+          />
+          <ChoiceField
+            label="Faces"
+            value={item.facing}
+            options={FACES.map((face) => ({ value: face, label: face }))}
+            onChange={(facing) => onChange({ ...item, facing: facing as Face })}
+          />
+          <PositionFields plan={plan} x={item.x} z={item.z} onChange={(x, z) => onChange({ ...item, x, z })} />
         </>
       )}
 

@@ -388,6 +388,36 @@ describe('expand — error reporting feeds the repair loop', () => {
 		expect(result.grid.size.x).toBeLessThanOrEqual(256);
 	});
 
+	// A model can get a field's *shape* wrong, not just its values, and the expander is the
+	// one place that must survive it: throwing here lost the whole generation to a TypeError
+	// with no issue for the repair round to act on.
+	it('reports a details field that is not a list, and still draws the components', () => {
+		const result = expand(
+			withComponents([{ type: 'box', pos: [0, 0, 0], size: [2, 1, 1], fill: { type: 'solid', role: 'a' } }], {
+				details: 'lanterns on the corner posts' as never,
+			}),
+		);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({ path: 'details', code: 'BAD_STATE' }),
+		);
+		expect(result.blockCount).toBe(2);
+	});
+
+	it('reports a components field that is not a list rather than throwing', () => {
+		const result = expand(withComponents('a stone cottage' as never));
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({ path: 'components', code: 'BAD_STATE' }),
+		);
+		expect(result.blockCount).toBe(0);
+	});
+
+	it('reports a palette role that is neither a block id nor a list of choices', () => {
+		const result = expand(withComponents([], { palette: { a: { block: 'minecraft:stone' } as never } }));
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({ path: 'palette.a', code: 'BAD_STATE' }),
+		);
+	});
+
 	it('rejects an oversized detail fill, pointing at the right op', () => {
 		const result = expand(
 			withComponents([], { details: [{ op: 'fill', from: [0, 0, 0], to: [8, 8, 8], block: 'minecraft:stone' }] }),

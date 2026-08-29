@@ -93,6 +93,12 @@ export interface BlockRefProblem {
 
 /** Validate a reference against the registry. Returns null when it is usable. */
 export function validateBlockRef(ref: BlockRef): BlockRefProblem | null {
+	// Callers hand this straight out of a generated program, so it is not always a string.
+	// Saying so beats letting `parseBlockRef` fail on `.trim` and reporting that instead.
+	if (typeof ref !== 'string') {
+		return { code: 'BAD_STATE', message: `a block must be an id like "stone", not ${JSON.stringify(ref) ?? typeof ref}` };
+	}
+
 	let parsed: ParsedBlock;
 	try {
 		parsed = parseBlockRef(ref);

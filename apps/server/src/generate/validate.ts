@@ -117,8 +117,15 @@ export function schemaIssues(program: unknown): ExpandIssue[] {
 		add(path, `${path} ${error.message ?? 'is invalid'}${describeParams(error)}`);
 	}
 
+	// Errors under `/details` are skipped above so the per-op branch can attribute them, which
+	// left one gap: a `details` that is not a list at all had its own error skipped too and no
+	// branch to report it, so a program with `details` as a string produced no complaint here
+	// and then broke the expander. Details are optional, so only a present one is checked.
 	const details = (program as { details?: unknown }).details;
 	if (Array.isArray(details)) walkDetails(details, add);
+	else if (details !== undefined && details !== null) {
+		add('details', 'details must be an array of { op: "set" | "fill" | "clear", ... } objects');
+	}
 
 	// Components, attributed to the branch each one's own `type` names.
 	const components = (program as { components?: unknown }).components;

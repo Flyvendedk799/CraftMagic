@@ -73,7 +73,7 @@ export function expand(program: BuildProgram, options: ExpandOptions = {}): Expa
 	validatePaletteBlocks(program, errors);
 
 	const rootBrush = new Brush(canvas, IDENTITY_FRAME);
-	const components = program.components ?? [];
+	const components = listOf(program.components, 'components', errors);
 
 	if (components.length > LIMITS.maxComponents) {
 		warnings.push({
@@ -90,7 +90,7 @@ export function expand(program: BuildProgram, options: ExpandOptions = {}): Expa
 		drawComponent(rootBrush, component, path, path, ctx);
 	});
 
-	applyDetails(rootBrush, program.details ?? [], ctx);
+	applyDetails(rootBrush, listOf(program.details, 'details', errors), ctx);
 
 	// Roles referenced but never defined would silently draw nothing, so surface them once
 	// at the end rather than per-block.
@@ -220,6 +220,35 @@ interface ExpandContext {
 	parts: PartRegistry;
 }
 
+/**
+ * The list a program was supposed to give us, or an empty one plus an error saying so.
+ *
+ * A generated program is model output, so a field can be the wrong *shape* and not merely
+ * the wrong value — `details` arriving as a sentence describing the trim rather than as ops
+ * is a real thing a model does. Reading `.length` off that string and then calling
+ * `.forEach` on the slice threw a `TypeError` out of `expand` itself, which no caller
+ * expects: the pipeline lost the whole generation to "details.slice(...).forEach is not a
+ * function" instead of feeding a repairable complaint back to the model. Every other
+ * malformed thing here is reported and skipped, and so is this.
+ */
+function listOf<T>(value: readonly T[] | undefined, path: string, errors: ExpandIssue[]): readonly T[] {
+	if (value === undefined || value === null) return [];
+	if (Array.isArray(value)) return value;
+	errors.push({
+		path,
+		code: 'BAD_STATE',
+		message: `"${path}" must be an array; got ${describeShape(value)}`,
+	});
+	return [];
+}
+
+function describeShape(value: unknown): string {
+	if (value === null) return 'null';
+	if (typeof value === 'object') return 'an object';
+	if (typeof value === 'string') return 'a string';
+	return `a ${typeof value}`;
+}
+
 function clampSize(
 	size: { x: number; y: number; z: number } | undefined,
 	errors: ExpandIssue[],
@@ -258,7 +287,17 @@ function normalizeParams(
 
 function validatePaletteBlocks(program: BuildProgram, errors: ExpandIssue[]): void {
 	for (const [role, entry] of Object.entries(program.palette ?? {})) {
-		const refs = typeof entry === 'string' ? [entry] : entry.map((e) => e.block);
+		// Same reasoning as {@link listOf}: a weighted role that came back as something other
+		// than a list of choices is a complaint, not a crash.
+		if (typeof entry !== 'string' && !Array.isArray(entry)) {
+			errors.push({
+				path: `palette.${role}`,
+				code: 'BAD_STATE',
+				message: `palette role "${role}" must be a block id or a list of weighted choices; got ${describeShape(entry)}`,
+			});
+			continue;
+		}
+		const refs = typeof entry === 'string' ? [entry] : entry.map((e) => e?.block);
 		for (const ref of refs) {
 			const problem = validateBlockRef(ref);
 			if (problem) {
@@ -928,7 +967,7 @@ function requireRole(role: string, path: string, ctx: ExpandContext): void {
 
 // --- details ------------------------------------------------------------
 
-function applyDetails(brush: Brush, details: DetailOp[], ctx: ExpandContext): void {
+function applyDetails(brush: Brush, details: readonly DetailOp[], ctx: ExpandContext): void {
 	// Every detail op shares one part. They are accents by definition — the schema caps a
 	// single fill at 512 blocks and calls them "small accents only" — so five thousand parts
 	// named `details[0]`…`details[4999]` would bury the handful of parts that describe the

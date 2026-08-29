@@ -101,9 +101,11 @@ describe('generateBuild — from a picture', () => {
 			size: 'tiny',
 		});
 
-		expect(seen[0]!.text).toContain('about 12 blocks');
-		// The hut is 8 blocks across, which already fits, so nothing is scaled.
-		expect(result.program.scale).toBeUndefined();
+		expect(seen[0]!.text).toContain('20–150 blocks');
+		// The hut is a solid 8-cube — 512 blocks, which is above what "tiny" asks for, so the
+		// picture build gets fitted exactly like a written one.
+		expect(result.program.scale).toBeDefined();
+		expect(result.expansion.blockCount).toBeLessThanOrEqual(150);
 	});
 
 	it('says nothing about pictures when there is no picture', async () => {

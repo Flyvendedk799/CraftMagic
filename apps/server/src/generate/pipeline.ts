@@ -13,10 +13,10 @@
  */
 
 import {
+	blockBudget,
 	expand,
-	fitScale,
+	fitToBudget,
 	isScaled,
-	sizeTarget,
 	type BuildProgram,
 	type ExpandIssue,
 	type ExpandResult,
@@ -222,19 +222,28 @@ export async function generateBuild(
 		throw new GenerationError(`the generated program produced an empty build — ${detail}`, expansion.errors);
 	}
 
-	// The size the user asked for is applied here, once the program is known to build, and a
-	// refine keeps whatever scale the build already had — the model is never shown it, and a
-	// build that changed size because somebody asked for a balcony would be a surprise.
-	const scale = options.refineOf
-		? options.refineOf.scale
-		: fitScale(expansion.grid.size, sizeTarget(options.size));
-
-	if (isScaled(scale)) {
-		program = { ...program, scale };
-		// Re-expanded rather than reported at its full size: the block count is what the user is
-		// about to see on screen, and the warnings are the ones that build actually produced.
-		const scaled = expand(program);
-		if (scaled.blockCount > 0) expansion = scaled;
+	// The size the user asked for is applied here, once the program is known to build.
+	//
+	// A size is a number of *blocks*, and how a build's block count follows its scale depends
+	// on whether it is a solid mass or a shell — so the fitter measures instead of predicting,
+	// and hands back the expansion it measured. A refine keeps whatever scale the build already
+	// had: the model is never shown it, and a build that changed size because somebody asked
+	// for a balcony would be a surprise.
+	if (options.refineOf) {
+		const carried = options.refineOf.scale;
+		if (isScaled(carried)) {
+			program = { ...program, scale: carried };
+			const scaled = expand(program);
+			if (scaled.blockCount > 0) expansion = scaled;
+		}
+	} else {
+		const fitted = fitToBudget(program, blockBudget(options.size), expansion);
+		if (fitted.scale) {
+			program = { ...program, scale: fitted.scale };
+			// The count the user is about to see on screen, and the warnings that build actually
+			// produced — not the ones the full-size version would have.
+			expansion = fitted.expansion;
+		}
 	}
 
 	options.onProgress?.({ stage: 'done', blockCount: expansion.blockCount });

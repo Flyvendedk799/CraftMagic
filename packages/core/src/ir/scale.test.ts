@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AxisScale, fitScale, sizeTarget, SIZE_OPTIONS, isSizeChoice } from './scale.js';
+import { AxisScale, blockBudget, isSizeChoice, SIZE_OPTIONS } from './scale.js';
 
 /**
  * How far off perfect symmetry an axis is allowed to be.
@@ -231,57 +231,18 @@ describe('AxisScale — free lengths and offsets', () => {
 	});
 });
 
-describe('fitScale', () => {
-	it('leaves a build that already fits alone', () => {
-		expect(fitScale({ x: 20, y: 12, z: 14 }, 32)).toBeUndefined();
-		expect(fitScale({ x: 20, y: 12, z: 14 }, null)).toBeUndefined();
-	});
-
-	it('shrinks a big design to the size that was asked for', () => {
-		// 60 blocks tall against a 32-block target: 53% rounded down to a slider step.
-		expect(fitScale({ x: 30, y: 60, z: 30 }, 32)).toEqual({ x: 50, y: 50, z: 50 });
-	});
-
-	it('scales all three axes together, so proportions survive', () => {
-		const scale = fitScale({ x: 80, y: 20, z: 40 }, 20)!;
-		expect(scale.x).toBe(scale.y);
-		expect(scale.y).toBe(scale.z);
-	});
-
-	it('stops at a quarter, however small the target', () => {
-		expect(fitScale({ x: 200, y: 10, z: 10 }, 4)).toEqual({ x: 25, y: 25, z: 25 });
-	});
-
-	it('lands on a value the editor slider can actually show', () => {
-		for (const largest of [21, 33, 47, 68, 91, 150]) {
-			for (const option of SIZE_OPTIONS) {
-				const scale = fitScale({ x: largest, y: largest, z: largest }, option.blocks);
-				if (!scale) continue;
-				expect(scale.x % 5, `${largest} -> ${option.id}`).toBe(0);
-				expect(scale.x).toBeGreaterThanOrEqual(25);
-				expect(scale.x).toBeLessThan(100);
-			}
-		}
-	});
-});
-
 describe('size choices', () => {
-	it('names a target for every choice but the natural one', () => {
+	it('gives every choice but the natural one a block budget', () => {
 		for (const option of SIZE_OPTIONS) {
-			expect(sizeTarget(option.id)).toBe(option.blocks);
+			expect(blockBudget(option.id)).toBe(option.blocks);
 			expect(isSizeChoice(option.id)).toBe(true);
 		}
-		expect(sizeTarget('natural')).toBeNull();
+		expect(blockBudget('natural')).toBeNull();
 	});
 
 	it('rejects anything that is not one', () => {
 		expect(isSizeChoice('enormous')).toBe(false);
 		expect(isSizeChoice(32)).toBe(false);
-		expect(sizeTarget(undefined)).toBeNull();
-	});
-
-	it('gets bigger as the labels do', () => {
-		const blocks = SIZE_OPTIONS.map((o) => o.blocks).filter((b): b is number => b !== null);
-		expect(blocks).toEqual([...blocks].sort((a, b) => a - b));
+		expect(blockBudget(undefined)).toBeNull();
 	});
 });

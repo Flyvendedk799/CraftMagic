@@ -14,7 +14,13 @@
  * list a block the expander would reject.
  */
 
-import { allBlocks, LIMITS, sizeTarget, type SizeChoice } from '@craftmagic/core';
+import {
+	allBlocks,
+	describeBudget,
+	LIMITS,
+	SIZE_OPTIONS,
+	type SizeChoice,
+} from '@craftmagic/core';
 
 /**
  * A compact view of the palette: families and shapes, not 499 ids.
@@ -165,29 +171,36 @@ const QUALITY_RULES = `## Making it look good
   blocks; anything larger belongs in a component.`;
 
 /**
- * The size the user asked for, phrased as a target rather than as a budget.
+ * The size the user asked for, phrased as an ambition rather than as a cap.
  *
- * The distinction is the entire point. Told "make it 20 blocks", a model designs *down* to 20
- * blocks: it drops the corner posts, the base course and the window mullions, because there is
- * no room for them at that size, and what comes back is a flat little box. So the brief asks
- * for the structure at whatever size it needs to read properly and promises to shrink it
- * afterwards — which the expander can do faithfully, and which leaves the detail in the
- * program for anyone who drags the size slider back up.
+ * The distinction is the entire point. Told "make it 300 blocks", a model designs *down* to
+ * 300 blocks: it drops the corner posts, the base course and the window mullions, because
+ * there is no room for them at that size, and what comes back is a flat little box. So the
+ * brief asks for the structure at whatever size it needs to read properly and promises to
+ * shrink it afterwards — which the expander can do faithfully, and which leaves the detail in
+ * the program for anyone who drags the size slider back up.
+ *
+ * Blocks rather than dimensions, because that is the number a builder can picture: "a cottage
+ * or a small tower" and "300–800 blocks" describe the same thing to somebody who builds, where
+ * "32 blocks across" describes a tower and a barn equally badly.
  */
 export function sizeBrief(choice: SizeChoice | undefined): string | null {
-	const target = sizeTarget(choice);
-	if (target === null) return null;
+	const option = SIZE_OPTIONS.find((entry) => entry.id === choice);
+	if (!option?.blocks) return null;
+
+	const budget = option.blocks;
+	const room = budget.max === null ? `${budget.min * 2} or more` : `about ${budget.max}`;
 
 	return [
-		`Target size: about ${target} blocks in the structure's largest dimension.`,
+		`Target size: ${describeBudget(budget)} placed — ${option.example}.`,
 		``,
 		`Design it at whatever size it needs to look right, with every bit of the detail you`,
 		`would give it at that size — corner posts, a base course, window frames, roof trim.`,
-		`Do not simplify the design to hit the number. If the structure only reads properly at`,
-		`${target * 2} blocks, write it at ${target * 2} and it will be scaled down to fit;`,
-		`the detail stays in the program either way. Somewhere between ${target} and`,
-		`${target * 2} blocks is the useful range — much beyond that and shrinking loses the`,
-		`detail you spent components on.`,
+		`Do not simplify the design to hit the number: a smaller build is one that has fewer`,
+		`blocks, not one that has fewer ideas. If the structure only reads properly at ${room}`,
+		`blocks, write it that way and it will be scaled down to fit; the detail stays in the`,
+		`program either way. Overshooting by two or three times is fine. Overshooting by ten is`,
+		`not — past that, shrinking loses the detail you spent components on.`,
 	].join('\n');
 }
 

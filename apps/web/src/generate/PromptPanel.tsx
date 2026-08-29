@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { SIZE_OPTIONS, type SizeChoice } from '@craftmagic/core';
+import { describeSize, SIZE_OPTIONS, type SizeChoice } from '@craftmagic/core';
 import { useAuth } from '../library/auth.js';
 import type { Estimate, GenerationPhase, SpendSummary } from './useGeneration.js';
 
@@ -51,6 +51,10 @@ const EXAMPLES = [
  * "Small" does not buy a simpler structure — the model is asked for the same detailed one and
  * the build is scaled down to fit, so the detail is still in the program and dragging the
  * editor's size slider back to 100% shows it at full size.
+ *
+ * The sizes themselves are counted in blocks placed, which is the measure a builder already
+ * thinks in: a shrine is a hundred blocks and a castle is thousands, and neither of those is a
+ * fact about how many blocks wide it is.
  */
 const SIZE_NOTE = 'Detail is designed at full size, then scaled to fit — 100% on the size slider shows it all.';
 
@@ -178,7 +182,7 @@ export function PromptPanel({
                 aria-checked={size === option.id}
                 className={`prompt__size-option ${size === option.id ? 'prompt__size-option--on' : ''}`}
                 disabled={running}
-                title={option.hint}
+                title={describeSize(option)}
                 onClick={() => setSize(option.id)}
               >
                 {option.label}
@@ -186,7 +190,7 @@ export function PromptPanel({
             ))}
           </div>
           <p className="prompt__size-hint">
-            {SIZE_OPTIONS.find((option) => option.id === size)?.hint}
+            {describeSize(SIZE_OPTIONS.find((option) => option.id === size)!)}
             {size !== 'natural' && <span className="prompt__muted"> · {SIZE_NOTE}</span>}
           </p>
         </div>

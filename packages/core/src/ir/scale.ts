@@ -289,6 +289,12 @@ export function axisScales(base: Size3, target: Size3): Scale3 {
 /**
  * How big the finished build should be, chosen before anything is generated.
  *
+ * Measured in **placed blocks**, which is how a builder thinks about the size of a build: a
+ * shed is a hundred blocks and a castle is tens of thousands, and neither of those is a fact
+ * about how many blocks wide it is. A footprint measurement gets this wrong in both
+ * directions — a 30-block tower and a 30-block barn are nothing like the same amount of
+ * building — and it is not a number anyone can picture from the word "medium".
+ *
  * A size choice is deliberately *not* a brief for how much detail to design. The model is
  * asked to write the structure at whatever size it needs to read properly, and the build is
  * then scaled down to the chosen size — so a small cottage is the detailed cottage seen small,
@@ -297,30 +303,52 @@ export function axisScales(base: Size3, target: Size3): Scale3 {
  */
 export type SizeChoice = 'natural' | 'tiny' | 'small' | 'medium' | 'large' | 'huge';
 
+/** How many blocks a size choice asks for. `max` is null on the open-ended top end. */
+export interface BlockBudget {
+  min: number;
+  max: number | null;
+}
+
 export interface SizeOption {
   id: SizeChoice;
   label: string;
-  /** Target for the build's largest dimension, in blocks. Null means "however big it comes". */
-  blocks: number | null;
-  hint: string;
+  /** The block count this size means. Null on "natural", which asks for nothing. */
+  blocks: BlockBudget | null;
+  /** What a build of this size is, in a builder's words — the anchor for the number. */
+  example: string;
 }
 
 export const SIZE_OPTIONS: readonly SizeOption[] = [
-  { id: 'natural', label: 'Natural', blocks: null, hint: 'Whatever size the design wants' },
-  { id: 'tiny', label: 'Tiny', blocks: 12, hint: 'A hut or a shrine — about 12 blocks' },
-  { id: 'small', label: 'Small', blocks: 20, hint: 'A cottage — about 20 blocks' },
-  { id: 'medium', label: 'Medium', blocks: 32, hint: 'A house or tower — about 32 blocks' },
-  { id: 'large', label: 'Large', blocks: 52, hint: 'A hall or keep — about 52 blocks' },
-  { id: 'huge', label: 'Huge', blocks: 80, hint: 'A castle or cathedral — about 80 blocks' },
+  { id: 'natural', label: 'Natural', blocks: null, example: 'whatever the design wants' },
+  { id: 'tiny', label: 'Tiny', blocks: { min: 20, max: 150 }, example: 'a shrine or a market stall' },
+  { id: 'small', label: 'Small', blocks: { min: 150, max: 300 }, example: 'a hut or a watchpost' },
+  { id: 'medium', label: 'Medium', blocks: { min: 300, max: 800 }, example: 'a cottage or a small tower' },
+  { id: 'large', label: 'Large', blocks: { min: 800, max: 2_000 }, example: 'a house, a hall or a keep' },
+  { id: 'huge', label: 'Huge', blocks: { min: 2_000, max: null }, example: 'a castle or a cathedral' },
 ];
 
 export function isSizeChoice(value: unknown): value is SizeChoice {
   return typeof value === 'string' && SIZE_OPTIONS.some((option) => option.id === value);
 }
 
-/** The largest dimension a choice asks for, or null when it asks for nothing. */
-export function sizeTarget(choice: SizeChoice | undefined): number | null {
+/** The block count a choice asks for, or null when it asks for nothing. */
+export function blockBudget(choice: SizeChoice | undefined): BlockBudget | null {
   return SIZE_OPTIONS.find((option) => option.id === choice)?.blocks ?? null;
+}
+
+/** A block budget as a person reads it: "300–800 blocks", "2,000 blocks or more". */
+export function describeBudget(budget: BlockBudget): string {
+  const count = (n: number) => n.toLocaleString('en-US');
+  return budget.max === null
+    ? `${count(budget.min)} blocks or more`
+    : `${count(budget.min)}–${count(budget.max)} blocks`;
+}
+
+/** One line naming a size, for a chooser: "a cottage or a small tower · 300–800 blocks". */
+export function describeSize(option: SizeOption): string {
+  return option.blocks === null
+    ? 'Whatever size the design wants'
+    : `${option.example} · ${describeBudget(option.blocks)}`;
 }
 
 /**
@@ -332,28 +360,3 @@ export function sizeTarget(choice: SizeChoice | undefined): number | null {
  * to shrink, but not to dissolve.
  */
 export const MIN_FIT_PERCENT = 25;
-
-/**
- * The scale that brings a program down to a chosen size, or undefined if it already fits.
- *
- * Only ever shrinks. A design smaller than the target is left alone rather than blown up:
- * enlarging cannot add the detail the extra room wants, and a chunky 2x2-per-block cottage is
- * a worse answer than a small one. Growing is what the model was asked for in the brief, and
- * what the editor's slider is for afterwards.
- *
- * Snapped down to a multiple of 5 so the value lands exactly on the scale slider's steps —
- * a generated build opens with the slider on its real position rather than between two of them.
- */
-export function fitScale(size: Size3, target: number | null): ScalePercent | undefined {
-  if (target === null || !Number.isFinite(target) || target <= 0) return undefined;
-
-  const largest = Math.max(size.x, size.y, size.z);
-  if (largest <= target) return undefined;
-
-  const wanted = (target / largest) * 100;
-  // Rounded down, so "about 20 blocks" is never quietly 23.
-  const stepped = Math.floor(wanted / 5) * 5;
-  const percent = Math.max(MIN_FIT_PERCENT, Math.min(95, stepped));
-
-  return { x: percent, y: percent, z: percent };
-}

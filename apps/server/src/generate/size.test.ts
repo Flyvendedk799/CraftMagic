@@ -77,12 +77,22 @@ describe('sizeBrief', () => {
 		expect(sizeBrief(undefined)).toBeNull();
 	});
 
-	it('asks for a target, and asks for the detail not to be traded away for it', () => {
+	it('asks for a number of blocks, which is the size a builder can picture', () => {
 		const brief = sizeBrief('small')!;
-		expect(brief).toContain('about 20 blocks');
+		expect(brief).toContain('150–300 blocks placed');
+		// Paired with an example, because a number on its own is not a picture of anything.
+		expect(brief).toContain('a hut or a watchpost');
+	});
+
+	it('asks for the detail not to be traded away for the number', () => {
+		const brief = sizeBrief('medium')!;
 		expect(brief).toContain('Do not simplify the design');
 		// The escape hatch is explicit: a bigger program is fine and will be scaled.
 		expect(brief).toContain('scaled down');
+	});
+
+	it('has no ceiling to quote for the open-ended top size', () => {
+		expect(sizeBrief('huge')!).toContain('2,000 blocks or more');
 	});
 });
 
@@ -94,11 +104,24 @@ describe('generateBuild — the size choice', () => {
 			size: 'medium',
 		});
 
-		// 60 blocks against a 32-block target.
-		expect(result.program.scale).toEqual({ x: 50, y: 50, z: 50 });
-		expect(result.expansion.grid.size).toEqual({ x: 10, y: 30, z: 10 });
+		// The tower is a solid 20x60x20 — 24,000 blocks, far above what "medium" asks for.
+		// What matters is where it lands, not which percentage got it there.
+		expect(result.expansion.blockCount).toBeGreaterThan(300);
+		expect(result.expansion.blockCount).toBeLessThanOrEqual(800);
+		expect(result.program.scale).toBeDefined();
 		// And the model was told what it was aiming at.
-		expect(asked[0]).toContain('about 32 blocks');
+		expect(asked[0]).toContain('300–800 blocks');
+	});
+
+	it('reports the size the user is about to see, not the one that was designed', async () => {
+		const { provider } = fakeProvider(tall);
+		const result = await generateBuild({ provider, ledger: ledger() }, {
+			prompt: 'a watchtower',
+			size: 'small',
+		});
+
+		const percent = result.program.scale!.x;
+		expect(result.expansion.grid.size.y).toBe(Math.round((60 * percent) / 100));
 	});
 
 	it('leaves the program alone when the size is natural', async () => {
@@ -120,7 +143,22 @@ describe('generateBuild — the size choice', () => {
 			size: 'huge',
 		});
 
+		// 24,000 blocks is comfortably "huge", which has no ceiling anyway.
 		expect(result.program.scale).toBeUndefined();
+	});
+
+	it('leaves a design smaller than the size asked for where it is', async () => {
+		// Enlarging cannot add the detail the extra room wants. The brief is what aims the
+		// model at the top end of a size; the fitter only ever shrinks.
+		const small: BuildProgram = { ...tall, size: { x: 4, y: 4, z: 4 } };
+		const { provider } = fakeProvider(small);
+		const result = await generateBuild({ provider, ledger: ledger() }, {
+			prompt: 'a watchtower',
+			size: 'huge',
+		});
+
+		expect(result.program.scale).toBeUndefined();
+		expect(result.expansion.blockCount).toBeLessThan(2_000);
 	});
 
 	it('reports the block count of the build the user will actually see', async () => {

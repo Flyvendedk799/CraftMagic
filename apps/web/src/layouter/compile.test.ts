@@ -134,6 +134,41 @@ describe('compilePlan', () => {
     expect(blockAt(grid, 4, 3, 3)).toBe('minecraft:air');
   });
 
+  it('gives each storey its own height when one asks for it', () => {
+    const tall = createPlan({
+      name: 'Hall below, rooms above',
+      roof: 'flat',
+      foundation: 1,
+      storeyHeight: 4,
+      wallThickness: 1,
+      floors: [
+        {
+          ...createFloor(floorName(0), [
+            createRoom({ x: 10, z: 10, w: 9, d: 9 }),
+            createStair(12, 12, 'south', { width: 2 }),
+          ]),
+          height: 7,
+        },
+        createFloor(floorName(1), [createRoom({ x: 10, z: 10, w: 9, d: 9 })]),
+      ],
+    });
+    const { grid, errors } = build(tall);
+    expect(errors).toEqual([]);
+
+    // Ground storey is 7 high: its slab at y=1, the upper slab at y=8, walls clear between.
+    expect(blockAt(grid, 1, 1, 1)).toBe('minecraft:spruce_planks');
+    for (let y = 2; y <= 7; y++) expect(blockAt(grid, 7, y, 7)).toBe('minecraft:air');
+    expect(blockAt(grid, 7, 8, 7)).toBe('minecraft:spruce_planks');
+    // And the stair climbs to the taller storey: treads exist high above the default's reach.
+    let highTreads = 0;
+    for (let z = 0; z < grid.size.z; z++) {
+      for (let x = 0; x < grid.size.x; x++) {
+        if (blockAt(grid, x, 7, z).includes('minecraft:oak_stairs')) highTreads++;
+      }
+    }
+    expect(highTreads).toBeGreaterThan(0);
+  });
+
   it('lets the plan choose the roof pitch and overhang', () => {
     const classic = compilePlan(cottage({ roof: 'gable' }));
     const steep = compilePlan(cottage({ roof: 'gable', roofPitch: 'steep' }));

@@ -175,7 +175,31 @@ export type PlanItem =
 export interface Floor {
   id: string;
   name: string;
+  /**
+   * This storey's own height in blocks, overriding the building's `storeyHeight`.
+   *
+   * Absent means "the building's" — which is why it is optional rather than copied in: change
+   * the building height and every storey that never asked for its own follows along.
+   */
+  height?: number;
   items: PlanItem[];
+}
+
+/** The height storey `index` actually builds at. */
+export function floorHeight(plan: LayoutPlan, index: number): number {
+  return plan.floors[index]?.height ?? plan.storeyHeight;
+}
+
+/** Build-space y of storey `index`'s floor slab. */
+export function slabY(plan: LayoutPlan, index: number): number {
+  let y = plan.foundation;
+  for (let i = 0; i < index; i++) y += floorHeight(plan, i);
+  return y;
+}
+
+/** Build-space y of the roof deck — the ceiling above the top storey. */
+export function deckY(plan: LayoutPlan): number {
+  return slabY(plan, plan.floors.length);
 }
 
 export type RoofStyle = 'flat' | 'gable' | 'hip' | 'none';
@@ -476,6 +500,11 @@ export function normalizeFloor(raw: unknown, index: number, site: { x: number; z
   return {
     id: typeof floor.id === 'string' && floor.id ? floor.id : planId('floor'),
     name: typeof floor.name === 'string' && floor.name.trim() ? floor.name.slice(0, 40) : floorName(index),
+    // Absent stays absent: an override is a choice, and coercing every floor to a number
+    // would freeze the building height into each one.
+    ...(typeof floor.height === 'number'
+      ? { height: clampInt(floor.height, LIMITS.minStorey, LIMITS.maxStorey, 5) }
+      : {}),
     items: items
       .slice(0, LIMITS.maxItemsPerFloor)
       .map((item) => normalizeItem(item, site))

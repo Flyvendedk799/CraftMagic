@@ -25,17 +25,18 @@
  * what is actually drawn, pads it for the roof overhang, and emits a program that starts at
  * the building's own corner.
  *
- * Vertical convention, for the whole file:
+ * Vertical convention, for the whole file (heights are per storey now, so the arithmetic
+ * lives in `slabY`/`deckY` in plan.ts rather than in a multiplication here):
  *
- *     y = 0                          bottom of the foundation
- *     y = foundation + i*storey      storey i's floor slab (one block)
- *     y = foundation + i*storey + 1  storey i's walking surface, and the base of its walls
- *     y = foundation + n*storey      the top ceiling — the roof deck
+ *     y = 0                     bottom of the foundation
+ *     y = slabY(i)              storey i's floor slab (one block)
+ *     y = slabY(i) + 1          storey i's walking surface, and the base of its walls
+ *     y = deckY                 the top ceiling — the roof deck
  */
 
 import { LIMITS as IR_LIMITS, type BuildProgram, type Component } from '@craftmagic/core';
 import { paletteFor } from './kits.js';
-import type { LayoutPlan, PlanItem, Rect, RoomItem } from './plan.js';
+import { deckY as roofDeckY, floorHeight, slabY as slabYOf, type LayoutPlan, type PlanItem, type Rect, type RoomItem } from './plan.js';
 import { planFootprint, rectBottom, rectRight, stairFootprint, unionRect } from './geometry.js';
 
 export interface CompileResult {
@@ -60,7 +61,6 @@ const MAX_COMPONENTS = IR_LIMITS.maxComponents - 8;
 
 export function compilePlan(plan: LayoutPlan): CompileResult {
   const warnings: string[] = [];
-  const storey = plan.storeyHeight;
   const floors = plan.floors.length;
 
   const drawn = planFootprint(plan);
@@ -74,7 +74,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
 
   const origin = { x: footprint.x, z: footprint.z };
 
-  const deckY = plan.foundation + floors * storey;
+  const deckY = roofDeckY(plan);
   const roofHeight = roofRise(plan, footprint);
   // Nothing drawn means nothing to be tall: a plan with no rooms compiles to a single empty
   // cell rather than to a storey-high sliver of air, which is what the preview would frame.
@@ -115,7 +115,8 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   }
 
   for (let index = 0; index < floors; index++) {
-    const slabY = plan.foundation + index * storey;
+    const storey = floorHeight(plan, index);
+    const slabY = slabYOf(plan, index);
     const wallY = slabY + 1;
     const wallHeight = storey - 1;
     const ceilingY = slabY + storey;
@@ -209,7 +210,8 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   // or four.
 
   for (let index = 0; index < floors; index++) {
-    const slabY = plan.foundation + index * storey;
+    const storey = floorHeight(plan, index);
+    const slabY = slabYOf(plan, index);
     const [ox, oz] = [origin.x, origin.z];
 
     for (const item of plan.floors[index]!.items) {
@@ -235,7 +237,8 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   // --- pass 3: apertures -------------------------------------------------
 
   for (let index = 0; index < floors; index++) {
-    const wallY = plan.foundation + index * storey + 1;
+    const storey = floorHeight(plan, index);
+    const wallY = slabYOf(plan, index) + 1;
     const [ox, oz] = [origin.x, origin.z];
 
     for (const item of plan.floors[index]!.items) {
@@ -329,7 +332,8 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   // carve painted afterwards would take the top step with it.
 
   for (let index = 0; index < floors; index++) {
-    const wallY = plan.foundation + index * storey + 1;
+    const storey = floorHeight(plan, index);
+    const wallY = slabYOf(plan, index) + 1;
     const [ox, oz] = [origin.x, origin.z];
 
     for (const item of plan.floors[index]!.items) {

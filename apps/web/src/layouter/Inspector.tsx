@@ -13,7 +13,7 @@
 
 import type { Face } from '@craftmagic/core';
 import { OVERRIDE_ROLES } from './kits.js';
-import type { LayoutPlan, PlanItem, PlanAxis } from './plan.js';
+import { floorHeight, type LayoutPlan, type PlanItem, type PlanAxis } from './plan.js';
 
 const FACES: Face[] = ['north', 'east', 'south', 'west'];
 
@@ -29,7 +29,7 @@ export interface InspectorProps {
 }
 
 export function Inspector({
-  plan,
+  plan: wholePlan,
   item,
   onChange,
   onDelete,
@@ -37,6 +37,8 @@ export function Inspector({
   onSendToFloor,
   floorIndex,
 }: InspectorProps) {
+  // Slider ceilings answer to the storey the item is on, not the building default.
+  const plan = { ...wholePlan, storeyHeight: floorHeight(wholePlan, floorIndex) };
   if (!item) {
     return (
       <p className="layouter__empty">

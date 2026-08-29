@@ -42,7 +42,7 @@ import {
 } from './geometry.js';
 import { selectionBounds } from './arrange.js';
 import { Dimensions, SizeBadge } from './Dimensions.js';
-import {
+import { floorHeight,
   createColumn,
   createDoor,
   createOpening,
@@ -119,7 +119,7 @@ type Drag =
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
 export function PlanCanvas({
-  plan,
+  plan: wholePlan,
   floorIndex,
   tool,
   selectedIds,
@@ -134,6 +134,14 @@ export function PlanCanvas({
   onHover,
   fitNonce = 0,
 }: PlanCanvasProps) {
+  // Every geometric read below wants the ACTIVE storey's height — a stair on a 7-block
+  // storey runs 7 treads, whatever the building default says. Folding the override into a
+  // plan view once keeps the ten call sites honest, and it cannot leak back into the
+  // document: this component only ever emits items, never a plan.
+  const plan = useMemo(
+    () => ({ ...wholePlan, storeyHeight: floorHeight(wholePlan, floorIndex) }),
+    [wholePlan, floorIndex],
+  );
   const svgRef = useRef<SVGSVGElement>(null);
   const [view, setView] = useState(() => ({ scale: 14, ox: 0, oz: 0 }));
   const [drag, setDrag] = useState<Drag | null>(null);

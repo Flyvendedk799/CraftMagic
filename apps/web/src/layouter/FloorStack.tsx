@@ -12,7 +12,13 @@
  * most tedious thing a floorplan tool can ask for.
  */
 
-import { createFloor, floorName, type LayoutPlan } from './plan.js';
+import { createFloor, floorName, LIMITS, type LayoutPlan } from './plan.js';
+
+/** The choices a storey can override the building height with. */
+const HEIGHTS = Array.from(
+  { length: LIMITS.maxStorey - LIMITS.minStorey + 1 },
+  (_, i) => LIMITS.minStorey + i,
+);
 
 export interface FloorStackProps {
   plan: LayoutPlan;
@@ -59,6 +65,18 @@ export function FloorStack({ plan, active, showBelow, onShowBelow, onSelect, onC
     });
   };
 
+  const setHeight = (index: number, raw: string) => {
+    const value = raw === '' ? undefined : Number.parseInt(raw, 10);
+    onChange({
+      ...plan,
+      floors: plan.floors.map((floor, i) => {
+        if (i !== index) return floor;
+        const { height: _old, ...rest } = floor;
+        return value === undefined ? rest : { ...rest, height: value };
+      }),
+    });
+  };
+
   return (
     <div className="floors">
       <ol className="floors__list">
@@ -90,6 +108,24 @@ export function FloorStack({ plan, active, showBelow, onShowBelow, onSelect, onC
           value={plan.floors[active]?.name ?? ''}
           onChange={(event) => rename(active, event.target.value)}
         />
+      </label>
+
+      {/* This storey's own height. "Building" is the absence of an override, so raising the
+          global height later still carries every storey that never asked for its own. */}
+      <label className="field">
+        <span className="field__label">Height</span>
+        <select
+          className="field__input"
+          value={plan.floors[active]?.height ?? ''}
+          onChange={(event) => setHeight(active, event.target.value)}
+        >
+          <option value="">Building ({plan.storeyHeight})</option>
+          {HEIGHTS.map((h) => (
+            <option key={h} value={h}>
+              {h} blocks — {h - 1} clear
+            </option>
+          ))}
+        </select>
       </label>
 
       <div className="floors__actions">

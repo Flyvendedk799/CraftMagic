@@ -57,6 +57,7 @@ import {
   addItem,
   countItems,
   findItem,
+  floorHeight,
   planId,
   removeItem,
   replaceItem,
@@ -591,13 +592,13 @@ export function LayouterPage() {
               count={selectedItems.length}
               onAlign={(mode) =>
                 arrange(
-                  alignOffsets(selectedItems, selectedIds, plan.wallThickness, plan.storeyHeight, mode),
+                  alignOffsets(selectedItems, selectedIds, plan.wallThickness, floorHeight(plan, activeFloor), mode),
                   'align',
                 )
               }
               onDistribute={(axis) =>
                 arrange(
-                  distributeOffsets(selectedItems, selectedIds, plan.wallThickness, plan.storeyHeight, axis),
+                  distributeOffsets(selectedItems, selectedIds, plan.wallThickness, floorHeight(plan, activeFloor), axis),
                   'space out',
                 )
               }

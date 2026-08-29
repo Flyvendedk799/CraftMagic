@@ -17,7 +17,7 @@
  * a tool that refused to show them would be unusable.
  */
 
-import type { LayoutPlan, PlanItem, Rect, RoomItem } from './plan.js';
+import { floorHeight, type LayoutPlan, type PlanItem, type Rect, type RoomItem } from './plan.js';
 import {
   containsRect,
   intersectRect,
@@ -108,7 +108,7 @@ export function validatePlan(plan: LayoutPlan): ValidationResult {
 
     for (const item of items) {
       if (item.kind === 'door' || item.kind === 'window') {
-        const footprint = itemFootprint(item, plan.wallThickness, plan.storeyHeight);
+        const footprint = itemFootprint(item, plan.wallThickness, floorHeight(plan, index));
         if (!runs.some((run) => overlapArea(runFootprint(run), footprint) > 0)) {
           issues.push({
             level: 'error',
@@ -120,7 +120,7 @@ export function validatePlan(plan: LayoutPlan): ValidationResult {
         }
       }
 
-      if (item.kind === 'window' && item.sill + item.height > plan.storeyHeight - 1) {
+      if (item.kind === 'window' && item.sill + item.height > floorHeight(plan, index) - 1) {
         issues.push({
           level: 'warning',
           code: 'window_tall',
@@ -130,7 +130,7 @@ export function validatePlan(plan: LayoutPlan): ValidationResult {
         });
       }
 
-      if (item.kind === 'door' && item.height > plan.storeyHeight - 1) {
+      if (item.kind === 'door' && item.height > floorHeight(plan, index) - 1) {
         issues.push({
           level: 'warning',
           code: 'door_tall',
@@ -141,7 +141,7 @@ export function validatePlan(plan: LayoutPlan): ValidationResult {
       }
 
       if (item.kind === 'stair') {
-        const run = stairFootprint(item.x, item.z, item.facing, item.width, plan.storeyHeight);
+        const run = stairFootprint(item.x, item.z, item.facing, item.width, floorHeight(plan, index));
         if (run.x < 0 || run.z < 0 || rectRight(run) > plan.site.x || rectBottom(run) > plan.site.z) {
           issues.push({
             level: 'error',
@@ -302,7 +302,7 @@ function reachabilityCheck(plan: LayoutPlan): FoundRoom[] {
       if (item.kind !== 'stair') continue;
       const foot = item.x + item.z * width;
       if (foot < 0 || foot >= cells || !visited[foot]) continue;
-      const run = stairFootprint(item.x, item.z, item.facing, item.width, plan.storeyHeight);
+      const run = stairFootprint(item.x, item.z, item.facing, item.width, floorHeight(plan, index));
       for (let z = run.z; z < rectBottom(run); z++) {
         for (let x = run.x; x < rectRight(run); x++) seeds.push({ x, z });
       }

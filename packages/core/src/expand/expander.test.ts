@@ -411,6 +411,40 @@ describe('expand — error reporting feeds the repair loop', () => {
 		expect(result.blockCount).toBe(0);
 	});
 
+	// A list can be the right shape but hold a wrong-shape element — a null padding slot is an
+	// ordinary thing a model emits. Reading `.type` off it threw out of `expand` for a top-level
+	// component, and aborted the whole group for a child; both must skip and report instead.
+	it('reports a null component element and still draws the valid siblings', () => {
+		const result = expand(
+			withComponents([
+				null as never,
+				{ type: 'box', pos: [0, 0, 0], size: [2, 1, 1], fill: { type: 'solid', role: 'a' } },
+			]),
+		);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({ path: 'components[0]', code: 'BAD_STATE' }),
+		);
+		expect(result.blockCount).toBe(2); // the good sibling still drew
+	});
+
+	it('reports a null group child and still draws the valid siblings', () => {
+		const result = expand(
+			withComponents([
+				{
+					type: 'group',
+					children: [
+						null as never,
+						{ type: 'box', pos: [0, 0, 0], size: [2, 1, 1], fill: { type: 'solid', role: 'a' } },
+					],
+				},
+			]),
+		);
+		expect(result.errors).toContainEqual(
+			expect.objectContaining({ path: 'components[0].children[0]', code: 'BAD_STATE' }),
+		);
+		expect(result.blockCount).toBe(2); // the group's good child still drew
+	});
+
 	it('reports a palette role that is neither a block id nor a list of choices', () => {
 		const result = expand(withComponents([], { palette: { a: { block: 'minecraft:stone' } as never } }));
 		expect(result.errors).toContainEqual(

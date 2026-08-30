@@ -324,6 +324,20 @@ function drawComponent(
 	partKey: string,
 	ctx: ExpandContext,
 ): void {
+	// A malformed program can put a non-object where a component belongs — a null padding slot,
+	// a stray string. `listOf` guarantees the array but not its elements, and the reads below
+	// (`component.type`) run before the try/catch, so a bad element would throw straight out of
+	// `expand`. Report it and skip, the same as every other wrong-shape field.
+	const raw = component as unknown;
+	if (raw === null || typeof raw !== 'object') {
+		ctx.errors.push({
+			path,
+			code: 'BAD_STATE',
+			message: `"${path}" must be a component object; got ${describeShape(raw)}`,
+		});
+		return;
+	}
+
 	// Roles are checked up front so a typo reports the component that caused it rather than
 	// surfacing later as a mysteriously empty region.
 	const missingBefore = ctx.palette.missing.size;

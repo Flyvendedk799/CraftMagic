@@ -761,7 +761,14 @@ ${err.stack ?? err.message}`);
 	child.kill();
 	await sleep(300);
 	try {
+		try {
 		fs.rmSync(profile, { recursive: true, force: true });
+	} catch {
+		// Windows holds the browser profile open for a moment after the process exits, and the
+		// rm throws EPERM rather than waiting. A temp directory outliving the run by a few
+		// hundred milliseconds is not a test result, and letting it escape turns a green run
+		// into a non-zero exit with a stack trace where the summary should be.
+	}
 	} catch {
 		// Windows holds the profile open a moment after the browser exits. Leaving a temp
 		// directory behind is not a test result.

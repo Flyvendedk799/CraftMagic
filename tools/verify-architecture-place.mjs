@@ -337,7 +337,14 @@ try {
 	ws?.close();
 	child.kill();
 	await sleep(300);
-	fs.rmSync(profile, { recursive: true, force: true });
+	try {
+		fs.rmSync(profile, { recursive: true, force: true });
+	} catch {
+		// Windows holds the browser profile open for a moment after the process exits, and the
+		// rm throws EPERM rather than waiting. A temp directory outliving the run by a few
+		// hundred milliseconds is not a test result, and letting it escape turns a green run
+		// into a non-zero exit with a stack trace where the summary should be.
+	}
 
 	// Put the account back: this runs repeatedly, and a library that grows by three every time
 	// turns the shelf into a scroll of duplicates.

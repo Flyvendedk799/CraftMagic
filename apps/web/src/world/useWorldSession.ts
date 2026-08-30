@@ -29,7 +29,8 @@ import {
 } from '@craftmagic/core';
 import { WorldHistory, type WorldDelta } from './history.js';
 import { TerrainStroke, applyTerrainDelta } from './stroke.js';
-import { loadDraft, saveDraft, listWorlds, saveWorld, deleteWorld, type SavedWorld } from './storage.js';
+import { loadDraft, saveDraft, type SavedWorld } from './storage.js';
+import { localStore, type WorldStore } from './api.js';
 
 /** Long enough that a drag writes once, short enough that a closed tab loses nothing real. */
 const AUTOSAVE_DELAY = 600;
@@ -66,7 +67,15 @@ export interface WorldSession {
   dirty: boolean;
 }
 
-export function useWorldSession(initial?: () => WorldDoc): WorldSession {
+/**
+ * `store` is where named saves go — this browser when signed out, the account when signed
+ * in. The draft autosave is always local and deliberately so: it fires every 600 ms during
+ * a sculpting session, and that is a write to IndexedDB, not a request.
+ */
+export function useWorldSession(
+  initial?: () => WorldDoc,
+  store: WorldStore = localStore,
+): WorldSession {
   const docRef = useRef<WorldDoc | null>(null);
   if (docRef.current === null) docRef.current = normalizeWorld(initial ? initial() : createWorld());
 
@@ -90,13 +99,13 @@ export function useWorldSession(initial?: () => WorldDoc): WorldSession {
       setLoading(false);
       bump();
     });
-    void listWorlds().then((rows) => {
+    void store.list().then((rows) => {
       if (live) setSaved(rows);
     });
     return () => {
       live = false;
     };
-  }, [bump]);
+  }, [bump, store]);
 
   // Debounced draft autosave. `revision` is the trigger rather than the document, because the
   // document's identity deliberately does not change when terrain does.
@@ -241,11 +250,15 @@ export function useWorldSession(initial?: () => WorldDoc): WorldSession {
   const save = useCallback(() => {
     const doc = docRef.current;
     if (!doc) return;
-    void saveWorld(doc).then(() => {
-      void listWorlds().then(setSaved);
+    void store.save(doc).then((id) => {
+      // The server mints its own id on a first save, and the open document has to adopt it
+      // or the next save creates a second row instead of landing on the first.
+      if (id && docRef.current) docRef.current.id = id;
+      void store.list().then(setSaved);
       setSavedRevision(revision);
+      bump();
     });
-  }, [revision]);
+  }, [revision, store, bump]);
 
   const open = useCallback(
     (doc: WorldDoc) => {
@@ -257,11 +270,14 @@ export function useWorldSession(initial?: () => WorldDoc): WorldSession {
     [history, bump],
   );
 
-  const remove = useCallback((id: string) => {
-    void deleteWorld(id).then(() => {
-      void listWorlds().then(setSaved);
-    });
-  }, []);
+  const remove = useCallback(
+    (id: string) => {
+      void store.remove(id).then(() => {
+        void store.list().then(setSaved);
+      });
+    },
+    [store],
+  );
 
   return useMemo(
     () => ({

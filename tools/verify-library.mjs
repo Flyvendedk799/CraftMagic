@@ -343,7 +343,14 @@ try {
 } finally {
 	child.kill();
 	await sleep(300);
-	fs.rmSync(profile, { recursive: true, force: true });
+	try {
+		fs.rmSync(profile, { recursive: true, force: true });
+	} catch {
+		// Windows holds the browser profile open for a moment after the process exits, and the
+		// rm throws EPERM rather than waiting. A temp directory outliving the run by a few
+		// hundred milliseconds is not a test result, and letting it escape turns a green run
+		// into a non-zero exit with a stack trace where the summary should be.
+	}
 }
 
 process.exit(exitCode);

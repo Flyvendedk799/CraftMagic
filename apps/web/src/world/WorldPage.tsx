@@ -36,19 +36,28 @@ import {
   type WorldPlacement,
 } from '@craftmagic/core';
 import { AppNav } from '../shell/AppNav.js';
+import { useAuth } from '../library/auth.js';
 import { useComponents, type ShelfEntry } from '../library/components.js';
+import { localStore, remoteStore } from './api.js';
 import { WorldMap } from './WorldMap.js';
 import { WorldPreview } from './WorldPreview.js';
 import { TerrainPanel } from './TerrainPanel.js';
 import { PlacementsPanel } from './PlacementsPanel.js';
 import { WorldPanel } from './WorldPanel.js';
 import { useWorldSession } from './useWorldSession.js';
-import { loadWorld } from './storage.js';
 import { WORLD_TOOLS, type WorldTool } from './toolset.js';
 import './world.css';
 
 export function WorldPage() {
-  const session = useWorldSession();
+  const auth = useAuth();
+  // Signed in, worlds live on the account and open from any machine; signed out they stay
+  // in this browser. Memoised on the status alone so a re-render does not look like a
+  // different store and re-list on every keystroke.
+  const store = useMemo(
+    () => (auth.status === 'signedIn' ? remoteStore : localStore),
+    [auth.status],
+  );
+  const session = useWorldSession(undefined, store);
   const { doc } = session;
 
   const [tool, setTool] = useState<WorldTool>('raise');
@@ -407,7 +416,7 @@ export function WorldPage() {
             onSettings={patchSettings}
             onSave={session.save}
             onOpen={(id) => {
-              void loadWorld(id).then((opened) => {
+              void store.load(id).then((opened) => {
                 if (opened) session.open(opened);
               });
             }}

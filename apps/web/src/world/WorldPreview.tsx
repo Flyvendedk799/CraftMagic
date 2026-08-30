@@ -1,12 +1,13 @@
 /**
  * The 3D check: one region, materialised, in the renderer the rest of the app already uses.
  *
- * This is the reason the world document is a description rather than a grid. `EditorCanvas`
- * and `VoxelWorld` mesh every 16³ chunk of what they are handed and keep every mesh; at
- * 1024×160×1024 that is 40,960 chunks and 320 MB, and the tab dies. One region is 128×160×128
- * at the default — well inside what the renderer already does comfortably for a large build —
- * so the viewport that works stays exactly as it is, and what changes is how much of the world
- * it is asked to hold at once.
+ * This is the reason the world document is a description rather than a grid, and it stays the
+ * reason after the renderer learned to stream. `VoxelWorld` now keeps a camera-driven working
+ * set and evicts what is behind you, so meshes are no longer the ceiling — but it is still
+ * handed a flat `VoxelGrid` and keeps it by reference for editing, raycasting and cutaways, and
+ * at 1024×160×1024 that is a single contiguous 320 MB allocation. A region is 128×160×128 at
+ * the default, which is an ordinary large build, so the viewport that works stays exactly as it
+ * is and what changes is how much of the world it is asked to hold at once.
  *
  * Materialising is O(region cells) and runs on the main thread, so it is deliberately *not*
  * wired to the live stroke. Sculpting updates the map at sixty frames a second; the 3D view

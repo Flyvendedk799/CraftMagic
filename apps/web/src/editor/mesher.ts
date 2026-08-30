@@ -14,24 +14,24 @@
  * source and the worker bundle never pulls in block data.
  */
 
-/** Structurally identical to `VoxelGrid['size']`, restated so this file has no imports. */
-export interface GridSize {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-}
+import {
+  CHUNK_SIZE,
+  PAD_GRID,
+  PAD_VOLUME,
+  chunkCounts,
+  type GridSize,
+  type VoxelStore,
+} from './voxelStore.js';
+
+// The one import this file has, and it imports nothing itself — so the worker bundle is still
+// the mesher and its arithmetic. Re-exported because a caller that meshes a chunk invariably
+// also needs to know how big one is, and splitting that across two modules buys nothing.
+export { CHUNK_SIZE, PAD_VOLUME, chunkCounts, type GridSize };
 
 /** Bit 0 of a `paletteFlags` byte: see-through (glass, leaves) — meshed separately. */
 export const FLAG_TRANSPARENT = 1;
 /** Bit 1: full-bright. Skips face shading and AO, since the material is unlit. */
 export const FLAG_EMISSIVE = 2;
-
-/**
- * 16³, matching Minecraft's own chunk section. The number is a balance: smaller chunks
- * re-mesh faster after an edit but multiply draw calls, and 16 keeps a worst-case chunk
- * (24576 quads) comfortably inside a single buffer upload.
- */
-export const CHUNK_SIZE = 16;
 
 export interface MeshSource {
   size: GridSize;
@@ -103,35 +103,102 @@ const AO_FACTOR = [0.5, 0.65, 0.8, 1.0] as const;
 const CORNER_U = [0, 1, 1, 0] as const;
 const CORNER_V = [0, 0, 1, 1] as const;
 
-/** How many 16³ chunks the grid spans on each axis. */
-export function chunkCounts(size: GridSize): GridSize {
-  return {
-    x: Math.ceil(size.x / CHUNK_SIZE),
-    y: Math.ceil(size.y / CHUNK_SIZE),
-    z: Math.ceil(size.z / CHUNK_SIZE),
-  };
+/**
+ * Mesh one chunk of a flat grid, reading neighbours straight out of it.
+ *
+ * Deliberately no per-chunk padding copy on this path: at 1300 chunks a padded 18³ copy
+ * would cost more in memcpy and allocation than the bounds check saves, and padding would
+ * have to be rebuilt on every edit that lands near a seam. `meshStoredChunk` does pad,
+ * because a chunked store has no flat array to point a stride at.
+ */
+export function meshChunk(src: MeshSource, cx: number, cy: number, cz: number): ChunkMesh {
+  const { size } = src;
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const z0 = cz * CHUNK_SIZE;
+
+  const { opaque, transparent } = meshBox(
+    src,
+    x0,
+    y0,
+    z0,
+    Math.min(x0 + CHUNK_SIZE, size.x),
+    Math.min(y0 + CHUNK_SIZE, size.y),
+    Math.min(z0 + CHUNK_SIZE, size.z),
+    0,
+    0,
+    0,
+  );
+  return { cx, cy, cz, opaque, transparent };
 }
 
 /**
- * Mesh one chunk, reading neighbours straight out of the shared grid.
+ * Mesh one chunk out of a chunked store.
  *
- * Deliberately no per-chunk padding copy: at 1300 chunks a padded 18³ copy would cost more
- * in memcpy and allocation than the bounds check saves, and padding would have to be
- * rebuilt on every edit that lands near a seam.
+ * The store gathers the chunk and one cell of context into `pad`, and from there this is the
+ * same walk over the same faces with the same ambient occlusion — the mesher never learns
+ * that the voxels arrived in pieces. `pad` is the caller's, reused across every chunk, so a
+ * world costs one 12 KB scratch buffer rather than one per chunk.
  */
-export function meshChunk(src: MeshSource, cx: number, cy: number, cz: number): ChunkMesh {
+export function meshStoredChunk(
+  store: VoxelStore,
+  paletteColors: Uint8Array,
+  paletteFlags: Uint8Array,
+  cx: number,
+  cy: number,
+  cz: number,
+  pad: Uint16Array,
+): ChunkMesh {
+  if (!store.neighbourhood(cx, cy, cz, pad)) return { cx, cy, cz, opaque: null, transparent: null };
+
+  const x0 = cx * CHUNK_SIZE;
+  const y0 = cy * CHUNK_SIZE;
+  const z0 = cz * CHUNK_SIZE;
+  const src: MeshSource = { size: PAD_GRID, voxels: pad, paletteColors, paletteFlags };
+
+  // The chunk sits at [1, 1+extent) inside the pad, and its blocks belong at `x0` in the
+  // world, so the origin walks the emitted positions back by the one cell of padding.
+  const { opaque, transparent } = meshBox(
+    src,
+    1,
+    1,
+    1,
+    1 + Math.min(CHUNK_SIZE, store.size.x - x0),
+    1 + Math.min(CHUNK_SIZE, store.size.y - y0),
+    1 + Math.min(CHUNK_SIZE, store.size.z - z0),
+    x0 - 1,
+    y0 - 1,
+    z0 - 1,
+  );
+  return { cx, cy, cz, opaque, transparent };
+}
+
+/**
+ * The mesher proper: every face of every solid voxel in a half-open box, with `o*` added to
+ * the positions it emits.
+ *
+ * The offset is what lets the padded and unpadded paths share one loop instead of two copies
+ * of the ambient-occlusion arithmetic — the place a divergence would be least visible and
+ * most damaging, since a subtly different AO ramp on one path is a rendering bug nobody can
+ * point at.
+ */
+function meshBox(
+  src: MeshSource,
+  x0: number,
+  y0: number,
+  z0: number,
+  x1: number,
+  y1: number,
+  z1: number,
+  ox: number,
+  oy: number,
+  oz: number,
+): { opaque: MeshBuffers | null; transparent: MeshBuffers | null } {
   const { size, voxels, paletteColors, paletteFlags } = src;
   const sx = size.x;
   const sy = size.y;
   const sz = size.z;
   const layer = sx * sz;
-
-  const x0 = cx * CHUNK_SIZE;
-  const y0 = cy * CHUNK_SIZE;
-  const z0 = cz * CHUNK_SIZE;
-  const x1 = Math.min(x0 + CHUNK_SIZE, sx);
-  const y1 = Math.min(y0 + CHUNK_SIZE, sy);
-  const z1 = Math.min(z0 + CHUNK_SIZE, sz);
 
   const opaque = new QuadSink();
   const transparent = new QuadSink();
@@ -190,9 +257,9 @@ export function meshChunk(src: MeshSource, cx: number, cy: number, cz: number): 
             const cu = CORNER_U[k]!;
             const cv = CORNER_V[k]!;
             const p = k * 3;
-            pos[p] = x + f.o[0] + f.u[0] * cu + f.v[0] * cv;
-            pos[p + 1] = y + f.o[1] + f.u[1] * cu + f.v[1] * cv;
-            pos[p + 2] = z + f.o[2] + f.u[2] * cu + f.v[2] * cv;
+            pos[p] = ox + x + f.o[0] + f.u[0] * cu + f.v[0] * cv;
+            pos[p + 1] = oy + y + f.o[1] + f.u[1] * cu + f.v[1] * cv;
+            pos[p + 2] = oz + z + f.o[2] + f.u[2] * cu + f.v[2] * cv;
 
             let factor = 1;
             if (!emissive) {
@@ -229,7 +296,7 @@ export function meshChunk(src: MeshSource, cx: number, cy: number, cz: number): 
     }
   }
 
-  return { cx, cy, cz, opaque: opaque.take(), transparent: transparent.take() };
+  return { opaque: opaque.take(), transparent: transparent.take() };
 }
 
 /** Push every buffer of a mesh onto a transfer list, so postMessage moves rather than copies. */
@@ -445,13 +512,32 @@ export function meshCuts(
  * out of the worker file means the main thread never has to import the worker for a type.
  * ------------------------------------------------------------------------------------ */
 
-/** Hands the worker its own snapshot of the grid; `voxels` is transferred, not copied. */
+/**
+ * Opens a new structure: the worker throws away whatever it held and waits for chunks.
+ *
+ * No voxels ride along. They used to — one `slice()` of the whole grid, transferred — which
+ * meant the main thread had to hold two copies of a build at once at the exact moment it was
+ * least able to afford them. A world is delivered as `chunks` batches instead, so the
+ * transient cost of loading one is a megabyte rather than the whole thing again.
+ */
 export interface MesherLoad {
   t: 'load';
   size: GridSize;
-  voxels: Uint16Array;
   paletteColors: Uint8Array;
   paletteFlags: Uint8Array;
+}
+
+/**
+ * A batch of chunk contents for the structure most recently opened.
+ *
+ * `keys` are packed chunk coordinates and `cells` holds their voxels back to back, one
+ * buffer for the batch: one transfer instead of one per chunk, and the worker keeps views
+ * into it rather than copying. Chunks that are entirely air are simply never sent.
+ */
+export interface MesherChunks {
+  t: 'chunks';
+  keys: Int32Array;
+  cells: Uint16Array;
 }
 
 /** Keeps the worker's snapshot in step with an edit, without re-sending the whole grid. */
@@ -481,7 +567,7 @@ export interface MesherMesh {
   chunks: Int32Array;
 }
 
-export type MesherRequest = MesherLoad | MesherEdit | MesherPalette | MesherMesh;
+export type MesherRequest = MesherLoad | MesherChunks | MesherEdit | MesherPalette | MesherMesh;
 
 export interface MesherResponse {
   t: 'meshed';

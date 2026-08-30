@@ -9,6 +9,10 @@
  * The materials are unlit `MeshBasicMaterial`s. All shading (face direction and ambient
  * occlusion) is baked into vertex colours by the mesher, which means no lights, no normal
  * attribute, and the cheapest shader three.js has.
+ *
+ * Above a certain size the "keep every mesh" part stops being affordable and the world is
+ * streamed around the camera instead — see `RESIDENT_CHUNK_LIMIT`. Below it nothing has
+ * changed: no distance test, no eviction, the same chunks in the same order.
  */
 
 import * as THREE from 'three';
@@ -24,6 +28,7 @@ import {
   type MesherRequest,
   type MesherResponse,
 } from './mesher.js';
+import { CHUNK_VOLUME, chunkKey, sliceChunk, unpackKey } from './voxelStore.js';
 
 /** Geometry uploads per frame. Each one is a GPU buffer upload, so this is the frame budget. */
 const UPLOADS_PER_FRAME = 40;
@@ -31,6 +36,38 @@ const UPLOADS_PER_FRAME = 40;
 const REQUEST_BATCH = 48;
 /** Cap on outstanding work so a reload cannot queue thousands of stale chunks. */
 const MAX_IN_FLIGHT = 192;
+/** Chunks per `chunks` message while handing a grid to the worker: 128 × 8 KB, so 1 MB a go. */
+const CHUNKS_PER_MESSAGE = 128;
+
+/**
+ * Chunks up to which the whole grid is meshed and nothing is ever evicted.
+ *
+ * A deliberate cliff, not a gradient. Everything this renderer is actually good at today — a
+ * building, at any size the engine will produce — sits below it: the engine's own cap of
+ * 256×160×256 is 2,560 chunks, so a build cannot reach this number, and the streaming path
+ * is dead code for every one of them. That is the point. The viewport's behaviour on a build
+ * is the thing this must not change, and the safest way to not change it is to not run.
+ *
+ * Above the line the grid is a world rather than a building, holding all of it was never an
+ * option, and a camera-shaped working set is strictly better than a dead tab.
+ */
+const RESIDENT_CHUNK_LIMIT = 4096;
+
+/** Blocks from the working-set centre within which a chunk is meshed. */
+const MESH_RADIUS = 192;
+
+/**
+ * ...and beyond which a meshed chunk is thrown away.
+ *
+ * The gap is hysteresis, and it is not decoration: with one radius, a camera resting on the
+ * boundary would evict a chunk, notice it is missing, re-mesh it, evict it again — a
+ * permanent stutter from a camera that is barely moving. 96 blocks of slack means a chunk
+ * has to be genuinely left behind before it is dropped.
+ */
+const EVICT_RADIUS = 288;
+
+/** How far the centre may drift before the working set is worth recomputing. */
+const RECENTER_STEP = 16;
 
 /** How far past a block boundary a clipping plane sits, to keep it off any face. */
 const CLIP_EPSILON = 0.001;
@@ -77,6 +114,18 @@ export class VoxelWorld {
   private cutsStale = false;
 
   private readonly chunks = new Map<number, ChunkEntry>();
+
+  /**
+   * Chunks that meshed to nothing: air, or rock with no exposed face.
+   *
+   * They cannot live in `chunks`, because there is no mesh to put there — so without a note
+   * of them the working-set scan would see them as missing and ask for them again after
+   * every camera move. In a world they are the majority of the working set, so that is most
+   * of the meshing a move would otherwise cost. Kept in step with `chunks`: an edit forgets
+   * a chunk's emptiness, and eviction drops it along with everything else left behind.
+   */
+  private readonly empty = new Set<number>();
+
   private readonly dirty = new Set<number>();
   private readonly inFlight = new Set<number>();
   private readonly pending: MesherResponse['meshes'] = [];
@@ -84,6 +133,12 @@ export class VoxelWorld {
   private grid: VoxelGrid | null = null;
   private source: MeshSource | null = null;
   private counts = { x: 0, y: 0, z: 0 };
+
+  /** True once the grid is past `RESIDENT_CHUNK_LIMIT` and has to be streamed. */
+  private streaming = false;
+  /** The point the working set is centred on — what the viewer is looking at, not where from. */
+  private centre: THREE.Vector3 | null = null;
+  private evictions = 0;
 
   private worker: Worker | null = null;
   private batchId = 0;
@@ -132,32 +187,65 @@ export class VoxelWorld {
     return this.dirty.size + this.inFlight.size + this.pending.length;
   }
 
+  /** Chunk meshes in the scene right now. Bounded by the working set once streaming. */
+  get resident(): number {
+    return this.chunks.size;
+  }
+
+  /** Chunk meshes thrown away since the last `load`. Stays zero for anything held whole. */
+  get evicted(): number {
+    return this.evictions;
+  }
+
+  /** Whether this grid is too big to hold all at once and is being streamed. */
+  get streamed(): boolean {
+    return this.streaming;
+  }
+
   /**
-   * Full rebuild. The grid is kept by reference (edits write through it); the worker gets
-   * a transferred copy.
+   * Full rebuild. The grid is kept by reference (edits write through it); the worker is given
+   * its own copy, chunk by chunk.
+   *
+   * Chunk by chunk rather than in one transferred `slice()`, which is what this used to do.
+   * The slice doubled the resident cost of a grid for as long as it took to hand over — fine
+   * for 21 MB, fatal for 320, and worst precisely when memory is tightest. Batching means the
+   * transient cost is a megabyte, and chunks that are entirely air are never built at all.
    */
   load(grid: VoxelGrid, paletteColors: Uint8Array, paletteFlags: Uint8Array): void {
     this.clearChunks();
     this.generation++;
     this.batchId = 0;
+    this.evictions = 0;
+    this.centre = null;
 
     this.cutsStale = this.clipMask !== 0;
 
     this.grid = grid;
     this.source = { size: grid.size, voxels: grid.voxels, paletteColors, paletteFlags };
     this.counts = chunkCounts(grid.size);
+    this.streaming = this.counts.x * this.counts.y * this.counts.z > RESIDENT_CHUNK_LIMIT;
 
-    const snapshot = grid.voxels.slice();
     const worker = this.ensureWorker();
     if (worker) {
-      const load: MesherRequest = {
+      worker.postMessage({
         t: 'load',
         size: grid.size,
-        voxels: snapshot,
+        // Copies: the main thread meshes from these too when there is no worker.
         paletteColors: paletteColors.slice(),
         paletteFlags: paletteFlags.slice(),
-      };
-      worker.postMessage(load, [snapshot.buffer as ArrayBuffer]);
+      } satisfies MesherRequest);
+      this.sendChunks(worker, grid);
+    }
+
+    // A grid small enough to hold is queued whole, in memory order, exactly as it always was.
+    //
+    // A streamed one is seeded on the middle of the plot, which is where the camera is about
+    // to be framed anyway, rather than left empty until the first frame reports a camera.
+    // Leaving it empty would make `remaining` read as zero for those frames — and zero is the
+    // signal the loading indicator and every headless driver take to mean "finished".
+    if (this.streaming) {
+      this.retarget(new THREE.Vector3(grid.size.x / 2, grid.size.y / 2, grid.size.z / 2));
+      return;
     }
 
     for (let cy = 0; cy < this.counts.y; cy++) {
@@ -165,6 +253,40 @@ export class VoxelWorld {
         for (let cx = 0; cx < this.counts.x; cx++) this.dirty.add(chunkKey(cx, cy, cz));
       }
     }
+  }
+
+  /** Hand the grid to the worker as batches of non-air chunks, each batch one transfer. */
+  private sendChunks(worker: Worker, grid: VoxelGrid): void {
+    let keys = new Int32Array(CHUNKS_PER_MESSAGE);
+    let cells = new Uint16Array(CHUNKS_PER_MESSAGE * CHUNK_VOLUME);
+    let n = 0;
+
+    for (let cy = 0; cy < this.counts.y; cy++) {
+      for (let cz = 0; cz < this.counts.z; cz++) {
+        for (let cx = 0; cx < this.counts.x; cx++) {
+          if (!sliceChunk(grid.voxels, grid.size, cx, cy, cz, cells, n * CHUNK_VOLUME)) continue;
+          keys[n++] = chunkKey(cx, cy, cz);
+          if (n < CHUNKS_PER_MESSAGE) continue;
+
+          worker.postMessage({ t: 'chunks', keys, cells } satisfies MesherRequest, [
+            keys.buffer as ArrayBuffer,
+            cells.buffer as ArrayBuffer,
+          ]);
+          keys = new Int32Array(CHUNKS_PER_MESSAGE);
+          cells = new Uint16Array(CHUNKS_PER_MESSAGE * CHUNK_VOLUME);
+          n = 0;
+        }
+      }
+    }
+
+    if (n === 0) return;
+    // The tail batch keeps its full-sized `cells` buffer; the worker reads only as many
+    // chunks as there are keys, and trimming it would cost a copy to save one message's slack.
+    const tail = keys.slice(0, n);
+    worker.postMessage({ t: 'chunks', keys: tail, cells } satisfies MesherRequest, [
+      tail.buffer as ArrayBuffer,
+      cells.buffer as ArrayBuffer,
+    ]);
   }
 
   setVoxel(x: number, y: number, z: number, paletteIndex: number): void {
@@ -272,8 +394,14 @@ export class VoxelWorld {
    * Uploads are budgeted per frame, not per batch: the worker can outrun the GPU on a
    * large structure, and dropping 1300 geometries into the scene in one frame is a
    * multi-second stall no matter how fast the meshing was.
+   *
+   * @param centre What the viewer is looking at, in block coordinates — the orbit target
+   *   rather than the camera position, because an orbit camera pulled back to see a whole
+   *   building is a long way from all of it while looking straight at it. Ignored entirely
+   *   below `RESIDENT_CHUNK_LIMIT`, where there is no working set to centre.
    */
-  update(): void {
+  update(centre: THREE.Vector3 | null = null): void {
+    if (this.streaming && centre) this.retarget(centre);
     if (this.cutsStale) this.rebuildCuts();
 
     let budget = UPLOADS_PER_FRAME;
@@ -292,6 +420,104 @@ export class VoxelWorld {
     this.transparentMaterial.dispose();
     this.grid = null;
     this.source = null;
+  }
+
+  /**
+   * Move the working set to follow the camera: drop what has been left behind, queue what has
+   * come into range, nearest first.
+   *
+   * Recomputed on movement rather than per frame. The scan is bounded by the radius, not by
+   * the world, but it is still tens of thousands of chunk tests and there is no answer in it
+   * that changes when the camera has drifted a few blocks.
+   */
+  private retarget(centre: THREE.Vector3): void {
+    if (this.centre && this.centre.distanceToSquared(centre) < RECENTER_STEP * RECENTER_STEP) return;
+    if (this.centre) this.centre.copy(centre);
+    else this.centre = centre.clone();
+
+    const evictLimit = EVICT_RADIUS * EVICT_RADIUS;
+    const meshLimit = MESH_RADIUS * MESH_RADIUS;
+
+    for (const [key, entry] of this.chunks) {
+      if (this.chunkDistanceSq(key, centre) <= evictLimit) continue;
+      this.disposeEntry(entry);
+      this.chunks.delete(key);
+      this.evictions++;
+    }
+
+    // The record of what was empty is forgotten on the same boundary, so it stays bounded by
+    // the working set rather than growing to hold every air chunk the camera has ever passed.
+    for (const key of this.empty) {
+      if (this.chunkDistanceSq(key, centre) > evictLimit) this.empty.delete(key);
+    }
+
+    // Queued work that has fallen out of the band goes too, so a fast flight across a world
+    // does not spend the whole trip meshing where it has already been. Chunks in flight are
+    // left alone: the reply is already on its way, and `upload` drops the ones nobody wants.
+    const wanted = new Set<number>();
+    for (const key of this.dirty) {
+      if (this.chunkDistanceSq(key, centre) <= evictLimit) wanted.add(key);
+    }
+
+    const reach = Math.ceil(MESH_RADIUS / CHUNK_SIZE);
+    const cx0 = Math.floor(centre.x / CHUNK_SIZE);
+    const cy0 = Math.floor(centre.y / CHUNK_SIZE);
+    const cz0 = Math.floor(centre.z / CHUNK_SIZE);
+
+    for (let cy = Math.max(0, cy0 - reach); cy <= Math.min(this.counts.y - 1, cy0 + reach); cy++) {
+      for (let cz = Math.max(0, cz0 - reach); cz <= Math.min(this.counts.z - 1, cz0 + reach); cz++) {
+        for (let cx = Math.max(0, cx0 - reach); cx <= Math.min(this.counts.x - 1, cx0 + reach); cx++) {
+          const key = chunkKey(cx, cy, cz);
+          if (this.chunks.has(key) || this.empty.has(key)) continue;
+          if (this.inFlight.has(key) || wanted.has(key)) continue;
+          if (this.chunkDistanceSq(key, centre) > meshLimit) continue;
+          wanted.add(key);
+        }
+      }
+    }
+
+    // Rebuilt in distance order because `requestDirty` walks the set in insertion order:
+    // that makes the nearest chunk the next one meshed for free, with no priority queue and
+    // no change to how the resident path is drained.
+    const ordered = [...wanted]
+      .map((key) => ({ key, d: this.chunkDistanceSq(key, centre) }))
+      .sort((a, b) => a.d - b.d);
+    this.dirty.clear();
+    for (const candidate of ordered) this.dirty.add(candidate.key);
+  }
+
+  /** Squared distance from a point to a chunk's centre. The group never moves, so world = block. */
+  private chunkDistanceSq(key: number, to: THREE.Vector3): number {
+    const [cx, cy, cz] = unpackKey(key);
+    const half = CHUNK_SIZE / 2;
+    const dx = cx * CHUNK_SIZE + half - to.x;
+    const dy = cy * CHUNK_SIZE + half - to.y;
+    const dz = cz * CHUNK_SIZE + half - to.z;
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  /** Whether a chunk is close enough to be worth holding. Always true below the streaming limit. */
+  private inRange(key: number): boolean {
+    if (!this.streaming || !this.centre) return true;
+    return this.chunkDistanceSq(key, this.centre) <= EVICT_RADIUS * EVICT_RADIUS;
+  }
+
+  /**
+   * Take a chunk's meshes out of the scene and free their GPU buffers.
+   *
+   * The material is deliberately *not* disposed. Every chunk shares one of two materials, so
+   * disposing here would free the program the rest of the build is drawn with — and three.js
+   * says nothing about it: the next frame simply renders nothing, on a scene whose object
+   * graph still looks perfectly correct. If a per-chunk material is ever introduced, this is
+   * the one place that has to grow a `mesh.material.dispose()`, and it will be silent if it
+   * does not.
+   */
+  private disposeEntry(entry: ChunkEntry): void {
+    for (const mesh of [entry.opaque, entry.transparent]) {
+      if (!mesh) continue;
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+    }
   }
 
   private applyValues(indices: Uint32Array, values: Uint16Array): void {
@@ -337,7 +563,14 @@ export class VoxelWorld {
         if (cz < 0 || cz >= this.counts.z) continue;
         for (let cx = xLo; cx <= xHi; cx++) {
           if (cx < 0 || cx >= this.counts.x) continue;
-          this.dirty.add(chunkKey(cx, cy, cz));
+          const key = chunkKey(cx, cy, cz);
+          // Whatever it held before, it may hold a face now.
+          this.empty.delete(key);
+          // An edit far outside the working set is real, and the worker has already been told
+          // about it — but meshing it would put geometry on screen for somewhere the viewer
+          // is not, and the chunk will be meshed from the edited voxels whenever it comes
+          // back into range anyway.
+          if (this.inRange(key)) this.dirty.add(key);
         }
       }
     }
@@ -455,12 +688,22 @@ export class VoxelWorld {
     const key = chunkKey(mesh.cx, mesh.cy, mesh.cz);
     this.inFlight.delete(key);
 
+    // Requested before the camera moved on. Its buffers are plain typed arrays and cost
+    // nothing to drop; uploading them would put a mesh in the scene that eviction has
+    // already decided against, where nothing would ever look at it again.
+    if (!this.inRange(key)) return;
+
     const entry = this.chunks.get(key) ?? {};
     entry.opaque = this.swapMesh(entry.opaque, mesh.opaque, this.opaqueMaterial, mesh, 0);
     entry.transparent = this.swapMesh(entry.transparent, mesh.transparent, this.transparentMaterial, mesh, 1);
 
-    if (entry.opaque || entry.transparent) this.chunks.set(key, entry);
-    else this.chunks.delete(key);
+    if (entry.opaque || entry.transparent) {
+      this.chunks.set(key, entry);
+      this.empty.delete(key);
+    } else {
+      this.chunks.delete(key);
+      this.empty.add(key);
+    }
   }
 
   private swapMesh(
@@ -506,29 +749,11 @@ export class VoxelWorld {
     }
     this.cuts = {};
 
-    for (const entry of this.chunks.values()) {
-      for (const mesh of [entry.opaque, entry.transparent]) {
-        if (!mesh) continue;
-        this.group.remove(mesh);
-        mesh.geometry.dispose();
-      }
-    }
+    for (const entry of this.chunks.values()) this.disposeEntry(entry);
     this.chunks.clear();
+    this.empty.clear();
     this.dirty.clear();
     this.inFlight.clear();
     this.pending.length = 0;
   }
-}
-
-/**
- * Chunk coordinates pack into one integer key: numeric Map keys avoid the string churn a
- * `"x,y,z"` key would create on every dirty-set operation during a drag-edit.
- * 10 bits per axis covers 16384 blocks — far past the 256-block size cap.
- */
-function chunkKey(cx: number, cy: number, cz: number): number {
-  return (cx & 1023) | ((cy & 1023) << 10) | ((cz & 1023) << 20);
-}
-
-function unpackKey(key: number): [number, number, number] {
-  return [key & 1023, (key >> 10) & 1023, (key >> 20) & 1023];
 }

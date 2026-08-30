@@ -82,6 +82,16 @@ export function WorldPage() {
   const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  /**
+   * True while a terrain gesture is in flight, and the 3D view watches it.
+   *
+   * `revision` bumps on every pointer move — that is how an in-place terrain write reaches
+   * React at all — so without this the preview re-materialises the whole region, two million
+   * cells of it, sixty times a second for the length of a drag. The map stays live because
+   * repainting the heightfield is one pass over the columns; the 3D catches up on release,
+   * which is when you look at it.
+   */
+  const [sculpting, setSculpting] = useState(false);
   const agents = useAgents();
 
   /**
@@ -191,6 +201,7 @@ export function WorldPage() {
       if (!placement) return;
       placement.x = Math.max(0, Math.min(doc.settings.size.x - 1, x));
       placement.z = Math.max(0, Math.min(doc.settings.size.z - 1, z));
+      setSculpting(true);
       session.touch();
     },
     [doc, session],
@@ -399,9 +410,18 @@ export function WorldPage() {
               selected={selected}
               onSelect={setSelected}
               onMovePlacement={movePlacement}
-              onCommitPlacements={() => session.commitPlacements([...doc.placements])}
-              onBeginStroke={session.beginStroke}
-              onEndStroke={session.endStroke}
+              onCommitPlacements={() => {
+                setSculpting(false);
+                session.commitPlacements([...doc.placements]);
+              }}
+              onBeginStroke={() => {
+                setSculpting(true);
+                return session.beginStroke();
+              }}
+              onEndStroke={(stroke) => {
+                setSculpting(false);
+                session.endStroke(stroke);
+              }}
               onTouch={session.touch}
               onCarve={carve}
               onEdited={(x, z) => {
@@ -420,7 +440,7 @@ export function WorldPage() {
                 revision={session.revision}
                 region={clampedRegion}
                 catalogue={library.catalogue}
-                live
+                live={!sculpting}
               />
             )}
           </div>

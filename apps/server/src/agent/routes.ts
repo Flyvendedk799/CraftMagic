@@ -28,7 +28,7 @@
  * worlds" mean anything at all.
  */
 
-import { decodeVoxels, schematicFilename, writeSchematic, type VoxelGrid } from '@craftmagic/core';
+import { decodeVoxels, schematicFilename, toBase64, writeSchematic, type VoxelGrid } from '@craftmagic/core';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import type { AgentHub } from './hub.js';
@@ -65,7 +65,25 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 
 		// --- builds — all session-authenticated ------------------------------
 
-		app.post('/api/builds', async (request, reply) => {
+		/**
+		 * Big enough for the largest build the engine will produce, and no bigger.
+		 *
+		 * A 256x160x256 build of pure noise encodes to ~2.8 MB of ICVX, ~3.8 MB in base64; a
+		 * realistic one of that size is under 300 KB. 16 MB is several times the pathological
+		 * case and a small fraction of what the JSON array it replaces would have needed.
+		 */
+		const BUILD_BODY_LIMIT = 16 * 1024 * 1024;
+
+		/**
+		 * Below this, a build is also sent in the old `voxels` array form.
+		 *
+		 * Purely a rollout courtesy for a browser tab still running the previous deploy. 200k
+		 * cells is ~400 KB of JSON — every build anyone had actually managed to save before
+		 * this change, since the 1 MB body limit capped saving at roughly 80 cubed.
+		 */
+		const LEGACY_VOXEL_CELLS = 200_000;
+
+		app.post('/api/builds', { bodyLimit: BUILD_BODY_LIMIT }, async (request, reply) => {
 			if (!requireDb(reply)) return;
 			// Saving used to be open, because "send to game" needed it and there was nothing
 			// else it could do. Sending now requires an account, so an anonymous save would
@@ -82,31 +100,61 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				edits?: unknown;
 				plan?: unknown;
 				library?: unknown;
-				grid?: { size?: { x: number; y: number; z: number }; palette?: string[]; voxels?: number[] };
+				grid?: {
+					size?: { x: number; y: number; z: number };
+					palette?: string[];
+					/** The compact form: base64 of the gzipped ICVX blob. Preferred. */
+					data?: unknown;
+					/** The old form, one JSON number per cell. Kept for a release; see below. */
+					voxels?: number[];
+				};
 			} | null;
 
 			const name = readName(body?.name);
 			if (!name) return reply.code(400).send({ error: 'bad_name' });
 
 			const grid = body?.grid;
-			if (!grid?.size || !Array.isArray(grid.palette) || !Array.isArray(grid.voxels)) {
+			if (!grid?.size) return reply.code(400).send({ error: 'bad_grid' });
+
+			const expected = grid.size.x * grid.size.y * grid.size.z;
+			const { decodeVoxels, encodeVoxels, fromBase64 } = await import('@craftmagic/core');
+
+			/**
+			 * Two accepted shapes, and the reason there are two.
+			 *
+			 * `data` is the ICVX blob this column already stores, base64'd — a 256x160x256 build
+			 * is ~280 KB that way and 20 MB as a JSON array of integers, which is 20x over
+			 * Fastify's body limit. Until this existed, a build at the engine's own documented
+			 * size cap could not be saved at all, and neither could the "Stress test" sample
+			 * shipped in the editor: both answered 413.
+			 *
+			 * `voxels` is the old shape. Kept for one release so a tab loaded from the previous
+			 * deploy keeps working, and because it costs eight lines to keep.
+			 */
+			let voxelGrid: VoxelGrid;
+			if (typeof grid.data === 'string') {
+				try {
+					voxelGrid = decodeVoxels(fromBase64(grid.data));
+				} catch {
+					return reply.code(400).send({ error: 'bad_grid', message: 'voxel data did not decode' });
+				}
+				// The blob is self-describing, so it can disagree with the size that came beside
+				// it. Trust neither: say so rather than storing a row whose header lies.
+				const decoded = voxelGrid.size;
+				if (decoded.x !== grid.size.x || decoded.y !== grid.size.y || decoded.z !== grid.size.z) {
+					return reply.code(400).send({ error: 'bad_grid', message: 'voxel data size does not match' });
+				}
+			} else if (Array.isArray(grid.palette) && Array.isArray(grid.voxels)) {
+				if (grid.voxels.length !== expected) {
+					return reply.code(400).send({ error: 'bad_grid', message: `expected ${expected} voxels` });
+				}
+				voxelGrid = { size: grid.size, palette: grid.palette, voxels: Uint16Array.from(grid.voxels) };
+			} else {
 				return reply.code(400).send({ error: 'bad_grid' });
 			}
 
-			const expected = grid.size.x * grid.size.y * grid.size.z;
-			if (grid.voxels.length !== expected) {
-				return reply.code(400).send({ error: 'bad_grid', message: `expected ${expected} voxels` });
-			}
-
-			const voxelGrid: VoxelGrid = {
-				size: grid.size,
-				palette: grid.palette,
-				voxels: Uint16Array.from(grid.voxels),
-			};
 			let blockCount = 0;
 			for (const v of voxelGrid.voxels) if (v !== 0) blockCount++;
-
-			const { encodeVoxels } = await import('@craftmagic/core');
 			const id = await store!.saveBuild({
 				name,
 				description: typeof body?.description === 'string' ? body.description : null,
@@ -156,6 +204,19 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 			if (!build) return reply.code(404).send({ error: 'unknown_build' });
 
 			const grid = decodeVoxels(new Uint8Array(build.voxels));
+
+			/**
+			 * The blob goes back out as base64, not as a JSON array of integers.
+			 *
+			 * `Array.from(grid.voxels)` on a 256x160x256 build is a 20 MB response — 10.5 million
+			 * numbers to serialise here and parse in the browser — for data the column already
+			 * holds in ~280 KB. The client reads `data` when it is there and falls back to
+			 * `voxels`, so a tab loaded from the previous deploy keeps working through the
+			 * rollout; `voxels` is only sent when it is small enough to be worth the bytes.
+			 */
+			const compact = toBase64(new Uint8Array(build.voxels));
+			const small = grid.voxels.length <= LEGACY_VOXEL_CELLS;
+
 			return {
 				id: build.id,
 				name: build.name,
@@ -165,7 +226,12 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				program: build.program,
 				edits: build.edits,
 				plan: build.plan,
-				grid: { size: grid.size, palette: grid.palette, voxels: Array.from(grid.voxels) },
+				grid: {
+					size: grid.size,
+					palette: grid.palette,
+					data: compact,
+					...(small ? { voxels: Array.from(grid.voxels) } : {}),
+				},
 			};
 		});
 

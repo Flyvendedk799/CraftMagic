@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { encodePrefab, type Prefab } from '@craftmagic/core';
 import { useAuth } from '../library/auth.js';
-import { getBuild, listBuilds, type LibraryBuild } from '../library/library.js';
+import { getBuild, gridOf, listBuilds, type LibraryBuild } from '../library/library.js';
 import type { LayoutPlan, PlaceItem } from './plan.js';
 
 /** What the shelf shows: enough to pick a build without fetching its blocks. */
@@ -135,11 +135,7 @@ export function useComponentLibrary(plan: LayoutPlan): ComponentLibrary {
           size: detail.grid.size,
           // Encoded once, here. The compiler runs on every keystroke that changes the plan and
           // must not re-pack a saved building each time.
-          prefab: encodePrefab({
-            size: detail.grid.size,
-            palette: detail.grid.palette,
-            voxels: Uint16Array.from(detail.grid.voxels),
-          }),
+          prefab: encodePrefab(gridOf(detail)),
         };
         setCatalogue((prev) => new Map(prev).set(id, component));
         return component;

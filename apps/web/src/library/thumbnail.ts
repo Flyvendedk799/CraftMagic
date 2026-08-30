@@ -27,7 +27,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { paletteColors, paletteFlags } from '@craftmagic/core';
 import { IsoFilmstrip } from '../guide/isoRender.js';
-import { getBuild } from './library.js';
+import { getBuild, gridOf } from './library.js';
 
 /** Rendered at 2× the largest size any card displays, so it stays sharp on a retina screen. */
 const WIDTH = 512;
@@ -144,7 +144,7 @@ async function render(id: string): Promise<string> {
   // block would render as the muted "already built" tone.
   const strip = new IsoFilmstrip(size, paletteColors(palette), paletteFlags(palette), false);
   try {
-    strip.fill(Uint16Array.from(detail.grid.voxels));
+    strip.fill(gridOf(detail).voxels);
     const src = strip.snapshot(WIDTH, HEIGHT);
     if (!src || src === 'data:,') throw new Error('empty render');
     return src;

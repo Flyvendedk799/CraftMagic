@@ -24,9 +24,11 @@
  * survives `JSON.stringify` without becoming a five-figure list of integers.
  *
  * A run is two varints: palette index, then length. Varints because the common case by far is
- * a small index and a run under 128, which is one byte each.
+ * a small index and a run under 128, which is one byte each. The base64 comes from
+ * `util/bytes.ts`, shared with the voxel blob on the wire and the terrain heightmap.
  */
 
+import { fromBase64, toBase64 } from '../util/bytes.js';
 import { AIR_BLOCK, voxelIndex, type BlockRef, type Vec3, type VoxelGrid } from './types.js';
 
 /** A finished build, ready to be stamped into another one. */
@@ -186,82 +188,32 @@ export function prefabPosition(prefab: Prefab, index: number): Vec3 {
   return [rest - z * prefab.size.x, y, z];
 }
 
-// --- varints and base64 -------------------------------------------------------------------
-// Hand-rolled rather than pulled in: this runs in the browser, in the server and in the mod's
-// build step, and the whole thing is thirty lines.
+// --- varints ------------------------------------------------------------------------------
+// Hand-rolled rather than pulled in: this runs in the browser, on the server and in the mod's
+// build step, and it is twenty lines. Base64 lives in `util/bytes.ts` — three codecs share it
+// now, and three private copies is how one of them ends up subtly different.
 
 function writeVarint(out: number[], value: number): void {
-  let rest = value >>> 0;
-  while (rest >= 0x80) {
-    out.push((rest & 0x7f) | 0x80);
-    rest >>>= 7;
-  }
-  out.push(rest);
+	let rest = value >>> 0;
+	while (rest >= 0x80) {
+		out.push((rest & 0x7f) | 0x80);
+		rest >>>= 7;
+	}
+	out.push(rest);
 }
 
 function readVarint(bytes: Uint8Array, at: number): { value: number; next: number } {
-  let value = 0;
-  let shift = 0;
-  let index = at;
+	let value = 0;
+	let shift = 0;
+	let index = at;
 
-  while (index < bytes.length) {
-    const byte = bytes[index]!;
-    index++;
-    value |= (byte & 0x7f) << shift;
-    if ((byte & 0x80) === 0) break;
-    shift += 7;
-  }
+	while (index < bytes.length) {
+		const byte = bytes[index]!;
+		index++;
+		value |= (byte & 0x7f) << shift;
+		if ((byte & 0x80) === 0) break;
+		shift += 7;
+	}
 
-  return { value: value >>> 0, next: index };
-}
-
-/**
- * Base64, without assuming a runtime.
- *
- * `btoa`/`atob` exist in browsers and in modern Node but not in every context this package is
- * imported from, and `Buffer` is Node-only. Encoding by hand is the only version that is the
- * same everywhere, which for a format written on a server and read in a browser matters more
- * than the microseconds.
- */
-const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-function toBase64(bytes: Uint8Array): string {
-  let out = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const a = bytes[i]!;
-    const b = bytes[i + 1];
-    const c = bytes[i + 2];
-    out += ALPHABET[a >> 2];
-    out += ALPHABET[((a & 3) << 4) | ((b ?? 0) >> 4)];
-    out += b === undefined ? '=' : ALPHABET[((b & 15) << 2) | ((c ?? 0) >> 6)];
-    out += c === undefined ? '=' : ALPHABET[c & 63];
-  }
-  return out;
-}
-
-const LOOKUP = (() => {
-  const table = new Int16Array(128).fill(-1);
-  for (let i = 0; i < ALPHABET.length; i++) table[ALPHABET.charCodeAt(i)] = i;
-  return table;
-})();
-
-function fromBase64(text: string): Uint8Array {
-  const clean = text.replace(/[^A-Za-z0-9+/]/g, '');
-  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
-  let at = 0;
-  let buffer = 0;
-  let bits = 0;
-
-  for (let i = 0; i < clean.length; i++) {
-    const value = LOOKUP[clean.charCodeAt(i)] ?? -1;
-    if (value < 0) continue;
-    buffer = (buffer << 6) | value;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      out[at++] = (buffer >> bits) & 0xff;
-    }
-  }
-
-  return out.subarray(0, at);
+	return { value: value >>> 0, next: index };
 }

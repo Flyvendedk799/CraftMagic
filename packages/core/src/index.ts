@@ -3,6 +3,7 @@ export * from './ir/coords.js';
 export * from './ir/scale.js';
 export * from './ir/patch.js';
 export * from './ir/prefab.js';
+export * from './util/bytes.js';
 export * from './registry/registry.js';
 export * from './registry/stylePacks.js';
 export * from './expand/expander.js';

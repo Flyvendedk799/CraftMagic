@@ -24,7 +24,7 @@ import {
   registerLibraryBuild,
   rememberEdits,
 } from '../editor/builds.js';
-import { getBuild, type LibraryBuildDetail } from './library.js';
+import { getBuild, gridOf, type LibraryBuildDetail } from './library.js';
 
 export interface LibraryFetch {
   /** True while the build named in the URL is still on its way. */
@@ -73,11 +73,7 @@ export function useLibraryBuild(buildId: string | null): LibraryFetch {
 
 /** The one rule — see the module header. */
 function register(buildId: string, rowId: string, detail: LibraryBuildDetail): void {
-  const savedGrid: VoxelGrid = {
-    size: detail.grid.size,
-    palette: detail.grid.palette,
-    voxels: Uint16Array.from(detail.grid.voxels),
-  };
+  const savedGrid: VoxelGrid = gridOf(detail);
 
   if (detail.program) {
     // A stored layer wins. Failing that, a clean build needs none, and an old detached

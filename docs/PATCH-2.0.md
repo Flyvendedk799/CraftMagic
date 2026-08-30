@@ -81,13 +81,18 @@ remainder of the approved roadmap for follow-up work.
   "Plan" action, and `/layouter?plan=lib:<id>` reopens it — walls still walls.
 - An L-shape whose room overlap is exactly wall-deep no longer warns (locked by test).
 
+**Studio shell (S4):**
+- `/studio` hosts both tools as modes — Build (the voxel editor) and Plan (the layouter,
+  `?mode=plan`) — behind one address, with a floating mode pill and per-mode undo intact.
+- **Ctrl+K command palette**: switch mode, open any sample or recent generated build,
+  restyle with any pack, open the guide, jump to library/dashboard/mod. Every command is a
+  navigation, so the palette can never do something a link could not.
+- `/editor` and `/layouter` live on as search-preserving redirects (old shared links keep
+  working, `?build=…&p.*` intact); AppNav collapses Editor+Layouter into one Studio entry.
+
 ## Remaining roadmap (approved, not yet built)
 
-In priority order; see the architecture notes in the original plan for detail:
-
-1. **Studio shell**: `/studio` with command palette hosting the editor and the layouter as
-   modes; `/editor` + `/layouter` become search-preserving redirects.
-2. **N-variation generation** with a thumbnail picker, and complexity-based effort/model
+1. **N-variation generation** with a thumbnail picker, and complexity-based effort/model
    routing — both gated on live eval numbers.
 
 Explicitly rejected (with reasons recorded in the plan): a Mojang texture atlas (asset

@@ -34,12 +34,15 @@ export interface AppNavProps {
    * Passed in rather than read from the router because two of these routes are reached with a
    * query the other one also accepts — `/dashboard?signup=1` and `/library?signup=1` — and a
    * path comparison would be quietly wrong the day another such pair appears.
+   *
+   * `editor` and `layouter` are still accepted: both pages live on as the studio's two modes
+   * and keep passing their own names, which the bar maps onto the one Studio entry.
    */
-  current?: 'dashboard' | 'editor' | 'layouter' | 'library' | 'mod';
+  current?: 'dashboard' | 'studio' | 'editor' | 'layouter' | 'library' | 'mod';
 }
 
 interface Destination {
-  key: NonNullable<AppNavProps['current']>;
+  key: 'dashboard' | 'studio' | 'library' | 'mod';
   to: string;
   label: string;
   /** Signed-out visitors get the tour, not the filing cabinet. */
@@ -53,13 +56,19 @@ const DESTINATIONS: Destination[] = [
     label: 'Dashboard',
     requiresAccount: false,
   },
-  { key: 'editor', to: '/editor', label: 'Editor', requiresAccount: false },
-  // Two ways to make the same thing, so they sit next to each other: blocks in the editor,
-  // rooms in the layouter. Neither needs an account, and both end at the same exports.
-  { key: 'layouter', to: '/layouter', label: 'Layouter', requiresAccount: false },
+  // One entry for both ways of making a building — blocks in Build mode, rooms in Plan mode.
+  // They used to be two nav entries ("Editor", "Layouter"), which made two hands of one tool
+  // read as two tools; the studio's own switch does the mode picking now.
+  { key: 'studio', to: '/studio', label: 'Studio', requiresAccount: false },
   { key: 'library', to: '/library', label: 'Library', requiresAccount: true },
   { key: 'mod', to: '/mod', label: 'Minecraft mod', requiresAccount: false },
 ];
+
+/** The nav entry a page's `current` maps onto — the studio's modes both mean Studio. */
+function entryFor(current: AppNavProps['current']): Destination['key'] | undefined {
+  if (current === 'editor' || current === 'layouter') return 'studio';
+  return current;
+}
 
 export function AppNav({ current }: AppNavProps) {
   const auth = useAuth();
@@ -81,7 +90,7 @@ export function AppNav({ current }: AppNavProps) {
                 key={destination.key}
                 className="nav__link"
                 to={destination.to}
-                aria-current={current === destination.key ? 'page' : undefined}
+                aria-current={entryFor(current) === destination.key ? 'page' : undefined}
               >
                 {destination.label}
               </NavLink>

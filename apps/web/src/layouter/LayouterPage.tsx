@@ -193,7 +193,17 @@ export function LayouterPage() {
         if (!cancelled) setImportError((err as Error).message);
       })
       .finally(() => {
-        if (!cancelled) setSearchParams({}, { replace: true });
+        if (!cancelled) {
+          // Drop only our own param. The studio shell keeps its mode in the same query, and
+          // wiping it would flip the page out of Plan mode the moment a plan finished loading.
+          setSearchParams(
+            (params) => {
+              params.delete('plan');
+              return params;
+            },
+            { replace: true },
+          );
+        }
       });
     return () => {
       cancelled = true;

@@ -31,17 +31,26 @@ export interface GrabResult {
   cells: number;
   /** True when the flood stopped at the cap — nothing was taken, see below. */
   capped: boolean;
+  /**
+   * The box the structure occupies, or null when nothing was found.
+   *
+   * Returned so a caller can *select* the thing instead of taking it. The bounding box is not
+   * the structure — a tree's box holds a lot of air, and a chimney's holds some roof — but it
+   * is a box you can see, which is the difference between a selection you can trust and one
+   * you have to guess at.
+   */
+  bounds: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } | null;
 }
 
 export function grabStructure(grid: VoxelGrid, hit: VoxelHit, cap: number = GRAB_CAP): GrabResult {
   const { size, voxels } = grid;
   if (hit.x < 0 || hit.y < 0 || hit.z < 0 || hit.x >= size.x || hit.y >= size.y || hit.z >= size.z) {
-    return { clip: null, op: null, cells: 0, capped: false };
+    return { clip: null, op: null, cells: 0, capped: false, bounds: null };
   }
 
   const start = voxelIndex(size, hit.x, hit.y, hit.z);
   if ((voxels[start] ?? AIR_INDEX) === AIR_INDEX) {
-    return { clip: null, op: null, cells: 0, capped: false };
+    return { clip: null, op: null, cells: 0, capped: false, bounds: null };
   }
 
   const layer = size.x * size.z;
@@ -60,7 +69,7 @@ export function grabStructure(grid: VoxelGrid, hit: VoxelHit, cap: number = GRAB
     // A structure one cell over the cap is refused whole rather than truncated: half a
     // grabbed statue in the clipboard and the other half still standing is worse than a
     // clear "too big".
-    if (collected.length > cap) return { clip: null, op: null, cells: collected.length, capped: true };
+    if (collected.length > cap) return { clip: null, op: null, cells: collected.length, capped: true, bounds: null };
 
     const y = Math.floor(index / layer);
     const rem = index - y * layer;
@@ -130,5 +139,6 @@ export function grabStructure(grid: VoxelGrid, hit: VoxelHit, cap: number = GRAB
     op: builder.build(),
     cells: collected.length,
     capped: false,
+    bounds: { min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } },
   };
 }

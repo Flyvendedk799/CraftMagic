@@ -130,8 +130,11 @@ try {
 			return {
 				build: document.querySelector('.editor').dataset.build,
 				name: dd[0], size: dd[1], blocks: dd[2],
-				restoredButton: [...document.querySelectorAll('.hud__actions button')]
-					.some((b) => b.textContent.includes('✦')),
+				// The generated build now lives in the build menu rather than in a wall of buttons,
+				// so the question is whether the menu knows about it — the ✦ prefix that used to
+				// mark it apart went away with the wall.
+				restoredButton:
+					document.querySelector('.buildmenu__name')?.textContent === 'Stone Watchtower',
 				params: document.querySelectorAll('.param').length,
 				hudWidth: Math.round(hud.getBoundingClientRect().width),
 				viewportWidth: window.innerWidth,
@@ -159,7 +162,7 @@ try {
 	console.log(`build          ${restored.build}`);
 	console.log(`name           ${restored.name}`);
 	console.log(`size / blocks  ${restored.size} / ${restored.blocks}`);
-	console.log(`picker button  ${restored.restoredButton ? 'present' : 'MISSING'}`);
+	console.log(`build menu     ${restored.restoredButton ? 'names the restored build' : 'WRONG BUILD'}`);
 	console.log(`param sliders  ${restored.params}`);
 	console.log(`hud width      ${restored.hudWidth}px of ${restored.viewportWidth}px viewport`);
 	console.log(`with 400 chars ${stretched}px  ${stretched === restored.hudWidth ? '(unchanged — cap holds)' : '(GREW — cap failed)'}`);

@@ -69,6 +69,7 @@ import { ScalePanel } from './ScalePanel.js';
 import { Section } from './Section.js';
 import { ShortcutHelp } from './ShortcutHelp.js';
 import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
+import { BuildMenu, type BuildOption } from './BuildMenu.js';
 import { ToolPalette, type RegionAction } from './ToolPalette.js';
 import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor } from './preview.js';
@@ -902,6 +903,46 @@ export function EditorPage() {
   const [importError, setImportError] = useState<string | null>(null);
 
   /**
+   * Everything openable, grouped by where it came from.
+   *
+   * Samples first because that is where a new session starts, and in first-seen order rather
+   * than sorted — alphabetising would bury the four things a newcomer needs under whatever
+   * everyone else has named their own builds.
+   */
+  const buildOptions = useMemo<BuildOption[]>(() => {
+    const options: BuildOption[] = BUILD_IDS.map((id) => ({
+      id,
+      group: 'Samples',
+      name: BUILD_LABELS[id] ?? id,
+    }));
+    for (const entry of saved) {
+      options.push({ id: entry.id, group: 'Generated', name: entry.name, title: entry.name });
+    }
+    // Murals are listed apart because a picture behaves differently from a program: there is
+    // nothing to resize and nothing to refine.
+    for (const entry of murals) {
+      options.push({
+        id: entry.id,
+        group: 'From a picture',
+        name: entry.name,
+        title: `${entry.name} — built from a picture`,
+      });
+    }
+    for (const entry of imported) {
+      options.push({
+        id: entry.id,
+        group: 'Imported',
+        name: entry.name,
+        title: `${entry.name} — imported from a schematic`,
+      });
+    }
+    return options;
+  }, [saved, murals, imported]);
+
+  const buildName =
+    buildOptions.find((option) => option.id === buildId)?.name ?? BUILD_LABELS[buildId] ?? buildId;
+
+  /**
    * Open a file as a build: a `.schem` becomes voxels, a program `.json` becomes a program.
    *
    * The two paths land in different stores on purpose — a schematic has no recipe and gets
@@ -1079,6 +1120,9 @@ export function EditorPage() {
           marker={ghost ? null : anchor}
           region={ghost ? null : (partHighlight ?? draggedRegion)}
           regionDrag={!ghost && !assembly.assembling && tool === 'select'}
+          dragMode={
+            ghost || assembly.assembling ? 'none' : TOOL_BY_ID[tool].drag === 'region' ? 'none' : TOOL_BY_ID[tool].drag
+          }
           onRegionDrag={ghost || assembly.assembling ? undefined : onRegionDrag}
           preview={ghost || assembly.assembling ? null : preview}
           onProgress={setRemaining}
@@ -1091,78 +1135,38 @@ export function EditorPage() {
       </div>
 
       <section className="hud hud--top">
-        {/* The wordmark moved into the bar above, so this is a panel heading now rather than
-            a second brand. It still has to be the h1: it is the only heading on the page
-            that names what this screen is for. */}
-        <h1 className="hud__title">Voxel editor</h1>
-        <p className="hud__sub">Pick a build, or start from an empty plot.</p>
+        {/* The build you are in, and one way to another one.
 
-        <div className="hud__actions">
-          {BUILD_IDS.map((id) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={buildId === id}
-              onClick={() => guard({ kind: 'build', build: id })}
-            >
-              {BUILD_LABELS[id] ?? id}
-            </button>
-          ))}
-          {saved.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              aria-pressed={buildId === entry.id}
-              onClick={() => guard({ kind: 'build', build: entry.id })}
-              title={entry.name}
-            >
-              ✦ {entry.name}
-            </button>
-          ))}
-          {/* Pictures are listed with the builds because that is what they are, and marked
-              apart because a mural behaves differently from a program: nothing to resize and
-              nothing to refine. */}
-          {murals.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              aria-pressed={buildId === entry.id}
-              onClick={() => guard({ kind: 'build', build: entry.id })}
-              title={`${entry.name} — built from a picture`}
-            >
-              ▧ {entry.name}
-            </button>
-          ))}
-          {imported.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              aria-pressed={buildId === entry.id}
-              onClick={() => guard({ kind: 'build', build: entry.id })}
-              title={`${entry.name} — imported from a schematic`}
-            >
-              ⬇ {entry.name}
-            </button>
-          ))}
-          {/* Import is a build source like the picker rows above it: a .schem opens as
-              voxels, a program .json opens with its sliders live. */}
-          <label className="plans__import" title="Open a .schem or a program .json">
-            Import…
-            <input
-              type="file"
-              accept=".schem,.schematic,application/json,.json"
-              onChange={(event) => {
-                void onImportFile(event.target.files?.[0]);
-                event.target.value = '';
-              }}
-            />
-          </label>
-          {importError && (
-            <p className="tools__notice" role="alert">
-              {importError}
-            </p>
-          )}
-        </div>
+            This was a heading, a subtitle and a growing wall of buttons — every sample, every
+            generation, every mural, every import — above the tools. Choosing a build happens
+            once a session; the tools are used every second, and each new generation pushed
+            them further under the fold. `BuildMenu` says what is open and holds the rest. */}
+        <h1 className="hud__title hud__title--sr">Voxel editor</h1>
+        <BuildMenu
+          current={buildId}
+          currentName={buildName}
+          summary={`${session.grid.size.x}×${session.grid.size.y}×${session.grid.size.z}`}
+          options={buildOptions}
+          onPick={(id) => guard({ kind: 'build', build: id })}
+          importControl={
+            <label className="plans__import" title="Open a .schem or a program .json">
+              Import…
+              <input
+                type="file"
+                accept=".schem,.schematic,application/json,.json"
+                onChange={(event) => {
+                  void onImportFile(event.target.files?.[0]);
+                  event.target.value = '';
+                }}
+              />
+            </label>
+          }
+        />
+        {importError && (
+          <p className="tools__notice" role="alert">
+            {importError}
+          </p>
+        )}
 
         <Section id="tools" title="Edit" summary={session.edits > 0 ? `${session.edits} edits` : undefined}>
         <ToolPalette
@@ -1425,7 +1429,19 @@ export function EditorPage() {
             {preview && <em className="hover-readout__preview"> · {preview.label}</em>}
           </>
         ) : (
-          <>drag to orbit · scroll to zoom · click to {TOOL_BY_ID[tool].verb}</>
+          <>
+            {/* Two facts, and which two depends on the tool. A line that still said "drag to
+                orbit" under a tool whose drag paints would be teaching the wrong gesture, and
+                one that said all four wrapped onto a second row. */}
+            {TOOL_BY_ID[tool].dragVerb ? (
+              <>
+                drag to {TOOL_BY_ID[tool].dragVerb} · click to {TOOL_BY_ID[tool].verb} ·
+                right-drag to orbit
+              </>
+            ) : (
+              <>drag to orbit · scroll to zoom · click to {TOOL_BY_ID[tool].verb}</>
+            )}
+          </>
         )}
       </aside>
 

@@ -321,7 +321,7 @@ try {
 	check('nothing has been evicted yet', opened.evicted === 0, `${opened.evicted}`);
 
 	/**
-	 * Move the view a fixed distance, by panning with the right mouse button.
+	 * Move the view a fixed distance, by panning with the middle mouse button.
 	 *
 	 * The obvious way to move here is the editor's own WASD flight, and it is the wrong one:
 	 * the keys are integrated per frame, and the number of frames a headless page runs while
@@ -330,8 +330,11 @@ try {
 	 * delta rather than a duration, so the same drag always moves the same distance, and the
 	 * test can be about eviction instead of about luck.
 	 *
-	 * Right button because that is OrbitControls' pan, and because the canvas's own pointer
-	 * handling only ever claims the primary button — a right drag reaches the camera intact.
+	 * Middle button because that is where pan now lives. It used to be the right one, until the
+	 * left button was handed to the tools — a plain drag paints — and the camera took the right
+	 * button for orbit and the middle for pan. Panning with the right button after that change
+	 * orbits instead, so the camera never leaves home and nothing is ever evicted: this driver
+	 * failed three checks that way, correctly, while the renderer was working fine.
 	 */
 	const pan = async (dx, dy) => {
 		const rect = await evaluate(`(() => {
@@ -341,19 +344,19 @@ try {
 		const from = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
 
 		await send('Input.dispatchMouseEvent', {
-			type: 'mousePressed', x: from.x, y: from.y, button: 'right', buttons: 2, clickCount: 1, pointerType: 'mouse',
+			type: 'mousePressed', x: from.x, y: from.y, button: 'middle', buttons: 4, clickCount: 1, pointerType: 'mouse',
 		});
 		for (let i = 1; i <= 8; i++) {
 			await send('Input.dispatchMouseEvent', {
 				type: 'mouseMoved',
 				x: from.x + (dx * i) / 8,
 				y: from.y + (dy * i) / 8,
-				button: 'right', buttons: 2, pointerType: 'mouse',
+				button: 'middle', buttons: 4, pointerType: 'mouse',
 			});
 			await sleep(20);
 		}
 		await send('Input.dispatchMouseEvent', {
-			type: 'mouseReleased', x: from.x + dx, y: from.y + dy, button: 'right', buttons: 0, clickCount: 1, pointerType: 'mouse',
+			type: 'mouseReleased', x: from.x + dx, y: from.y + dy, button: 'middle', buttons: 0, clickCount: 1, pointerType: 'mouse',
 		});
 
 		// Damping means the pan arrives over several frames, and a static page runs none of

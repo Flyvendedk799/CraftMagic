@@ -86,6 +86,13 @@ export interface EditorCanvasProps {
    * without a modifier key, on a surface whose default gesture is spinning the camera.
    */
   regionDrag?: boolean;
+  /**
+   * What a plain primary drag starting on the build means for the active tool.
+   *
+   * `stroke` paints every cell it crosses; `endpoints` reports the first and last; `none`
+   * leaves the drag to the camera, which is what every tool used to do.
+   */
+  dragMode?: 'stroke' | 'endpoints' | 'none';
   /** A selection being drawn or moved. See `RegionDrag`. */
   onRegionDrag?: (drag: RegionDrag) => void;
   /** Outline of what the next click would change. */
@@ -153,6 +160,20 @@ export function EditorCanvas(props: EditorCanvasProps) {
         zoomSpeed={0.9}
         // Stop just short of horizontal so the build never flips below the ground plane.
         maxPolarAngle={Math.PI * 0.495}
+        /*
+         * Right orbits, middle pans, and the left button is left for the tools.
+         *
+         * The default mapping gives orbit to the left button, which is why painting needed
+         * Shift: the drag was already spoken for. Moving the camera onto the buttons nothing
+         * else uses is what frees the obvious gesture — and it has to be *both* of them,
+         * because a left-drag on empty space still orbits and a build that fills the
+         * viewport leaves no empty space to press.
+         */
+        mouseButtons={{
+          LEFT: THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.PAN,
+          RIGHT: THREE.MOUSE.ROTATE,
+        }}
       />
     </Canvas>
   );
@@ -172,6 +193,7 @@ function Scene({
   marker,
   region,
   regionDrag,
+  dragMode,
   onRegionDrag,
   preview,
   onProgress,
@@ -270,6 +292,7 @@ function Scene({
         layerFloor={layerFloor}
         region={region}
         regionDrag={regionDrag}
+        dragMode={dragMode}
         onHover={onHover}
         onClick={onClick}
         onStroke={onStroke}
@@ -715,6 +738,7 @@ function Picker({
   layerFloor,
   region,
   regionDrag = false,
+  dragMode = 'none',
   onHover,
   onClick,
   onStroke,
@@ -727,6 +751,8 @@ function Picker({
   region?: Box | null;
   /** True while a tool that owns rectangular selections is active. */
   regionDrag?: boolean;
+  /** What a plain primary drag on the build means for the active tool. */
+  dragMode?: 'stroke' | 'endpoints' | 'none';
   onHover?: (hit: VoxelHit | null) => void;
   onClick?: (hit: VoxelHit) => void;
   onStroke?: (hits: VoxelHit[]) => void;
@@ -752,8 +778,8 @@ function Picker({
   notifyRegion.current = onRegionDrag;
   // Read inside the pointer handlers, which are bound once — a re-bind on every selection
   // change would drop the gesture halfway through the drag that caused it.
-  const live = useRef({ region, regionDrag });
-  live.current = { region, regionDrag };
+  const live = useRef({ region, regionDrag, dragMode });
+  live.current = { region, regionDrag, dragMode };
 
   useEffect(() => {
     const canvas = gl.domElement;
@@ -796,8 +822,17 @@ function Picker({
     let downAt: { x: number; y: number; button: number } | null = null;
     const DRAG_SLOP = 4;
 
-    /** Cells crossed by a Shift-drag, oldest first. Null when no stroke is in progress. */
+    /** Cells crossed by an editing drag, oldest first. Null when no stroke is in progress. */
     let stroke: VoxelHit[] | null = null;
+
+    /**
+     * A two-point drag — Line, dragged from one end of the run to the other.
+     *
+     * Delivered as the two clicks the tool already understands rather than as a new kind of
+     * event: Line has always been anchor-then-end, and a drag is just a faster way to say
+     * the same two things.
+     */
+    let endpoints: VoxelHit | null = null;
 
     /**
      * A selection being drawn or moved.
@@ -887,9 +922,38 @@ function Picker({
         }
       }
 
-      // A stroke takes the camera's drag away for its duration, so it starts only on the
-      // exact gesture that asked for it: primary button, Shift held, and a tool that wants
-      // strokes at all.
+      /*
+       * A plain drag that starts ON THE BUILD belongs to the tool.
+       *
+       * This is the rule the box tool has always used one branch above — press the build to
+       * draw, press the sky to spin — applied to the tools people reach for first. Painting
+       * used to need Shift because the left button was the camera's; the camera now has the
+       * right and middle buttons, so the obvious gesture is free.
+       *
+       * Controls go off at press rather than after a few pixels of movement. Waiting would
+       * let the camera consume the first frames of every stroke, and a viewport that lurches
+       * each time you start painting is worse than one that needs a different button to spin.
+       * A press that never moves is still a click: `up` sorts that out.
+       */
+      if (event.button === 0 && !event.shiftKey && live.current.dragMode !== 'none') {
+        const at = cast(event);
+        if (at) {
+          if (live.current.dragMode === 'endpoints') {
+            endpoints = at;
+          } else if (notifyStroke.current) {
+            stroke = [at];
+          }
+          if (endpoints || stroke) {
+            if (controls) controls.enabled = false;
+            canvas.setPointerCapture(event.pointerId);
+            event.preventDefault();
+            return;
+          }
+        }
+      }
+
+      // Shift-drag still works, and still works where a plain drag would not: it needs no
+      // hit, so it can start on the sky and paint onto the ground plane.
       if (event.button !== 0 || !event.shiftKey || !notifyStroke.current) return;
       const first = cast(event);
       stroke = first ? [first] : [];
@@ -922,10 +986,34 @@ function Picker({
         return;
       }
 
-      if (stroke) {
-        endStroke(true);
+      const moved =
+        !!downAt &&
+        (Math.abs(event.clientX - downAt.x) > DRAG_SLOP || Math.abs(event.clientY - downAt.y) > DRAG_SLOP);
+
+      if (endpoints) {
+        const from = endpoints;
+        endpoints = null;
+        if (controls) controls.enabled = true;
+        const to = moved ? cast(event) : null;
+        // Both ends in one gesture, or — when the pointer never moved — the first end only,
+        // which leaves the anchor standing for a second click exactly as it always did.
+        notifyClick.current?.(from);
+        if (to) notifyClick.current?.(to);
         downAt = null;
         return;
+      }
+
+      if (stroke) {
+        // A press that never moved is a click, not a one-cell stroke. Routing it through the
+        // click path is what keeps Alt-click sampling and the tools' own single-click
+        // behaviour working when the pointer merely twitched.
+        if (!moved && !event.shiftKey) {
+          endStroke(false);
+        } else {
+          endStroke(true);
+          downAt = null;
+          return;
+        }
       }
 
       const start = downAt;
@@ -949,6 +1037,12 @@ function Picker({
     const cancel = (event: PointerEvent) => {
       endBoxDrag(event, false);
       endStroke(false);
+      // An abandoned endpoint drag must hand the camera back; it is the one gesture that
+      // disables the controls without owning a `stroke` to end.
+      if (endpoints) {
+        endpoints = null;
+        if (controls) controls.enabled = true;
+      }
       downAt = null;
     };
 
@@ -960,6 +1054,7 @@ function Picker({
     return () => {
       // A teardown mid-stroke (a new grid, an unmount) must not leave the camera frozen.
       if (stroke) endStroke(false);
+      if (endpoints && controls) controls.enabled = true;
       canvas.removeEventListener('pointermove', move);
       canvas.removeEventListener('pointerleave', leave);
       canvas.removeEventListener('pointerdown', down);

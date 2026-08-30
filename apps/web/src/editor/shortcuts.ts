@@ -9,18 +9,31 @@
  */
 
 import type { ShortcutGroup } from './ShortcutHelp.js';
-import { TOOLS } from './toolset.js';
+import { TOOL_GROUPS, toolsInGroup } from './toolset.js';
 
 export const EDITOR_SHORTCUTS: readonly ShortcutGroup[] = [
+  // Grouped the way the palette is, and by the same argument: a flat list of nine digits is
+  // a lookup table, while three short lists are something a person can hold in their head.
+  ...TOOL_GROUPS.map((group) => ({
+    title: group.label,
+    rows: toolsInGroup(group.id).map((tool) => ({ keys: tool.key, what: tool.label })),
+  })),
   {
-    title: 'Tools',
-    rows: TOOLS.map((tool) => ({ keys: tool.key, what: tool.label })),
+    title: 'The pointer',
+    rows: [
+      { keys: 'Drag on the build', what: 'Whatever the tool does — paint, erase, a line, a box' },
+      { keys: 'Click', what: 'The same thing, once' },
+      { keys: 'Drag on the sky', what: 'Orbit' },
+      { keys: 'Right-drag', what: 'Orbit from anywhere, including over the build' },
+      { keys: 'Middle-drag', what: 'Pan' },
+      { keys: 'Scroll', what: 'Zoom' },
+    ],
   },
   {
     title: 'Editing',
     rows: [
       { keys: 'Alt + click', what: 'Pick the block under the pointer, from any tool' },
-      { keys: 'Shift + drag', what: 'Keep placing or erasing along the drag, as one undo step' },
+      { keys: 'Shift + drag', what: 'Paint even where the press missed the build — onto the ground plane' },
       { keys: 'Esc', what: 'Cancel the corner in progress' },
       { keys: 'Ctrl + Z', what: 'Undo' },
       { keys: 'Ctrl + Shift + Z', what: 'Redo' },

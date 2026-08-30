@@ -138,6 +138,27 @@ remainder of the approved roadmap for follow-up work.
   compositor felt like running — the same gesture moved anywhere from 100 blocks to off the
   plot. It pans with a pointer delta instead.
 
+**Editor UX (S8):**
+- **A plain drag paints.** It needed Shift because the left button belonged to the camera,
+  which is backwards from every tool anyone has used and is the first thing a new user
+  tries. The camera moved to the right and middle buttons, so a left-drag that starts on
+  the build belongs to the tool — the rule the Box tool has always used, applied to Place,
+  Erase and Line. A press that never moves is still a single click; a press on the sky
+  still orbits; Shift-drag still works and still works where a plain drag cannot, since it
+  needs no hit and can paint onto the ground plane.
+- **Nine equal buttons became three families** — Draw, Select, Replace — on one four-column
+  grid, with an icon each. A flat row made Swap look like a sibling of Place; it is
+  find-and-replace across the whole build. The digits did not move: this codebase's rule is
+  that a shortcut changing under someone's fingers is worse than one never advertised, so
+  the badge is small and dim and the numbers read out of order on purpose.
+- **The build wall became a menu.** Four samples, every generation, every mural, every
+  import and an Import control sat above the tools and grew with use — the least-used thing
+  on screen taking the most room, pushing the editing controls under the fold a little
+  further with each generation. One row now names what is open and holds the rest.
+- `tools/verify-gestures.mjs`, 13 checks, driving real CDP mouse buttons: a drag paints and
+  costs one undo, a click still places exactly one, the sky still orbits, and a right-drag
+  orbits over the build.
+
 ## Remaining roadmap (approved, not yet built)
 
 1. **N-variation generation** with a thumbnail picker, and complexity-based effort/model

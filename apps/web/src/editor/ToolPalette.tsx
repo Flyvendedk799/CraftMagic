@@ -17,7 +17,8 @@ import { RegionPanel, type RegionAction } from './RegionPanel.js';
 import type { BoxCorner } from './tools/boxSelect.js';
 import { MAX_BRUSH_RADIUS, type BrushShape } from './tools/brush.js';
 import type { Clip, StampMode } from './tools/clipboard.js';
-import { TOOL_BY_ID, TOOLS, type ToolId } from './toolset.js';
+import { ToolIcon } from './ToolIcons.js';
+import { TOOL_BY_ID, TOOL_GROUPS, TOOLS, toolsInGroup, type ToolId } from './toolset.js';
 
 export type { ToolId } from './toolset.js';
 export type { RegionAction } from './RegionPanel.js';
@@ -84,26 +85,38 @@ export function ToolPalette(props: ToolPaletteProps) {
   return (
     <div className="tools">
 
-      <div className="tools__row">
-        {TOOLS.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className="tools__tool"
-            // A stable hook for the headless drivers. They used to match on the button's text,
-            // which broke the moment the shortcut digit was added inside it.
-            data-tool={entry.id}
-            aria-pressed={props.tool === entry.id}
-            title={`${entry.hint}  (${entry.key})`}
-            onClick={() => props.onTool(entry.id)}
-          >
-            {entry.label}
-            <span className="tools__key" aria-hidden="true">
-              {entry.key}
-            </span>
-          </button>
-        ))}
-      </div>
+      {/* Three families on one four-column grid, so the columns line up down the panel and
+          the shorter groups read as deliberately short rather than as a ragged wrap. A flat
+          row of nine made Swap look like a sibling of Place; it is find-and-replace across
+          the whole build, and grouping is what says so without a paragraph. */}
+      {TOOL_GROUPS.map((group) => (
+        <div className="tools__group" key={group.id}>
+          <p className="tools__grouplabel" title={group.hint}>
+            {group.label}
+          </p>
+          <div className="tools__grid">
+            {toolsInGroup(group.id).map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className="tools__tool"
+                // A stable hook for the headless drivers. They used to match on the button's
+                // text, which broke the moment the shortcut digit was added inside it.
+                data-tool={entry.id}
+                aria-pressed={props.tool === entry.id}
+                title={`${entry.hint}  (${entry.key})`}
+                onClick={() => props.onTool(entry.id)}
+              >
+                <ToolIcon tool={entry.id} />
+                {entry.label}
+                <span className="tools__key" aria-hidden="true">
+                  {entry.key}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
 
       <p className="tools__hint">
         {spec.hint}{' '}

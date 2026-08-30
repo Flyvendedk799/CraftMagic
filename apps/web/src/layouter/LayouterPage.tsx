@@ -34,9 +34,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { expand, paletteColors, paletteFlags, type VoxelGrid } from '@craftmagic/core';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { expand, paletteColors, paletteFlags, voxelIndex, type BuildPart, type VoxelGrid } from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorCanvas.js';
+import type { VoxelHit } from '../editor/raycast.js';
 import { ExportBar } from '../editor/ExportBar.js';
 import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild } from '../editor/builds.js';
@@ -53,11 +54,13 @@ import { IssuesPanel, issueSummary } from './IssuesPanel.js';
 import { PlanCanvas } from './PlanCanvas.js';
 import { RoomSchedule, scheduleSummary } from './RoomSchedule.js';
 import { SitePanel } from './SitePanel.js';
+import { getBuild } from '../library/library.js';
 import {
   addItem,
   countItems,
   findItem,
   floorHeight,
+  normalizePlan,
   planId,
   removeItem,
   replaceItem,
@@ -167,6 +170,35 @@ export function LayouterPage() {
     },
     [session, frame],
   );
+
+  // Open a plan saved in the library: `/layouter?plan=lib:<row>`. One fetch, then the param
+  // is dropped from the URL so a reload afterwards keeps whatever the user has since drawn
+  // rather than stamping the library copy back over it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const planParam = searchParams.get('plan');
+  useEffect(() => {
+    if (!planParam?.startsWith('lib:')) return;
+    let cancelled = false;
+    getBuild(planParam.slice(4))
+      .then((detail) => {
+        if (cancelled) return;
+        if (!detail.plan) {
+          setImportError('That library build has no plan saved with it — only its blocks.');
+          return;
+        }
+        load(normalizePlan(detail.plan));
+        setImportError(null);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setImportError((err as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setSearchParams({}, { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [planParam, load, setSearchParams]);
 
   // A plan that lost a storey — an undo, a delete, an import — must not leave the canvas
   // editing a floor that no longer exists.
@@ -474,6 +506,31 @@ export function LayouterPage() {
     [load],
   );
 
+  /**
+   * Click a wall in the model, select the item that drew it on the plan.
+   *
+   * The chain is the compiler's provenance tag run backwards: voxel → part (the expander's
+   * `origin` array) → component path → the component's `id`, whose prefix is the plan item's
+   * id. Anything without a tag — the ground, a furnishing detail op — falls through silently;
+   * a click that selects nothing reads as a miss, which it is.
+   */
+  const onModelClick = useCallback(
+    (hit: VoxelHit) => {
+      if (hit.ground || !built.partOf) return;
+      const partId = built.partOf[voxelIndex(built.grid.size, hit.x, hit.y, hit.z)];
+      if (!partId) return;
+      const part = built.parts.find((entry) => entry.id === partId);
+      const match = part?.path.match(/^components\[(\d+)\]$/);
+      const componentId = match ? built.program.components[Number(match[1])]?.id : undefined;
+      const found = componentId ? findItem(plan, componentId.split('.')[0]!) : null;
+      if (!found) return;
+      setFloorIndex(found.floorIndex);
+      setSelectedId(found.item.id);
+      setNotice(null);
+    },
+    [built, plan, setSelectedId],
+  );
+
   // What the model shows, as a cut and a camera framing. Recomputed from the deferred build
   // rather than the live plan so the cut and the geometry it is cutting are the same age — a
   // clip against a grid one keystroke ahead flickers a slab in and out during a drag.
@@ -688,6 +745,9 @@ export function LayouterPage() {
           program={built.program}
           name={plan.name}
           detached={false}
+          // The drawing rides beside the building it compiles to, so a library save from
+          // here can be reopened *as a plan* — walls still walls — not just as blocks.
+          plan={plan}
           // The guide is offered as a button below rather than as a link: it needs the compiled
           // program registered under an id first, and doing that on every keystroke would fill
           // the generated-build store with a hundred drafts of the same building.
@@ -824,6 +884,7 @@ export function LayouterPage() {
           paletteFlags={built.paletteFlags}
           clip={shown.clip}
           view={view}
+          onClick={onModelClick}
         />
 
         {/* Says which storey you are looking at, because every mode but Whole shows one and
@@ -899,6 +960,9 @@ interface Built {
   paletteFlags: Uint8Array;
   blockCount: number;
   messages: string[];
+  /** Per-voxel part id from the provenance expansion, for click-to-select. Null on failure. */
+  partOf: Uint16Array | null;
+  parts: BuildPart[];
 }
 
 /**
@@ -912,7 +976,9 @@ interface Built {
 function buildFrom(plan: LayoutPlan): Built {
   const compiled = compilePlan(plan);
   try {
-    const result = expand(compiled.program);
+    // Provenance costs one extra array per compile, and compiles are already deferred behind
+    // the drag — it is what lets a click on the model land back on the plan item that drew it.
+    const result = expand(compiled.program, { provenance: true });
     return {
       program: compiled.program,
       origin: compiled.origin,
@@ -925,6 +991,8 @@ function buildFrom(plan: LayoutPlan): Built {
         ...result.errors.map((issue) => `${issue.path}: ${issue.message}`),
         ...result.warnings.map((issue) => `${issue.path}: ${issue.message}`),
       ],
+      partOf: result.origin,
+      parts: result.parts,
     };
   } catch (error) {
     return {
@@ -935,6 +1003,8 @@ function buildFrom(plan: LayoutPlan): Built {
       paletteFlags: paletteFlags(EMPTY_GRID.palette),
       blockCount: 0,
       messages: [...compiled.warnings, (error as Error).message],
+      partOf: null,
+      parts: [],
     };
   }
 }

@@ -72,15 +72,22 @@ remainder of the approved roadmap for follow-up work.
   validated with a live eval run — this box has no API key; run `tools/eval/run.mjs --live`
   before shipping the prompt to production.*
 
+**Layouter round-trip (S3):**
+- The compiler tags every component with the plan item that drew it (the additive `id`
+  field; room labels ride as `label`). Clicking a wall in the 3D model resolves voxel →
+  part → component id → plan item and selects it on the plan, jumping storeys if needed.
+- **Plans persist server-side**: migration 006 adds `plan jsonb` to builds; a library save
+  from the layouter carries the drawing beside program + voxels, the library card grows a
+  "Plan" action, and `/layouter?plan=lib:<id>` reopens it — walls still walls.
+- An L-shape whose room overlap is exactly wall-deep no longer warns (locked by test).
+
 ## Remaining roadmap (approved, not yet built)
 
 In priority order; see the architecture notes in the original plan for detail:
 
-1. **Layouter round-trip**: item↔component provenance via the additive `id` field,
-   server-side plan persistence (`plan jsonb`), L-shaped rooms via rect union.
-2. **Studio shell**: `/studio` with command palette hosting the editor and the layouter as
+1. **Studio shell**: `/studio` with command palette hosting the editor and the layouter as
    modes; `/editor` + `/layouter` become search-preserving redirects.
-3. **N-variation generation** with a thumbnail picker, and complexity-based effort/model
+2. **N-variation generation** with a thumbnail picker, and complexity-based effort/model
    routing — both gated on live eval numbers.
 
 Explicitly rejected (with reasons recorded in the plan): a Mojang texture atlas (asset

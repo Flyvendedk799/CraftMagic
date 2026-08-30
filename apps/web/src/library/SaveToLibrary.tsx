@@ -21,6 +21,8 @@ export interface SaveToLibraryProps {
   detached: boolean;
   /** The hand-edit layer, read at save time so renders never pay for serialising it. */
   getEdits?: () => EditLayer | null;
+  /** The layouter's drawing. Stored beside the build so it can be reopened as a plan. */
+  plan?: unknown;
 }
 
 type State =
@@ -29,14 +31,21 @@ type State =
   | { kind: 'saved'; id: string }
   | { kind: 'error'; message: string };
 
-export function SaveToLibrary({ name, grid, program, detached, getEdits }: SaveToLibraryProps) {
+export function SaveToLibrary({ name, grid, program, detached, getEdits, plan }: SaveToLibraryProps) {
   const auth = useAuth();
   const [state, setState] = useState<State>({ kind: 'idle' });
 
   const save = useCallback(async () => {
     setState({ kind: 'saving' });
     try {
-      const saved = await saveToLibrary({ name, grid, program, detached, edits: getEdits?.() ?? null });
+      const saved = await saveToLibrary({
+        name,
+        grid,
+        program,
+        detached,
+        edits: getEdits?.() ?? null,
+        plan: plan ?? null,
+      });
       setState({ kind: 'saved', id: saved.id });
     } catch (err) {
       const message =
@@ -45,7 +54,7 @@ export function SaveToLibrary({ name, grid, program, detached, getEdits }: SaveT
           : (err as Error).message;
       setState({ kind: 'error', message });
     }
-  }, [name, grid, program, detached, getEdits]);
+  }, [name, grid, program, detached, getEdits, plan]);
 
   if (auth.status !== 'signedIn') {
     return (

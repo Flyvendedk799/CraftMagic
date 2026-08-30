@@ -56,6 +56,41 @@ describe('compilePlan', () => {
     expect(program.size.y).toBe(8);
   });
 
+  it('tags every component with the plan item that drew it', () => {
+    const plan = cottage();
+    const roomId = plan.floors[0]!.items[0]!.id;
+    const doorId = plan.floors[0]!.items[1]!.id;
+    const { program } = compilePlan(plan);
+
+    // Every component names its plan item (suffixes count extra emissions from one item).
+    expect(program.components.every((component) => component.id)).toBe(true);
+    const itemsOf = program.components.map((component) => component.id!.split('.')[0]);
+    expect(itemsOf).toContain('foundation');
+    expect(itemsOf).toContain('roof');
+    expect(itemsOf).toContain(roomId);
+    expect(itemsOf).toContain(doorId);
+    // Ids stay unique — the diff-refine tool addresses ops to them.
+    expect(new Set(program.components.map((c) => c.id)).size).toBe(program.components.length);
+    // The room's label rides on its first component, for the outliner.
+    const roomFirst = program.components.find((c) => c.id === roomId);
+    expect(roomFirst?.label).toBe('Room');
+  });
+
+  it('resolves a clicked voxel back to the plan item, through provenance', () => {
+    const plan = cottage();
+    const roomId = plan.floors[0]!.items[0]!.id;
+    const compiled = compilePlan(plan);
+    const result = expand(compiled.program, { provenance: true });
+
+    // The wall corner at build (1,2,1) — the click-to-select chain the page runs.
+    const partId = result.origin![voxelIndex(result.grid.size, 1, 2, 1)]!;
+    expect(partId).toBeGreaterThan(0);
+    const part = result.parts.find((entry) => entry.id === partId)!;
+    const match = part.path.match(/^components\[(\d+)\]$/)!;
+    const componentId = compiled.program.components[Number(match[1])]!.id!;
+    expect(componentId.split('.')[0]).toBe(roomId);
+  });
+
   it('builds a foundation, a slab, a wall ring and a ceiling at the right heights', () => {
     const { grid, errors } = build(cottage());
     expect(errors).toEqual([]);

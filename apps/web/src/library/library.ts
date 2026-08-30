@@ -18,6 +18,8 @@ export interface LibraryBuild {
   blockCount: number;
   /** False once a build has been hand-edited: only its voxels describe it. */
   hasProgram: boolean;
+  /** True when a layouter plan was saved beside the build — it can reopen in the layouter. */
+  hasPlan: boolean;
   detached: boolean;
   createdAt: string;
   updatedAt: string;
@@ -31,6 +33,8 @@ export interface LibraryBuildDetail {
   program: BuildProgram | null;
   /** The hand-edit layer, on builds saved since it existed. Null on older rows. */
   edits: EditLayer | null;
+  /** The layouter drawing this build was compiled from, when it was saved from the layouter. */
+  plan: unknown;
   grid: { size: { x: number; y: number; z: number }; palette: string[]; voxels: number[] };
 }
 
@@ -88,6 +92,7 @@ export function saveToLibrary(input: {
   program: BuildProgram | null;
   detached: boolean;
   edits?: EditLayer | null;
+  plan?: unknown;
 }): Promise<{ id: string; blockCount: number }> {
   return request(
     '/api/builds',
@@ -97,6 +102,7 @@ export function saveToLibrary(input: {
       detached: input.detached,
       program: input.program ?? undefined,
       edits: input.edits ?? undefined,
+      plan: input.plan ?? undefined,
       grid: {
         size: input.grid.size,
         palette: input.grid.palette,

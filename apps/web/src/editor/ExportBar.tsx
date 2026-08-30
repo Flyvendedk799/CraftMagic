@@ -31,9 +31,11 @@ export interface ExportBarProps {
   blockCount: number;
   /** The hand-edit layer for the library save, fetched at click time. Optional: pages with no session pass nothing. */
   getEdits?: () => EditLayer | null;
+  /** The layouter's drawing, saved beside the compiled build so it can be reopened as a plan. */
+  plan?: unknown;
 }
 
-export function ExportBar({ grid, program, name, detached, guideHref, blockCount, getEdits }: ExportBarProps) {
+export function ExportBar({ grid, program, name, detached, guideHref, blockCount, getEdits, plan }: ExportBarProps) {
   const [written, setWritten] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -111,7 +113,7 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
       {!empty && (
         <>
           <Section id="save" title="Save" defaultOpen={false}>
-            <SaveToLibrary name={name} grid={grid} program={program} detached={detached} getEdits={getEdits} />
+            <SaveToLibrary name={name} grid={grid} program={program} detached={detached} getEdits={getEdits} plan={plan} />
           </Section>
           {/* Open by default: this is the headline feature and it used to sit below the fold,
               where nobody found it. */}

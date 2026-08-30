@@ -48,6 +48,36 @@ describe('validatePlan', () => {
     expect(result.unreachable.size).toBe(0);
   });
 
+  it('does not warn about an L-shape whose overlap is exactly wall-deep', () => {
+    // Two rooms forming an L: the vertical bar and the horizontal bar overlap by one wall
+    // thickness, which is the shared-wall arrangement the snapping produces and the compiler
+    // builds correctly. Only an overlap thicker than a wall in both directions is one room
+    // eating into another.
+    const lShape = createPlan({
+      wallThickness: 1,
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 7, d: 12 }, { label: 'Bar' }),
+          createRoom({ x: 16, z: 10, w: 8, d: 6 }, { label: 'Wing' }),
+          createDoor(12, 21, 'south'),
+          createDoor(16, 12, 'east', { open: true }),
+        ]),
+      ],
+    });
+    expect(codes(lShape)).not.toContain('rooms_overlap');
+
+    const eating = createPlan({
+      wallThickness: 1,
+      floors: [
+        createFloor(floorName(0), [
+          createRoom({ x: 10, z: 10, w: 7, d: 12 }, { label: 'Bar' }),
+          createRoom({ x: 13, z: 12, w: 8, d: 6 }, { label: 'Wing' }),
+        ]),
+      ],
+    });
+    expect(codes(eating)).toContain('rooms_overlap');
+  });
+
   it('does not walk through a window', () => {
     const sealed = createPlan({
       name: 'Sealed',

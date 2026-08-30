@@ -34,6 +34,8 @@ export interface BuildRow {
 	detached: boolean;
 	/** The hand-edit layer, when the client saved one. Null on old rows and clean builds. */
 	edits: unknown;
+	/** The layouter plan the build was compiled from, when saved from the layouter. */
+	plan: unknown;
 }
 
 /** A library listing entry: everything but the voxels, which are megabytes. */
@@ -45,6 +47,8 @@ export interface BuildSummary {
 	sizeZ: number;
 	blockCount: number;
 	hasProgram: boolean;
+	/** True when the row carries a layouter plan — the client offers "open in the layouter". */
+	hasPlan: boolean;
 	detached: boolean;
 	createdAt: Date;
 	updatedAt: Date;
@@ -109,12 +113,13 @@ export class AgentStore {
 		userId?: string | null;
 		detached?: boolean;
 		edits?: unknown;
+		plan?: unknown;
 		/** False for the row "send to game" writes as transport; true for saved work. */
 		inLibrary?: boolean;
 	}): Promise<string> {
 		const { rows } = await this.db.query<{ id: string }>(
-			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, edits, in_library)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, edits, plan, in_library)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 			 RETURNING id`,
 			[
 				input.userId ?? null,
@@ -128,6 +133,7 @@ export class AgentStore {
 				Buffer.from(input.voxels),
 				input.detached ?? false,
 				input.edits === undefined || input.edits === null ? null : JSON.stringify(input.edits),
+				input.plan === undefined || input.plan === null ? null : JSON.stringify(input.plan),
 				input.inLibrary ?? false,
 			],
 		);
@@ -144,7 +150,7 @@ export class AgentStore {
 	 */
 	async getBuildForAgent(id: string): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan
 			 FROM builds WHERE id = $1`,
 			[id],
 		);
@@ -153,7 +159,7 @@ export class AgentStore {
 
 	async getBuild(id: string, scope: OwnerScope): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan
 			 FROM builds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
 			[id, scope],
 		);
@@ -182,7 +188,8 @@ export class AgentStore {
 	async listBuilds(scope: OwnerScope, limit = 200): Promise<BuildSummary[]> {
 		const { rows } = await this.db.query(
 			`SELECT id, name, size_x, size_y, size_z, block_count,
-			        program IS NOT NULL AS has_program, detached, created_at, updated_at
+			        program IS NOT NULL AS has_program, plan IS NOT NULL AS has_plan,
+			        detached, created_at, updated_at
 			 FROM builds
 			 WHERE user_id IS NOT DISTINCT FROM $1::uuid AND in_library
 			 ORDER BY created_at DESC LIMIT $2`,
@@ -196,6 +203,7 @@ export class AgentStore {
 			sizeZ: row.size_z,
 			blockCount: row.block_count,
 			hasProgram: row.has_program,
+			hasPlan: row.has_plan,
 			detached: row.detached,
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
@@ -503,6 +511,7 @@ function toBuild(row: Record<string, unknown>): BuildRow {
 		program: row.program,
 		detached: row.detached as boolean,
 		edits: row.edits ?? null,
+		plan: row.plan ?? null,
 	};
 }
 

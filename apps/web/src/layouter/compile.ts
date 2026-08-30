@@ -90,10 +90,29 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
 
   const components: Component[] = [];
   let dropped = 0;
-  const push = (component: Component) => {
+  /**
+   * How many components each plan item has emitted, for id suffixes.
+   *
+   * Every component is tagged with the id of the plan item that produced it — the round-trip
+   * half of the compiler. An item that emits several (a room is a slab, a wall ring and a
+   * lid) numbers the extras `<id>.2`, `<id>.3`, so ids stay unique for the diff-refine tool
+   * while `id.split('.')[0]` still names the item. Clicking a wall in the 3D model resolves
+   * voxel → part → component id → plan item through exactly this tag.
+   */
+  const emitted = new Map<string, number>();
+  const push = (component: Component, itemId?: string, label?: string) => {
     if (components.length >= MAX_COMPONENTS) {
       dropped++;
       return;
+    }
+    if (itemId) {
+      const n = (emitted.get(itemId) ?? 0) + 1;
+      emitted.set(itemId, n);
+      component = {
+        ...component,
+        id: n === 1 ? itemId : `${itemId}.${n}`,
+        ...(label && n === 1 ? { label } : {}),
+      };
     }
     components.push(component);
   };
@@ -112,7 +131,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
       pos: [base.x - origin.x, 0, base.z - origin.z],
       size: [base.w, plan.foundation, base.d],
       fill: { type: 'solid', role: 'foundation' },
-    });
+    }, 'foundation', 'Foundation');
   }
 
   for (let index = 0; index < floors; index++) {
@@ -134,7 +153,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
               pos: [rect.x - ox, slabY, rect.z - oz],
               size: [rect.w, 1, rect.d],
               fill: { type: 'solid', role: item.floorRole ?? 'floor' },
-            });
+            }, item.id, item.label.trim() || undefined);
           }
           push({
             type: 'hollow_box',
@@ -144,7 +163,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             floor: false,
             ceiling: false,
             fill: { type: 'solid', role: item.wallRole ?? 'wall_primary' },
-          });
+          }, item.id, item.label.trim() || undefined);
           // The lid. On the top storey it doubles as the roof deck, which is why `roof: none`
           // is the one case that leaves a room open to the sky.
           if (!top || plan.roof !== 'none') {
@@ -153,7 +172,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
               pos: [rect.x - ox, ceilingY, rect.z - oz],
               size: [rect.w, 1, rect.d],
               fill: { type: 'solid', role: top ? 'roof_primary' : 'ceiling' },
-            });
+            }, item.id);
           }
           break;
         }
@@ -168,7 +187,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.x - ox, wallY, item.z - oz],
             size,
             fill: { type: 'solid', role: item.role ?? 'wall_primary' },
-          });
+          }, item.id);
           break;
         }
 
@@ -178,7 +197,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.rect.x - ox, wallY, item.rect.z - oz],
             size: [item.rect.w, item.raise, item.rect.d],
             fill: { type: 'solid', role: item.role ?? 'floor' },
-          });
+          }, item.id);
           break;
 
         case 'column':
@@ -187,7 +206,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.x - ox, wallY, item.z - oz],
             size: [item.size, wallHeight, item.size],
             fill: { type: 'solid', role: item.role ?? 'frame' },
-          });
+          }, item.id);
           break;
 
         default:
@@ -201,7 +220,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   if (plan.roof !== 'none' && floors > 0) {
     const topRooms = unionRect(roomRectsOf(plan.floors[floors - 1]!.items));
     const roofOver = topRooms ?? drawn;
-    if (roofOver) for (const component of roofComponents(plan, roofOver, deckY, origin)) push(component);
+    if (roofOver) for (const component of roofComponents(plan, roofOver, deckY, origin)) push(component, 'roof', 'Roof');
   }
 
   // --- pass 2: carves ----------------------------------------------------
@@ -222,7 +241,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
           pos: [item.rect.x - ox, slabY, item.rect.z - oz],
           size: [item.rect.w, 1, item.rect.d],
           fill: { type: 'solid', role: 'air' },
-        });
+        }, item.id);
       } else if (item.kind === 'stair') {
         const run = stairFootprint(item.x, item.z, item.facing, item.width, storey);
         push({
@@ -230,7 +249,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
           pos: [run.x - ox, slabY + storey, run.z - oz],
           size: [run.w, 1, run.d],
           fill: { type: 'solid', role: 'air' },
-        });
+        }, item.id);
       }
     }
   }
@@ -252,7 +271,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
           pos: [item.x - ox, wallY, item.z - oz],
           size: horizontal ? [along, item.height, across] : [across, item.height, along],
           fill: { type: 'solid', role: 'air' },
-        });
+        }, item.id);
         // An open doorway is the carve and nothing else — the archway between two rooms that
         // a swinging door would only get in the way of.
         if (!item.open) {
@@ -263,7 +282,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             width: item.width,
             height: item.height,
             role: 'door',
-          });
+          }, item.id);
         }
         // A lintel over the opening, when a wall course remains above it to replace. It is
         // what stops a doorway reading as a slot cut with a saw.
@@ -273,7 +292,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.x - ox, wallY + item.height, item.z - oz],
             size: horizontal ? [along, 1, across] : [across, 1, along],
             fill: { type: 'solid', role: 'frame' },
-          });
+          }, item.id);
         }
       } else if (item.kind === 'window') {
         const across = plan.wallThickness;
@@ -290,7 +309,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
           pos: [item.x - ox, wallY + item.sill, item.z - oz],
           size: opening,
           fill: { type: 'solid', role: 'air' },
-        });
+        }, item.id);
         const inset = Math.floor((across - 1) / 2);
         push({
           type: 'box',
@@ -299,7 +318,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             : [item.x - ox + inset, wallY + item.sill, item.z - oz],
           size: horizontal ? [item.length, item.height, 1] : [1, item.height, item.length],
           fill: { type: 'solid', role: 'window' },
-        });
+        }, item.id);
 
         // Sill below and lintel above, in the frame role — the trim that makes an opening
         // read as a window rather than as a missing bit of wall. Each only where a wall
@@ -313,7 +332,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.x - ox, wallY + item.sill - 1, item.z - oz],
             size: frame,
             fill: { type: 'solid', role: 'frame' },
-          });
+          }, item.id);
         }
         if (item.sill + item.height < storey - 1) {
           push({
@@ -321,7 +340,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.x - ox, wallY + item.sill + item.height, item.z - oz],
             size: frame,
             fill: { type: 'solid', role: 'frame' },
-          });
+          }, item.id);
         }
       }
     }
@@ -352,7 +371,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
         steps: storey,
         role: 'stair',
         style: 'stairs',
-      });
+      }, item.id);
     }
   }
 

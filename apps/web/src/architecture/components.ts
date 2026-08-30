@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { encodePrefab, type Prefab } from '@craftmagic/core';
 import { useAuth } from '../library/auth.js';
-import { getBuild, gridOf, listBuilds, type LibraryBuild } from '../library/library.js';
+import { getBuild, gridOf, listBuilds, type BuildKind, type LibraryBuild } from '../library/library.js';
 import type { LayoutPlan, PlaceItem } from './plan.js';
 
 /** What the shelf shows: enough to pick a build without fetching its blocks. */
@@ -41,6 +41,8 @@ export interface ShelfEntry {
   blockCount: number;
   /** True when only its voxels describe it — worth saying, since it cannot be re-generated. */
   detached: boolean;
+  /** Which tier made it. The shelves filter on this. */
+  kind: BuildKind;
 }
 
 /** A build whose blocks have arrived, ready for the compiler. */
@@ -76,6 +78,7 @@ function entryOf(build: LibraryBuild): ShelfEntry {
     d: build.sizeZ,
     blockCount: build.blockCount,
     detached: build.detached,
+    kind: build.kind,
   };
 }
 

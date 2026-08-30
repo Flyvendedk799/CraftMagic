@@ -1140,3 +1140,30 @@
   line-height: 1.5;
   opacity: 0.6;
 }
+
+/* Which kinds of component the shelf is showing.
+
+   Only rendered once there is an interior to hide, so a library of nothing but structures
+   never grows a filter that can only ever be a no-op. */
+.shelf__kinds {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.shelf__kind {
+  flex: 1;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.6875rem;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.shelf__kind[aria-pressed='true'] {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}

@@ -10,6 +10,15 @@
 import { decodeVoxels, encodeVoxels, fromBase64, toBase64 } from '@craftmagic/core';
 import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 
+/**
+ * Which tier of the studio made a build, and therefore what it is good for.
+ *
+ * `structure` is a thing you place; `interior` is what goes inside one. The component shelves
+ * filter on it, so that a world is not offered back to you as something to put inside a world.
+ * Mirrors the server's union and the CHECK in `007_build_kind.sql`.
+ */
+export type BuildKind = 'structure' | 'interior';
+
 export interface LibraryBuild {
   id: string;
   name: string;
@@ -18,6 +27,7 @@ export interface LibraryBuild {
   sizeZ: number;
   blockCount: number;
   /** False once a build has been hand-edited: only its voxels describe it. */
+  kind: BuildKind;
   hasProgram: boolean;
   /** True when a layouter plan was saved beside the build — it can reopen in Architecture mode. */
   hasPlan: boolean;
@@ -29,6 +39,7 @@ export interface LibraryBuild {
 export interface LibraryBuildDetail {
   id: string;
   name: string;
+  kind: BuildKind;
   blockCount: number;
   detached: boolean;
   program: BuildProgram | null;
@@ -121,12 +132,15 @@ export function saveToLibrary(input: {
   detached: boolean;
   edits?: EditLayer | null;
   plan?: unknown;
+  /** Defaults to a structure — the thing you place, and what the editor makes. */
+  kind?: BuildKind;
 }): Promise<{ id: string; blockCount: number }> {
   return request(
     '/api/builds',
     json('POST', {
       name: input.name,
       library: true,
+      kind: input.kind ?? 'structure',
       detached: input.detached,
       program: input.program ?? undefined,
       edits: input.edits ?? undefined,

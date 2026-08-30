@@ -863,6 +863,8 @@ export function ArchitecturePage() {
           // The drawing rides beside the building it compiles to, so a library save from
           // here can be reopened *as a plan* — walls still walls — not just as blocks.
           plan={plan}
+          // Everything Architecture mode compiles is the inside of a building.
+          kind="interior"
           // The guide is offered as a button below rather than as a link: it needs the compiled
           // program registered under an id first, and doing that on every keystroke would fill
           // the generated-build store with a hundred drafts of the same building.

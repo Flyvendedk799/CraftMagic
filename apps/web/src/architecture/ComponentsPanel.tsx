@@ -18,6 +18,7 @@
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { BuildKind } from '../library/library.js';
 import type { ShelfEntry } from './components.js';
 
 export interface ComponentsPanelProps {
@@ -46,11 +47,26 @@ export function ComponentsPanel({
 }: ComponentsPanelProps) {
   const [query, setQuery] = useState('');
 
+  /**
+   * Structures by default.
+   *
+   * An interior is the inside of a building: rooms, furniture, a stairwell. Offering one as a
+   * thing to drop on a plot offers a house's insides with no house. They stay reachable,
+   * because placing a prefabricated room inside a larger shell is a real thing to want — it is
+   * just not what you mean nine times in ten.
+   */
+  const [kinds, setKinds] = useState<BuildKind[]>(['structure']);
+
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return shelf;
-    return shelf.filter((entry) => entry.name.toLowerCase().includes(needle));
-  }, [shelf, query]);
+    return shelf.filter(
+      (entry) =>
+        kinds.includes(entry.kind) &&
+        (!needle || entry.name.toLowerCase().includes(needle)),
+    );
+  }, [shelf, query, kinds]);
+
+  const interiors = useMemo(() => shelf.filter((entry) => entry.kind === 'interior').length, [shelf]);
 
   if (status === 'signedOut') {
     return (
@@ -84,6 +100,32 @@ export function ComponentsPanel({
           aria-label="Search components"
           onChange={(event) => setQuery(event.target.value)}
         />
+      )}
+
+      {interiors > 0 && (
+        <div className="shelf__kinds" role="group" aria-label="Which components to show">
+          {(['structure', 'interior'] as const).map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              className="shelf__kind"
+              aria-pressed={kinds.includes(kind)}
+              onClick={() =>
+                setKinds((current) =>
+                  current.includes(kind)
+                    ? // Never leave nothing selected: an empty shelf with no explanation reads
+                      // as a broken library rather than as a filter.
+                      current.length === 1
+                      ? current
+                      : current.filter((k) => k !== kind)
+                    : [...current, kind],
+                )
+              }
+            >
+              {kind === 'structure' ? 'Structures' : 'Interiors'}
+            </button>
+          ))}
+        </div>
       )}
 
       <ul className="shelf__list">

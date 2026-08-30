@@ -56,6 +56,8 @@ import { createFurnish, floorHeight,
   type PlanItem,
   type Rect,
   type RoomItem,
+  createPlace,
+  placeFootprint,
 } from './plan.js';
 import type { LayoutToolId } from './toolset.js';
 
@@ -63,10 +65,34 @@ import type { LayoutToolId } from './toolset.js';
 const MIN_SCALE = 3;
 const MAX_SCALE = 48;
 
+/** A saved build chosen in the Components panel, ready to drop. */
+export interface PlaceChoice {
+  id: string;
+  name: string;
+  w: number;
+  d: number;
+  h: number;
+}
+
 export interface PlanCanvasProps {
   plan: LayoutPlan;
   floorIndex: number;
   tool: LayoutToolId;
+  /**
+   * Which saved build the Place tool will drop, or null when none is chosen.
+   *
+   * The tool refuses rather than guessing: a furnishing has an obvious default and a library
+   * does not, and the wrong building appearing under the cursor is worse than being asked.
+   */
+  placeChoice?: PlaceChoice | null;
+  /**
+   * True footprints for placed builds whose blocks have arrived, by item id.
+   *
+   * A placement carries its own remembered size so the plan can be drawn the instant it is
+   * restored; this supersedes it once the library has answered, which matters when a build has
+   * been edited since it was placed.
+   */
+  placeSizes?: ReadonlyMap<string, { w: number; d: number }>;
   /**
    * Every selected item, in the order they were picked.
    *
@@ -123,6 +149,8 @@ export function PlanCanvas({
   plan: wholePlan,
   floorIndex,
   tool,
+  placeChoice = null,
+  placeSizes,
   selectedIds,
   unreachable,
   showBelow,
@@ -485,6 +513,21 @@ export function PlanCanvas({
       onCreate(item);
       onSelect(item.id);
       onNotice('Placed. Pick the piece and turn it in the inspector.');
+      return;
+    }
+
+    if (tool === 'place') {
+      // Unlike a furnishing there is no sensible default to drop: "some build from your
+      // library" is a guess, and the wrong building appearing under the cursor is worse than
+      // being told to pick one.
+      if (!placeChoice) {
+        onNotice('Pick a saved build from the Components panel first.');
+        return;
+      }
+      const item = createPlace(at.x, at.z, placeChoice);
+      onCreate(item);
+      onSelect(item.id);
+      onNotice(`Placed "${placeChoice.name}". R turns it; it builds on this storey's floor.`);
     }
   }
 
@@ -500,7 +543,7 @@ export function PlanCanvas({
     selectedIds.length > 1
       ? selectionBounds(items, selectedIds, plan.wallThickness, plan.storeyHeight)
       : null;
-  const ghost = cursor && !drag ? ghostFor(tool, cursor, plan, runs) : null;
+  const ghost = cursor && !drag ? ghostFor(tool, cursor, plan, runs, placeChoice) : null;
 
   const selectedItem = selectedId ? items.find((entry) => entry.id === selectedId) ?? null : null;
 
@@ -604,7 +647,7 @@ export function PlanCanvas({
 
         {showBelow &&
           below.map((item) => (
-            <ItemShape key={`below-${item.id}`} item={item} plan={plan} faded />
+            <ItemShape key={`below-${item.id}`} item={item} plan={plan} placeSizes={placeSizes} faded />
           ))}
 
         {items.map((item) => (
@@ -612,6 +655,7 @@ export function PlanCanvas({
             key={item.id}
             item={item}
             plan={plan}
+            placeSizes={placeSizes}
             selected={selectedSet.has(item.id)}
             unreachable={unreachable.has(item.id)}
           />
@@ -939,6 +983,7 @@ function ghostFor(
   at: Point,
   plan: LayoutPlan,
   runs: ReturnType<typeof wallRuns>,
+  placeChoice: PlaceChoice | null,
 ): Rect | null {
   if (tool === 'door' || tool === 'window') {
     const span = tool === 'door' ? 1 : 2;
@@ -951,6 +996,12 @@ function ghostFor(
   if (tool === 'stair') return stairFootprint(at.x, at.z, 'south', 2, plan.storeyHeight);
   if (tool === 'column') return { x: at.x, z: at.z, w: 1, d: 1 };
   if (tool === 'furnish') return furnishingFootprint(furnishingById('chair'), at.x, at.z, 'south');
+  // The real footprint of the build that is about to be dropped — this is the one ghost that
+  // is worth being exact, because a saved building can be twenty blocks across and "where
+  // will it actually reach" is the whole question being asked before the click.
+  if (tool === 'place' && placeChoice) {
+    return { x: at.x, z: at.z, w: placeChoice.w, d: placeChoice.d };
+  }
   return null;
 }
 
@@ -958,12 +1009,14 @@ function ghostFor(
 function ItemShape({
   item,
   plan,
+  placeSizes,
   selected = false,
   faded = false,
   unreachable = false,
 }: {
   item: PlanItem;
   plan: LayoutPlan;
+  placeSizes?: ReadonlyMap<string, { w: number; d: number }>;
   selected?: boolean;
   faded?: boolean;
   unreachable?: boolean;
@@ -1082,6 +1135,50 @@ function ItemShape({
       return (
         <rect x={item.x} y={item.z} width={item.size} height={item.size} className={`${className} plan__column`} />
       );
+
+    case 'place': {
+      // Drawn as an outlined footprint with the build's name and a corner mark for which way
+      // it faces. Deliberately not a preview of its blocks: a floorplan is a drawing, the 3D
+      // model beside it is the render, and a thumbnail here would be unreadable at the size a
+      // 4-block shed occupies on screen.
+      const size = placeSizes?.get(item.id);
+      const rect = placeFootprint(item, size);
+      const cx = rect.x + rect.w / 2;
+      const cz = rect.z + rect.d / 2;
+      // The corner the build's own origin sits in, after the turn. It is the one visual cue
+      // that says which way round a symmetric-looking footprint has been turned.
+      const mark = [
+        { x: rect.x, z: rect.z },
+        { x: rect.x + rect.w, z: rect.z },
+        { x: rect.x + rect.w, z: rect.z + rect.d },
+        { x: rect.x, z: rect.z + rect.d },
+      ][item.turns]!;
+
+      return (
+        <g>
+          <rect
+            x={rect.x + 0.15}
+            y={rect.z + 0.15}
+            width={Math.max(0.1, rect.w - 0.3)}
+            height={Math.max(0.1, rect.d - 0.3)}
+            rx={0.3}
+            className={`${className} plan__place`}
+            data-loaded={size ? 'true' : 'false'}
+          />
+          <circle cx={mark.x} cy={mark.z} r={0.45} className="plan__place-mark" />
+          <text
+            x={cx}
+            y={cz}
+            className="plan__place-label"
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={Math.max(0.8, Math.min(1.4, Math.min(rect.w, rect.d) * 0.22))}
+          >
+            {item.name}
+          </text>
+        </g>
+      );
+    }
 
     case 'furnish': {
       // A furnishing draws as its footprint with the piece's initial letter and a facing

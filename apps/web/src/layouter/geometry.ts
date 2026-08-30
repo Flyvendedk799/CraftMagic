@@ -22,7 +22,7 @@
 
 import type { Face } from '@craftmagic/core';
 import { furnishingById, furnishingFootprint } from './furniture.js';
-import type { LayoutPlan, PlanAxis, PlanItem, Rect, RoomItem } from './plan.js';
+import { placeFootprint, type LayoutPlan, type PlanAxis, type PlanItem, type Rect, type RoomItem } from './plan.js';
 
 // Re-exported because every caller that measures with this module also has to name what it
 // measured, and importing the two halves from two files invites them to drift.
@@ -187,6 +187,13 @@ export function itemFootprint(item: PlanItem, wallThickness: number, storeyHeigh
 
     case 'furnish':
       return furnishingFootprint(furnishingById(item.itemId), item.x, item.z, item.facing);
+
+    // The footprint the plan remembers, not the library's. A placed build is drawn, selected
+    // and dragged before its blocks have arrived over the network, and every one of those
+    // needs a rectangle now. The catalogue's size supersedes it in the one place it matters —
+    // compiling — where waiting for the fetch is the correct behaviour anyway.
+    case 'place':
+      return placeFootprint(item);
   }
 }
 
@@ -235,6 +242,9 @@ export function hitTest(
     door: 0,
     window: 0,
     furnish: 0,
+    // With the furnishings: a placed build is a thing standing *in* the plan, so clicking one
+    // must beat the room it stands in — but a door drawn on top of it still wins.
+    place: 0,
     column: 1,
     stair: 2,
     opening: 3,

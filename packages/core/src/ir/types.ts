@@ -183,6 +183,24 @@ export type Component = ComponentTag &
       style?: 'stairs' | 'blocks';
     }
   | { type: 'group'; children: Component[]; transform?: Transform[] }
+  /**
+   * A finished build, stamped in whole.
+   *
+   * The odd one out on purpose: every other component describes a shape and re-derives itself
+   * when the build is resized, while this one is an artifact that comes out exactly as it went
+   * in. `pos` scales like any other coordinate, so a prefab moves with the building around it,
+   * but its own dimensions never do — halving a village should not produce half-resolution
+   * cottages. It is also the only component a *hand-edited* build can become, since no shape
+   * describes one.
+   *
+   * The voxels live in `program.prefabs` under `ref` rather than inline: the same watchtower
+   * placed at four corners is one entry and four of these.
+   *
+   * `turns` is quarter-turns clockwise about the prefab's own footprint, and `pos` is always
+   * the min corner of the result — so turning a placed building leaves it where it stands
+   * instead of swinging it away from the spot that was chosen for it.
+   */
+  | { type: 'prefab'; ref: string; pos: CVec3; turns?: 0 | 1 | 2 | 3 }
   );
 
 export type ComponentType = Component['type'];
@@ -209,10 +227,12 @@ export const COMPONENT_TYPES = [
 	'line',
 	'stairs_run',
 	'group',
+	'prefab',
 ] as const satisfies readonly ComponentType[];
 
 /** Fails to compile if a `ComponentType` is missing from `COMPONENT_TYPES`. */
 const COMPONENT_TYPE_GUARD: Record<ComponentType, true> = {
+	prefab: true,
 	box: true,
 	hollow_box: true,
 	cylinder: true,
@@ -275,6 +295,14 @@ export interface BuildProgram {
   /** Named numbers referenced by coordinate expressions as `$name`. Drive the UI sliders. */
   params?: Record<string, ProgramParam>;
   palette: Record<string, BlockRef | WeightedBlockRef[]>;
+  /**
+   * Finished builds this program stamps, keyed by the name its `prefab` components reference.
+   *
+   * Kept beside `palette` and for the same reason: it is a table of things placements point
+   * at, so placing one four times costs four references rather than four copies. Absent on
+   * every program that does not place one, which is almost all of them.
+   */
+  prefabs?: Record<string, Prefab>;
   /** Painter's order: later components overwrite earlier ones. `minecraft:air` carves. */
   components: Component[];
   details?: DetailOp[];
@@ -317,6 +345,8 @@ export const LIMITS = {
   maxParts: 65_534,
 } as const;
 
+import type { Prefab } from './prefab.js';
+
 export type ExpandIssueCode =
   | 'UNKNOWN_BLOCK'
   | 'UNDEFINED_ROLE'
@@ -326,6 +356,7 @@ export type ExpandIssueCode =
   | 'DETAIL_CAP'
   | 'BAD_STATE'
   | 'EMPTY_COMPONENT'
+  | 'UNKNOWN_PREFAB'
   /** A diff-refine op that could not be applied (unknown id, malformed shape). */
   | 'BAD_PATCH';
 

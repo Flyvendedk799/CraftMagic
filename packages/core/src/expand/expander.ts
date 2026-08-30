@@ -28,6 +28,7 @@ import type {
 import { AIR_BLOCK, COMPONENT_TYPES, LIMITS, voxelPosition } from '../ir/types.js';
 import { CoordError, clampParam, resolveCoord } from '../ir/coords.js';
 import { AxisScale, axisScales, scaledSize, type Scale3, type Size3 } from '../ir/scale.js';
+import { forEachPrefabRun, prefabPosition, turnedPrefabOffset, type Prefab } from '../ir/prefab.js';
 import { validateBlockRef } from '../registry/registry.js';
 import {
 	Brush,
@@ -83,7 +84,10 @@ export function expand(program: BuildProgram, options: ExpandOptions = {}): Expa
 		});
 	}
 
-	const ctx: ExpandContext = { base, size, scale, palette, params, errors, warnings, canvas, parts };
+	const ctx: ExpandContext = {
+		base, size, scale, palette, params, errors, warnings, canvas, parts,
+		prefabs: program.prefabs ?? {},
+	};
 
 	components.slice(0, LIMITS.maxComponents).forEach((component, index) => {
 		const path = `components[${index}]`;
@@ -218,6 +222,8 @@ interface ExpandContext {
 	warnings: ExpandIssue[];
 	canvas: VoxelCanvas;
 	parts: PartRegistry;
+	/** The program's prefab table, which `prefab` components reference by key. */
+	prefabs: Record<string, Prefab>;
 }
 
 /**
@@ -400,6 +406,10 @@ function describePart(component: Exclude<Component, { type: 'group' }>): Pick<Bu
 			return withFace(component.role, component.face);
 		case 'stairs_run':
 			return withFace(component.role, component.direction);
+		// A prefab is somebody else's whole building. It has as many roles as it has blocks,
+		// so claiming one would be a lie a build guide then repeats as a step heading.
+		case 'prefab':
+			return {};
 	}
 }
 
@@ -641,6 +651,11 @@ function draw(
 			return;
 		}
 
+		case 'prefab': {
+			stampPrefab(brush, component, path, ctx);
+			return;
+		}
+
 		case 'group':
 			drawGroup(brush, component, path, partKey, ctx);
 			return;
@@ -814,6 +829,71 @@ function scaleCorner(base: Vec3, ctx: ExpandContext): Vec3 {
  * about the middle of a build stays symmetric after a resize instead of both sliding the same
  * way and landing a block apart.
  */
+/**
+ * Stamp a prefab at a position.
+ *
+ * Every write goes through the brush, which means the frame handles both halves of a
+ * rotation: where a cell lands *and* what its blockstate becomes. A prefab inside a group
+ * turned 90° therefore comes out with its stairs facing the new way round, for free and by
+ * the same code path that already does it for a hand-written `stairs_run`.
+ *
+ * Runs are walked rather than cells: a saved cottage is 5,000 cells and 900 blocks, and the
+ * air is most of it. Skipping index 0 a run at a time is what keeps stamping a village
+ * closer to the cost of the blocks than of the volume.
+ */
+function stampPrefab(
+	brush: Brush,
+	component: Extract<Component, { type: 'prefab' }>,
+	path: string,
+	ctx: ExpandContext,
+): void {
+	const prefab = ctx.prefabs[component.ref];
+	if (!prefab) {
+		ctx.errors.push({
+			path: `${path}.ref`,
+			code: 'UNKNOWN_PREFAB',
+			message: `no prefab named "${component.ref}" — program.prefabs defines ${
+				Object.keys(ctx.prefabs).length === 0 ? 'none' : Object.keys(ctx.prefabs).join(', ')
+			}`,
+		});
+		return;
+	}
+
+	const [ox, oy, oz] = resolvePoint(component.pos, ctx);
+	const turns = ((component.turns ?? 0) % 4 + 4) % 4;
+
+	/**
+	 * A frame that turns the prefab about its own corner and then puts it where it was asked
+	 * for.
+	 *
+	 * Composed in this order deliberately: `rotated(translated(parent, by), …)` turns the local
+	 * coordinate *first* and adds the offset afterwards, which is the only arrangement that
+	 * means "turn this building, then stand it here". The other order turns the offset too and
+	 * flings the building across the plot.
+	 *
+	 * The offset carries `turnedPrefabOffset` because a turn about the corner throws the
+	 * footprint into negative space; correcting for it is what lets `pos` mean the min corner
+	 * whichever way the building faces.
+	 */
+	const shift = turnedPrefabOffset(prefab.size, turns);
+	const placed = brush.withFrame(
+		rotated(translated(brush.currentFrame, [ox + shift.x, oy, oz + shift.z]), turns, [0, 0, 0]),
+	);
+
+	forEachPrefabRun(prefab, (index, length, start) => {
+		if (index === 0) return;
+		const ref = prefab.palette[index];
+		// A run naming a palette slot the prefab does not have is corrupt data, not a shape
+		// question: skip it rather than interning `undefined` into the canvas palette.
+		if (!ref) return;
+
+		for (let step = 0; step < length; step++) {
+			const [dx, dy, dz] = prefabPosition(prefab, start + step);
+			placed.set(dx, dy, dz, ref);
+		}
+	});
+}
+
 function resolvePoint(v: CVec3, ctx: ExpandContext): Vec3 {
 	const raw = basePos(v, ctx);
 	return [

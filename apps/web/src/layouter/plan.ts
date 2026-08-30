@@ -35,7 +35,8 @@ export type ItemKind =
   | 'opening'
   | 'platform'
   | 'column'
-  | 'furnish';
+  | 'furnish'
+  | 'place';
 
 /** Min corner plus size, in blocks. `w` runs along x, `d` along z. */
 export interface Rect {
@@ -178,6 +179,37 @@ export interface FurnishItem {
   itemId: string;
 }
 
+/**
+ * A saved build from the library, placed on this storey.
+ *
+ * The only item whose contents come from outside the plan. Everything else here is drawn —
+ * a room is a rectangle, a chair is a catalogue entry — but this is a whole building somebody
+ * made earlier, and the plan holds only a reference to it. `compile.ts` turns it into a
+ * `prefab` component and the fetched blocks into an entry in `program.prefabs`.
+ *
+ * The size and name are copied in beside the reference, which is denormalisation on purpose.
+ * A plan is restored from storage before the library has answered, and the canvas has to draw
+ * *something* the moment it opens — a footprint that appears a second late, in the wrong
+ * place, is worse than one that is briefly a build out of date. The catalogue's copy wins
+ * whenever it has arrived; this is the fallback, and it is also all that is left to show if
+ * the build has since been deleted.
+ */
+export interface PlaceItem {
+  kind: 'place';
+  id: string;
+  x: number;
+  z: number;
+  /** Quarter-turns clockwise, matching the `prefab` component's own convention. */
+  turns: 0 | 1 | 2 | 3;
+  /** Library build id. */
+  buildId: string;
+  /** Last known name and unturned footprint, for drawing before the fetch lands. */
+  name: string;
+  w: number;
+  d: number;
+  h: number;
+}
+
 export type PlanItem =
   | RoomItem
   | WallItem
@@ -187,7 +219,8 @@ export type PlanItem =
   | OpeningItem
   | PlatformItem
   | ColumnItem
-  | FurnishItem;
+  | FurnishItem
+  | PlaceItem;
 
 export interface Floor {
   id: string;
@@ -292,6 +325,36 @@ export function isFace(value: unknown): value is Face {
 /** The axis a wall runs along, for a door or window that faces `face`. */
 export function axisForFace(face: Face): PlanAxis {
   return face === 'north' || face === 'south' ? 'x' : 'z';
+}
+
+/** A placed library build. The caller supplies what it knows; `normalizeItem` bounds it. */
+export function createPlace(
+  x: number,
+  z: number,
+  build: { id: string; name: string; w: number; d: number; h: number },
+  options: Partial<PlaceItem> = {},
+): PlaceItem {
+  return normalizeItem({
+    kind: 'place',
+    id: planId('place'),
+    x,
+    z,
+    turns: 0,
+    buildId: build.id,
+    name: build.name,
+    w: build.w,
+    d: build.d,
+    h: build.h,
+    ...options,
+  }) as PlaceItem;
+}
+
+/** The plan-space footprint a placement occupies, once turned. */
+export function placeFootprint(item: PlaceItem, size?: { w: number; d: number }): Rect {
+  const w = size?.w ?? item.w;
+  const d = size?.d ?? item.d;
+  const swapped = item.turns % 2 === 1;
+  return { x: item.x, z: item.z, w: swapped ? d : w, d: swapped ? w : d };
 }
 
 export function createRoom(rect: Rect, options: Partial<RoomItem> = {}): RoomItem {
@@ -503,6 +566,24 @@ export function normalizeItem(raw: unknown, site: { x: number; z: number } = DEF
         size: clampInt(item.size, 1, 4, 1),
         role: optionalRole(item.role),
       };
+
+    case 'place': {
+      const turns = clampInt(item.turns, 0, 3, 0) as 0 | 1 | 2 | 3;
+      return {
+        kind: 'place',
+        id,
+        x: clampInt(item.x, 0, site.x - 1, 0),
+        z: clampInt(item.z, 0, site.z - 1, 0),
+        turns,
+        buildId: typeof item.buildId === 'string' ? item.buildId : '',
+        name: typeof item.name === 'string' ? item.name.slice(0, 60) : 'Saved build',
+        // Clamped to the plot rather than to the site's remaining span: a building bigger than
+        // where it stands is a thing to show and warn about, not to silently shrink.
+        w: clampInt(item.w, 1, LIMITS.maxSite, 1),
+        d: clampInt(item.d, 1, LIMITS.maxSite, 1),
+        h: clampInt(item.h, 1, 320, 1),
+      };
+    }
 
     case 'furnish':
       return {

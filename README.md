@@ -689,6 +689,58 @@ test covers that:
 cd mod && JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew verifySchematic -Pschem=../out/oak-cottage.schem
 ```
 
+**Saved builds are components.** Every build in your library can be placed in a layout. Pick
+one in the layouter's Components panel, click the plan, and it lands on that storey's floor;
+place it again and it is two of them; `R` turns one a quarter. It compiles like everything
+else the layouter draws, so `.schem` download, the printable guide, the library and "Send to
+game" all carry it with no export code written twice.
+
+The IR gained a `prefab` component and a `program.prefabs` table for it. Everything else in
+the IR is parametric — a box knows its corners as expressions, so a resize re-derives it —
+which is exactly why a saved build could never be one: it is an artifact, and the point of
+placing it is that it comes out as the thing you saved. It is also the only way a
+**hand-edited** build can be reused at all, since no arrangement of shapes describes one.
+
+The voxels live in the table and components reference them by key, the way palette roles
+already work. Four corner towers are one entry and four `{ ref, pos, turns }` components: a
+quarter of the bytes, four legible placements instead of four walls of base64, and moving one
+tower that cannot touch the other three. They are run-length encoded over palette indices and
+base64'd, which packs a realistic cottage to under an eighth of its raw index array.
+
+Three things worth knowing:
+
+- **Turning has two halves and they must agree.** Positions and blockstates rotate through
+  different code, and a placed cottage whose stairs face into its own wall throws nothing.
+  It is done by composing the expander's existing frame —
+  `rotated(translated(parent, offset), turns, origin)` — so the same code that already turns a
+  hand-written `stairs_run` turns a prefab, and one inside a rotated `group` turns for free.
+  The composition order is load-bearing: turn the local coordinate first and add the offset
+  after, or the offset turns too and the building is flung across the plot.
+- **A prefab's position scales; its own size never does.** Halving a village gives the same
+  cottages closer together, not half-resolution cottages.
+- **The refine prompt withholds the table**, the way it already withholds `scale`. Each entry
+  is thousands of tokens the model cannot act on — it can only move, duplicate or remove the
+  components that place one, and those it still sees. The pipeline puts the table back
+  immediately after interpreting the reply, *before* the first expansion: validate first and
+  every placement reports `UNKNOWN_PREFAB`, buying a paid repair round to fix a problem we
+  created ourselves.
+
+A plan stores a build's **id** and fetches its blocks, so renaming a build renames it in every
+layout that places it and deleting one makes the layout say so rather than quietly drawing a
+stale copy. A placement also carries its own copy of the name and footprint, which is what
+lets a restored plan draw something the instant it opens instead of a second later in the
+wrong place.
+
+```bash
+node tools/verify-layouter-place.mjs    # shelf → click → compile → blocks → turn → reload
+```
+
+That driver deliberately places a **non-square** build: a 19×19 pavilion is unchanged by a
+quarter turn, so it cannot tell a working rotation from one that does nothing. It also places
+the same build twice and asserts the second costs exactly **one more component** — the property
+the prefab table exists for — and reloads the page, because restoring a plan fetches its blocks
+through an effect rather than a click and is a different path from placing one.
+
 ## Deployment
 
 **It is one service.** The Fastify process in `apps/server` serves the built frontend as

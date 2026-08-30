@@ -130,6 +130,9 @@ export const DEFAULT_DESIGN_SYSTEM: BuildGuideDesignSystem = {
 	},
 
 	typeLabels: {
+		// What a step calls a placed build. Not its name — the guide is instructions, and
+		// "Place the saved build" is the step, whichever building it happens to be.
+		prefab: 'Placed build',
 		box: 'Structure',
 		hollow_box: 'Walls',
 		cylinder: 'Tower',

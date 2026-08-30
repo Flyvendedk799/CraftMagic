@@ -391,7 +391,24 @@ export function refinePrompt(program: unknown, instruction: string, offerPatch =
 	// after it was written. Sending it would invite the model to reason about coordinates in a
 	// space it does not write in, and to drop or invent a value that the caller then has to
 	// second-guess. It is put back on whatever comes out.
-	const { scale: _scale, ...unscaled } = (program ?? {}) as Record<string, unknown>;
+	const { scale: _scale, prefabs, ...unscaled } = (program ?? {}) as Record<string, unknown>;
+
+	// Prefabs are withheld for the same reason as the scale, only more so. Each entry is a
+	// whole saved building as base64 — thousands of tokens the model cannot act on, since it
+	// cannot edit a prefab's blocks, only move, duplicate or delete the components that place
+	// it. Those components stay in the program and are three legible fields each. Sending the
+	// table would be paying, every refine, to show a language model a wall of base64.
+	// `pipeline.ts` puts it back on whatever comes out, which is what makes this safe.
+	const placed = Object.keys((prefabs ?? {}) as Record<string, unknown>);
+	const prefabNote = placed.length
+		? [
+				``,
+				`This build places ${placed.length} saved building${placed.length === 1 ? '' : 's'}` +
+					` (${placed.map((name) => `"${name}"`).join(', ')}). Their blocks are not shown and` +
+					` are not yours to write. You may move, duplicate or remove a \`prefab\` component;` +
+					` anything you leave alone is kept exactly.`,
+			]
+		: [];
 
 	// With the patch tool on offer the contract flips: the preferred answer is a short list of
 	// ops addressed to component ids, and re-emitting everything is the fallback for a
@@ -424,6 +441,8 @@ export function refinePrompt(program: unknown, instruction: string, offerPatch =
 		'```json',
 		JSON.stringify(unscaled, null, 1),
 		'```',
+		``,
+		...prefabNote,
 		``,
 		`Change it as follows:`,
 		``,

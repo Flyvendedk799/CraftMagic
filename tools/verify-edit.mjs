@@ -149,10 +149,21 @@ try {
 		return result.value;
 	};
 
+	/**
+	 * Poll for a condition, forcing a frame each time round.
+	 *
+	 * Headless Chrome stops compositing once the page is visually static, and this editor
+	 * reports both its meshing progress and its edit count from state that only advances when
+	 * frames are being produced. So a wait on a page that has genuinely finished can time out
+	 * having never been told. Capturing a throwaway frame is what forces a BeginFrame;
+	 * `requestAnimationFrame` does not, because with compositing stopped the callback never
+	 * runs and awaiting it hangs the driver outright.
+	 */
 	const waitFor = async (expression, label, timeoutMs = 30_000) => {
 		const deadline = Date.now() + timeoutMs;
 		while (Date.now() < deadline) {
 			if (await evaluate(expression)) return true;
+			await send('Page.captureScreenshot', { format: 'jpeg', quality: 1 });
 			await sleep(120);
 		}
 		throw new Error(`timed out waiting for ${label}`);

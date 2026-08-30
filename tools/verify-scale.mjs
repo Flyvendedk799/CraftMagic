@@ -91,10 +91,21 @@ try {
   await send('Runtime.enable');
   await send('Page.navigate', { url: `${ORIGIN}/?build=cottage` });
 
+  /**
+   * Wait for the mesh pipeline to drain.
+   *
+   * Meshing progress is reported from a `requestAnimationFrame` callback, and headless Chrome
+   * stops compositing once the page is visually static — so after a navigation settles, the
+   * last "remaining -> 0" tick can simply never be delivered and this waits out its whole
+   * timeout on a page that finished long ago. Capturing a throwaway frame is what forces a
+   * BeginFrame. `requestAnimationFrame` does *not* work here: with compositing stopped the
+   * callback never runs and awaiting it hangs outright.
+   */
   const settle = async () => {
     for (let i = 0; i < 100; i++) {
       if (await evaluate("document.querySelector('.editor')?.dataset.remaining === '0'")) return;
-      await sleep(200);
+      await send('Page.captureScreenshot', { format: 'jpeg', quality: 1 });
+      await sleep(150);
     }
     throw new Error('the editor never finished meshing');
   };

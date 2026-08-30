@@ -1336,3 +1336,99 @@
   font-family: inherit;
   font-size: var(--text-xs);
 }
+
+/* --- import -------------------------------------------------------------- */
+
+/* The file-input-as-button, same recipe as the layouter's plan import: the input itself is
+   hidden and the label wears the button clothes, because a bare file input cannot be styled
+   into the row of picker buttons it sits in. */
+.hud__actions .plans__import {
+  padding: 0.4rem 0.5rem;
+  font-size: var(--text-xs);
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: center;
+}
+
+.hud__actions .plans__import input {
+  display: none;
+}
+
+/* --- outliner ------------------------------------------------------------ */
+
+.outliner__empty,
+.outliner__note {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin: 0 0 0.35rem;
+}
+
+.outliner__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.outliner__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.1rem 0;
+}
+
+.outliner__row[data-hidden='true'] .outliner__name,
+.outliner__row[data-hidden='true'] .outliner__blocks {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.outliner__eye,
+.outliner__solo {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0.1rem 0.2rem;
+}
+
+.outliner__eye[aria-pressed='true'] {
+  color: var(--accent, #6ee7b7);
+}
+
+.outliner__solo {
+  opacity: 0;
+}
+
+.outliner__row:hover .outliner__solo {
+  opacity: 1;
+}
+
+.outliner__name {
+  flex: 1 1 auto;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  text-align: left;
+  padding: 0.15rem 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outliner__name:hover {
+  color: var(--accent, #6ee7b7);
+}
+
+.outliner__blocks {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

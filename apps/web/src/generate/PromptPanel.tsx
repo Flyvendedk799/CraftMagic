@@ -148,7 +148,7 @@ export function PromptPanel({
             : 'a small stone windmill with a wooden roof'
         }
         rows={3}
-        maxLength={600}
+        maxLength={2000}
         disabled={running}
         aria-label={onRefine ? 'Describe the change to make' : 'Describe the structure to build'}
       />

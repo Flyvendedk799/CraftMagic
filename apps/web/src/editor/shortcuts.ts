@@ -40,7 +40,7 @@ export const EDITOR_SHORTCUTS: readonly ShortcutGroup[] = [
       { keys: 'Esc', what: 'Dismiss the region, or the corner in progress' },
       { keys: 'Region → Copy', what: 'Copy the region to the clipboard' },
       { keys: 'R', what: 'Rotate the clipboard 90°, block states and all' },
-      { keys: 'M', what: 'Mirror the clipboard' },
+      { keys: 'M / Shift+M', what: 'Mirror the clipboard east–west / north–south' },
     ],
   },
   {

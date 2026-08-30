@@ -13,24 +13,30 @@
  */
 
 import {
+	applyProgramPatch,
+	assignComponentIds,
 	blockBudget,
 	expand,
 	fitToBudget,
 	isScaled,
+	looksLikePatch,
+	partialProgram,
 	type BuildProgram,
 	type ExpandIssue,
 	type ExpandResult,
 	type SizeChoice,
 } from '@craftmagic/core';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
+import { providerErrorFacts } from '@flyvendedk799/ai-auth';
+import { programPatchSchema } from './patchSchema.js';
 import { pictureBrief, refinePrompt, repairPrompt, sizeBrief, systemPrompt } from './prompt.js';
 import { schemaIssues } from './validate.js';
 import type { ModelId } from './pricing.js';
-import type { Provider, ProviderImage, ProviderSession } from './providers.js';
-import { TOOL_NAME } from './providers.js';
-import type { SpendLedger } from './spend.js';
+import type { Provider, ProviderImage, ProviderReply, ProviderSession } from './providers.js';
+import { PATCH_TOOL_NAME, TOOL_NAME } from './providers.js';
+import { BudgetExceededError, type SpendLedger } from './spend.js';
 
-export { TOOL_NAME } from './providers.js';
+export { PATCH_TOOL_NAME, TOOL_NAME } from './providers.js';
 
 export interface GenerateOptions {
 	prompt: string;
@@ -78,7 +84,16 @@ export interface GenerateOptions {
 
 export type ProgressEvent =
 	| { stage: 'thinking' }
-	| { stage: 'emitting'; components: number }
+	| {
+			stage: 'emitting';
+			components: number;
+			/**
+			 * A preview of the program so far — only fully-closed components, parsed from the
+			 * streaming tool JSON. Present at most every ~400ms; a client that ignores it sees
+			 * exactly the old behaviour.
+			 */
+			partial?: BuildProgram;
+	  }
 	| { stage: 'validating' }
 	| { stage: 'repairing'; issues: number }
 	| { stage: 'done'; blockCount: number };
@@ -115,9 +130,66 @@ const DEFAULT_MODEL: ModelId = 'claude-sonnet-5';
  */
 const DEFAULT_MAX_TOKENS = 16_000;
 
+/** How often the streaming preview is re-parsed and re-emitted, at most. */
+const PREVIEW_INTERVAL_MS = 400;
+
 export interface PipelineDeps {
 	provider: Provider;
 	ledger: SpendLedger;
+}
+
+/**
+ * Statuses worth one more try. Everything here means "the service, not the request": the same
+ * bytes sent again have a real chance of succeeding. A 400 or a 401 is excluded on purpose —
+ * retrying those re-sends a request that is wrong, at full price in latency.
+ */
+const TRANSIENT_STATUSES = new Set([408, 429, 500, 502, 503, 529]);
+const MAX_TRANSIENT_RETRIES = 2;
+/**
+ * A Retry-After beyond this is not a blip, it is the provider saying "come back later" —
+ * usually a plan out of headroom. Waiting it out inside one request would hold the SSE stream
+ * open for minutes to hide a fact the user is better off seeing.
+ */
+const MAX_RETRY_WAIT_MS = 15_000;
+
+/**
+ * How long to wait before retrying, or null when the error is not worth retrying.
+ *
+ * Trusts the provider's own Retry-After when it names one, otherwise backs off exponentially.
+ * The jitter is there for the day two requests fail together — without it they retry together
+ * too, against a service that just told them both it is overloaded.
+ */
+function transientDelayMs(err: unknown, attempt: number): number | null {
+	const facts = providerErrorFacts(err);
+	if (facts.status !== null) {
+		if (!TRANSIENT_STATUSES.has(facts.status)) return null;
+	} else {
+		// No HTTP status means the request may never have reached the provider — a dropped
+		// connection or a timeout. Anything else without a status is our own bug; retrying a
+		// bug just repeats it.
+		const text = err instanceof Error ? `${err.name} ${err.message}` : '';
+		if (!/connection|network|timeout|timed out|fetch failed|socket|econnreset|epipe|aborted/i.test(text)) {
+			return null;
+		}
+		if (err instanceof Error && err.name === 'AbortError') return null;
+	}
+	const wait = facts.retryAfter !== null ? facts.retryAfter * 1000 : 1500 * 2 ** attempt;
+	if (wait > MAX_RETRY_WAIT_MS) return null;
+	return wait + Math.floor(Math.random() * 500);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			signal?.removeEventListener('abort', onAbort);
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(new DOMException('aborted', 'AbortError'));
+		};
+		signal?.addEventListener('abort', onAbort, { once: true });
+	});
 }
 
 export async function generateBuild(
@@ -134,9 +206,18 @@ export async function generateBuild(
 	// must stay identical from one call to the next to stay that way.
 	// The order is the order a person would say it in: what to build, then what to build it
 	// from, then how big. A refine replaces the first of those with the program itself.
+	// The picture brief rides on a refine too, now: "make the tower look like this" with a
+	// reference image is exactly the request a refine is for, and the brief's framing —
+	// build the subject, not the photograph — reads the same either way.
+	// A refine gets its components tagged with ids first: the diff tool addresses its ops to
+	// them, and ids the program already carried (the layouter writes plan-item ids) survive
+	// untouched. This tagged copy — not the caller's original — is the base every patch
+	// applies against, so op targets and program contents can never disagree.
+	const refineBase = options.refineOf ? assignComponentIds(options.refineOf) : null;
+
 	const briefs = [
-		options.refineOf ? refinePrompt(options.refineOf, options.prompt) : options.prompt,
-		options.image && !options.refineOf ? pictureBrief() : null,
+		refineBase ? refinePrompt(refineBase, options.prompt, true) : options.prompt,
+		options.image ? pictureBrief() : null,
 		sizeBrief(options.size),
 	].filter((part): part is string => part !== null && part !== '');
 	const userContent = briefs.join('\n\n');
@@ -146,15 +227,40 @@ export async function generateBuild(
 	const estimatedInput = Math.ceil((system.length + userContent.length) / 3.8) + 500;
 	deps.ledger.assertCanAfford(model, estimatedInput, maxTokens, deps.provider.id);
 
-	const session = deps.provider.session({
-		model,
-		system,
-		schema,
-		maxTokens,
-		...(options.effort ? { effort: options.effort } : {}),
-		...(options.signal ? { signal: options.signal } : {}),
-		onComponents: (components) => options.onProgress?.({ stage: 'emitting', components }),
-	});
+	// The live preview: parse the streaming tool JSON into a partial program at most every
+	// PREVIEW_INTERVAL_MS. Parsing is a full JSON.parse of the prefix, so the throttle runs
+	// *before* the parse — the stream delivers deltas far faster than a preview is worth
+	// updating. State lives across retry sessions on purpose: a retry restarts the stream,
+	// and its previews simply resume.
+	let previewAt = 0;
+	const emitPreview = (partialJson: string) => {
+		const now = Date.now();
+		if (now - previewAt < PREVIEW_INTERVAL_MS) return;
+		const preview = partialProgram(partialJson);
+		if (!preview) return;
+		previewAt = now;
+		options.onProgress?.({
+			stage: 'emitting',
+			components: preview.components,
+			partial: preview.program,
+		});
+	};
+
+	const makeSession = () =>
+		deps.provider.session({
+			model,
+			system,
+			schema,
+			// Refines get the diff tool and a cache breakpoint on the user turn: the turn
+			// carries the whole program, and the repair round resends it.
+			...(refineBase ? { patchSchema: programPatchSchema(), cacheUserContent: true } : {}),
+			maxTokens,
+			...(options.effort ? { effort: options.effort } : {}),
+			...(options.signal ? { signal: options.signal } : {}),
+			onComponents: (components) => options.onProgress?.({ stage: 'emitting', components }),
+			onPartial: emitPreview,
+		});
+	let session = makeSession();
 
 	let totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 
@@ -170,7 +276,25 @@ export async function generateBuild(
 	};
 
 	options.onProgress?.({ stage: 'thinking' });
-	const first = await session.emit(userContent, options.image);
+	// The opening call gets a couple of retries on transient failures — an overloaded
+	// provider or a dropped connection used to be a lost generation and a consumed quota
+	// slot. Each retry abandons the failed session and starts a fresh one: the failed
+	// thread already holds the user turn, so re-emitting into it would duplicate it. The
+	// budget guard runs again before every retry, because that is the promise the ledger
+	// makes: no request goes out that the balance could not cover.
+	let first: ProviderReply;
+	for (let attempt = 0; ; attempt++) {
+		try {
+			first = await session.emit(userContent, options.image);
+			break;
+		} catch (err) {
+			const delay = attempt < MAX_TRANSIENT_RETRIES ? transientDelayMs(err, attempt) : null;
+			if (delay === null || options.signal?.aborted) throw err;
+			await sleep(delay, options.signal);
+			deps.ledger.assertCanAfford(model, estimatedInput, maxTokens, deps.provider.id);
+			session = makeSession();
+		}
+	}
 	record(first, options.refineOf ? 'refine' : 'generate');
 
 	if (first.input === undefined) {
@@ -180,29 +304,61 @@ export async function generateBuild(
 	}
 
 	options.onProgress?.({ stage: 'validating' });
-	let program = unwrapProgram(first.input) as BuildProgram;
+
+	// A reply is either a whole program or — on a refine — a patch against the base program.
+	// The tool name is the primary signal; `looksLikePatch` covers a model that emitted ops
+	// through the emit tool anyway, which costs nothing to honour and saves a repair round.
+	let patchProblems: ExpandIssue[] = [];
+	const interpret = (reply: ProviderReply, base: BuildProgram | null): BuildProgram => {
+		const input = unwrapProgram(reply.input);
+		if (base && (reply.tool === PATCH_TOOL_NAME || looksLikePatch(input))) {
+			const patched = applyProgramPatch(base, input);
+			patchProblems = patched.issues;
+			return patched.program;
+		}
+		patchProblems = [];
+		return input as BuildProgram;
+	};
+
+	let program = interpret(first, refineBase);
 	options.onProgram?.(program, 'generate');
 	let structural = schemaIssues(program);
 	let expansion = expand(program);
 	let repaired = false;
-	let problems = [...structural, ...expansion.errors];
+	let problems = [...patchProblems, ...structural, ...expansion.errors];
 
-	// Exactly one repair round. The system prompt is cached by now, so this costs little,
-	// but a loop here is how a small balance disappears.
-	if (problems.length > 0) {
+	// A repair that cannot run is a repair skipped, not a generation failed. The first
+	// program was paid for and may well build with omissions; throwing it away because
+	// the *second* call hit the budget ceiling or a transient provider failure would
+	// discard the very thing `onProgram` exists to protect.
+	const attemptRepair = async (budgetMultiplier: number): Promise<void> => {
 		options.onProgress?.({ stage: 'repairing', issues: problems.length });
 
-		deps.ledger.assertCanAfford(model, estimatedInput * 2, maxTokens, deps.provider.id);
-		options.onProgress?.({ stage: 'thinking' });
-		const second = await session.repair(repairPrompt(problems));
-		record(second, 'repair');
+		const second = await (async (): Promise<ProviderReply | null> => {
+			try {
+				deps.ledger.assertCanAfford(
+					model,
+					estimatedInput * budgetMultiplier,
+					maxTokens,
+					deps.provider.id,
+				);
+				options.onProgress?.({ stage: 'thinking' });
+				return await session.repair(repairPrompt(problems, refineBase !== null));
+			} catch (err) {
+				if (err instanceof BudgetExceededError || transientDelayMs(err, 0) !== null) return null;
+				throw err;
+			}
+		})();
+		if (second) record(second, 'repair');
 
-		if (second.input !== undefined) {
-			const candidate = unwrapProgram(second.input) as BuildProgram;
+		if (second && second.input !== undefined) {
+			// A refine's repair may answer with another patch. It applies against the program
+			// as it now stands — replaceComponent keeps ids stable, so targets still resolve.
+			const candidate = interpret(second, refineBase ? program : null);
 			options.onProgram?.(candidate, 'repair');
 			const candidateStructural = schemaIssues(candidate);
 			const candidateExpansion = expand(candidate);
-			const candidateProblems = [...candidateStructural, ...candidateExpansion.errors];
+			const candidateProblems = [...patchProblems, ...candidateStructural, ...candidateExpansion.errors];
 			// Only accept the repair if it is actually better; a worse second attempt should
 			// not replace a nearly-working first one.
 			if (candidateProblems.length < problems.length || candidateExpansion.blockCount > expansion.blockCount) {
@@ -212,6 +368,20 @@ export async function generateBuild(
 				problems = candidateProblems;
 			}
 			repaired = true;
+		}
+	};
+
+	// Exactly one repair round in the common case. The system prompt is cached by now, so it
+	// costs little, but a loop here is how a small balance disappears.
+	if (problems.length > 0) {
+		await attemptRepair(2);
+
+		// One escalation, in one situation only: the build is still *empty* — nothing to show
+		// at all. A flawed-but-standing build is returned with omissions rather than paid for
+		// again; a wall of nothing is worth one more attempt, at a stricter budget bar (the
+		// guard sizes the whole conversation so far, which by now is roughly three calls deep).
+		if (problems.length > 0 && expansion.blockCount === 0) {
+			await attemptRepair(3);
 		}
 	}
 

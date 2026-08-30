@@ -116,9 +116,11 @@ describe('generateBuild — from a picture', () => {
 		expect(seen[0]!.text).not.toContain('Build the **subject**');
 	});
 
-	it('does not turn a refine into a picture build', async () => {
-		// Refining sends the program back and asks for a change to it. The picture brief would
-		// be telling the model to start again from a photograph it is not being shown.
+	it('carries a reference picture into a refine, brief and all', async () => {
+		// "Make it look like this" with a picture is exactly what a refine is for. The picture
+		// used to be attached with no brief — shown to the model with no word about what it
+		// was — which was the worst of both: paying for the image tokens and leaving the model
+		// to guess. Now the brief rides whenever the picture does.
 		const { provider, seen } = fakeProvider();
 		await generateBuild({ provider, ledger: ledger() }, {
 			prompt: 'make the roof steeper',
@@ -126,8 +128,11 @@ describe('generateBuild — from a picture', () => {
 			image: picture,
 		});
 
-		expect(seen[0]!.text).not.toContain('Build the **subject**');
+		expect(seen[0]!.image).toEqual(picture);
+		expect(seen[0]!.text).toContain('Build the **subject**');
 		expect(seen[0]!.text).toContain('make the roof steeper');
+		// Still a refine: the program being changed is in the same turn.
+		expect(seen[0]!.text).toContain('existing build program');
 	});
 });
 

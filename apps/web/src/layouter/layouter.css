@@ -976,3 +976,18 @@
   border-color: var(--fail);
   color: var(--fail);
 }
+
+/* --- furnishings --------------------------------------------------------- */
+
+.plan__furnish {
+  fill: rgba(217, 180, 106, 0.28);
+  stroke: rgba(217, 180, 106, 0.9);
+  stroke-width: 1.5;
+}
+
+.plan__furnish-glyph {
+  fill: rgba(230, 214, 180, 0.9);
+  font-family: inherit;
+  pointer-events: none;
+  user-select: none;
+}

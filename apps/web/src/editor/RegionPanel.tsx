@@ -19,7 +19,16 @@
 
 import type { BoxCorner } from './tools/boxSelect.js';
 
-export type RegionAction = 'fill' | 'replace' | 'hollow' | 'clear' | 'copy';
+export type RegionAction =
+  | 'fill'
+  | 'replace'
+  | 'hollow'
+  | 'clear'
+  | 'copy'
+  | 'cut'
+  | 'rotate'
+  | 'mirrorX'
+  | 'mirrorZ';
 
 const ACTIONS: readonly { id: RegionAction; label: string; title: string }[] = [
   { id: 'fill', label: 'Fill', title: 'Every cell in the box becomes the active block' },
@@ -31,6 +40,10 @@ const ACTIONS: readonly { id: RegionAction; label: string; title: string }[] = [
   { id: 'hollow', label: 'Hollow', title: 'The six faces of the box, leaving the inside as it is' },
   { id: 'clear', label: 'Clear', title: 'Empty the box' },
   { id: 'copy', label: 'Copy', title: 'Take the contents to the clipboard and switch to Stamp' },
+  { id: 'cut', label: 'Cut', title: 'Copy the contents to the clipboard and empty the box' },
+  { id: 'rotate', label: '↻ 90°', title: 'Rotate the contents in place, about the box centre' },
+  { id: 'mirrorX', label: '⇋ X', title: 'Flip the contents east–west, in place' },
+  { id: 'mirrorZ', label: '⇅ Z', title: 'Flip the contents north–south, in place' },
 ];
 
 /** Label, then the axis and sign it nudges along. */

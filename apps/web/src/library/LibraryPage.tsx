@@ -317,6 +317,17 @@ export function LibraryPage() {
                           >
                             Guide
                           </Link>
+                          {/* Only for builds the layouter saved: the drawing rode up with
+                              them, so they reopen as a plan — walls still walls. */}
+                          {build.hasPlan && (
+                            <Link
+                              className="card__action"
+                              to={`/layouter?plan=lib:${encodeURIComponent(build.id)}`}
+                              aria-label={`Open ${build.name} as a plan in the layouter`}
+                            >
+                              Plan
+                            </Link>
+                          )}
                           {/* Housekeeping, pushed to the far edge and drawn quietly. Four
                               buttons of equal weight would say all four are equally likely,
                               and one of them deletes the build. */}

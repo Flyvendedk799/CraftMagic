@@ -11,6 +11,7 @@
  */
 
 import {
+  applyStylePack,
   decodeVoxels,
   encodeVoxels,
   expand,
@@ -20,6 +21,8 @@ import {
   paletteFlags,
   samples,
   scaledSize,
+  stylePackById,
+  type EditLayer,
   type BuildPart,
   type BuildProgram,
   type ExpandIssue,
@@ -202,16 +205,45 @@ export const GENERATED_PREFIX = 'gen:';
 const STORAGE_KEY = 'craftmagic.generated';
 const MAX_STORED = 40;
 
+/**
+ * Hand edits, per build id, as the overlay's storage form.
+ *
+ * In memory for every build — switching between samples and back keeps the edits — and
+ * persisted alongside the program for generated builds, so a refresh no longer eats an
+ * hour of detailing on a build that cost real money to make.
+ */
+const edits = new Map<string, EditLayer>();
+
+export function editsOf(id: string): EditLayer | null {
+  return edits.get(id) ?? null;
+}
+
+/** Remember (or forget, with null) the hand edits for a build. */
+export function rememberEdits(id: string, layer: EditLayer | null): void {
+  const had = edits.has(id);
+  if (layer && layer.blocks.length > 0) edits.set(id, layer);
+  else if (had) edits.delete(id);
+  else return; // Nothing stored and nothing to store — skip the localStorage write.
+  if (isGeneratedId(id)) persist();
+}
+
 function persist(): void {
   // Oldest first, so trimming to the cap drops the ones least likely to still be open.
   while (generated.size > MAX_STORED) {
     const oldest = generated.keys().next();
     if (oldest.done) break;
+    edits.delete(oldest.value);
     generated.delete(oldest.value);
   }
 
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...generated.entries()]));
+    // A third tuple element only where edits exist: `restore` has always tolerated shape
+    // drift, and two-element entries stay byte-identical to what older tabs wrote.
+    const entries = [...generated.entries()].map(([id, program]) => {
+      const layer = edits.get(id);
+      return layer ? [id, program, layer] : [id, program];
+    });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
   } catch {
     // Storage full or blocked; the build still works for this page view.
   }
@@ -228,8 +260,9 @@ function restore(): void {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
-    for (const [id, program] of JSON.parse(raw) as [string, BuildProgram][]) {
+    for (const [id, program, layer] of JSON.parse(raw) as [string, BuildProgram, EditLayer?][]) {
       generated.set(id, program);
+      if (layer && !edits.has(id)) edits.set(id, layer);
     }
   } catch {
     // A corrupt entry must not stop the editor from loading.
@@ -377,6 +410,78 @@ export function muralBuilds(): { id: string; name: string }[] {
 // looks exactly like "there was nothing saved".
 restoreMurals();
 
+// --- imported schematics ------------------------------------------------
+
+/**
+ * Builds imported from `.schem` files, keyed by `schem:<n>`.
+ *
+ * Voxels, not a program — a schematic is a finished object with no recipe — stored exactly
+ * the way murals are and for the same reasons: gzipped, capped, and with the library as the
+ * durable home for one worth keeping. A separate store rather than a flag on murals because
+ * the picker labels them differently and the caps should not fight each other.
+ */
+const imports = new Map<string, { name: string; grid: VoxelGrid }>();
+
+export const IMPORT_PREFIX = 'schem:';
+
+const IMPORT_STORAGE_KEY = 'craftmagic.imports';
+const MAX_STORED_IMPORTS = 6;
+
+export function isImportedId(id: string): boolean {
+  return id.startsWith(IMPORT_PREFIX);
+}
+
+function persistImports(): void {
+  while (imports.size > MAX_STORED_IMPORTS) {
+    const oldest = imports.keys().next();
+    if (oldest.done) break;
+    imports.delete(oldest.value);
+  }
+  try {
+    const stored = [...imports.entries()].map(([id, entry]) => [
+      id,
+      entry.name,
+      base64FromBytes(encodeVoxels(entry.grid)),
+    ]);
+    localStorage.setItem(IMPORT_STORAGE_KEY, JSON.stringify(stored));
+  } catch {
+    // Out of quota, or storage blocked. The import still works for this page view.
+  }
+}
+
+function restoreImports(): void {
+  try {
+    const raw = localStorage.getItem(IMPORT_STORAGE_KEY);
+    if (!raw) return;
+    for (const [id, name, encoded] of JSON.parse(raw) as [string, string, string][]) {
+      imports.set(id, { name, grid: decodeVoxels(bytesFromBase64(encoded)) });
+    }
+  } catch {
+    // One unreadable file must not stop the editor from loading.
+  }
+}
+
+/** Remember an imported schematic, and return the id that selects it. */
+export function registerImportedBuild(name: string, grid: VoxelGrid): string {
+  restoreImports();
+  let highest = 0;
+  for (const id of imports.keys()) {
+    const n = Number.parseInt(id.slice(IMPORT_PREFIX.length), 10);
+    if (Number.isFinite(n) && n > highest) highest = n;
+  }
+  const id = `${IMPORT_PREFIX}${highest + 1}`;
+  imports.set(id, { name, grid });
+  persistImports();
+  return id;
+}
+
+/** Imported schematics this browser still remembers, oldest first. */
+export function importedBuilds(): { id: string; name: string }[] {
+  return [...imports.entries()].map(([id, entry]) => ({ id, name: entry.name }));
+}
+
+restoreImports();
+
 /**
  * Builds fetched from the server-side library, keyed by `lib:<uuid>`.
  *
@@ -429,7 +534,7 @@ function programOf(id: string): BuildProgram | undefined {
 
 export function isBuildId(id: string | null): id is string {
   if (id === null) return false;
-  return library.has(id) || murals.has(id) || programOf(id) !== undefined;
+  return library.has(id) || murals.has(id) || imports.has(id) || programOf(id) !== undefined;
 }
 
 /** Read a program's declared params without expanding it — the UI needs them before a value exists. */
@@ -441,6 +546,19 @@ export function paramsOf(id: string): BuildParam[] {
 export interface BuildOverrides {
   params?: Readonly<Record<string, number>>;
   scale?: ScalePercent;
+  /**
+   * A style pack id, restyling the palette without touching the program.
+   *
+   * An unknown id is ignored rather than refused, for the same reason an unknown size is: it
+   * changes how the build looks, not whether it is valid, and a stale link should degrade to
+   * the build's own materials rather than to an error.
+   */
+  style?: string | null;
+  /**
+   * Component paths (`components[3]`, `components[1].children[0]`) to leave out of the
+   * expansion — the outliner's hide. A path that no longer matches anything is a no-op.
+   */
+  hide?: readonly string[];
 }
 
 /** What a scale actually produced, once clamped to what the expander will accept. */
@@ -481,10 +599,20 @@ export function expandBuild(
   const mural = murals.get(id);
   if (mural) return fromVoxels(id, mural.name, mural.grid);
 
+  // Same for an imported schematic: a finished object, no recipe.
+  const imported = imports.get(id);
+  if (imported) return fromVoxels(id, imported.name, imported.grid);
+
   const program = programOf(id);
   if (!program) throw new Error(`unknown build "${id}"`);
 
-  const applied = applyOverrides(program, overrides.params ?? {}, overrides.scale);
+  let applied = applyOverrides(program, overrides.params ?? {}, overrides.scale);
+  // The restyle happens on the *applied* program and is never written back anywhere: the
+  // program stays the source of truth in its own materials, and the pack rides in the URL
+  // exactly as the scale does.
+  const pack = stylePackById(overrides.style);
+  if (pack) applied = applyStylePack(applied, pack);
+  if (overrides.hide && overrides.hide.length > 0) applied = hideComponents(applied, overrides.hide);
   const result = expand(applied, { provenance: options.provenance });
 
   return {
@@ -539,6 +667,28 @@ function fromVoxels(id: string, name: string, source: VoxelGrid): LoadedBuild {
     parts: [],
     origin: null,
   };
+}
+
+/**
+ * A program without the components at the given paths.
+ *
+ * Paths are the expander's own (`components[3].children[0]`), so what the outliner shows and
+ * what this removes are one vocabulary. Repeat transforms collapse in provenance, which
+ * means hiding a repeated part hides every repetition — exactly what the eye icon promises.
+ */
+function hideComponents(program: BuildProgram, paths: readonly string[]): BuildProgram {
+  const hidden = new Set(paths);
+  type AnyComponent = BuildProgram['components'][number];
+  const filterList = (list: readonly AnyComponent[], prefix: string): AnyComponent[] =>
+    list
+      .map((component, index) => ({ component, path: `${prefix}[${index}]` }))
+      .filter(({ path }) => !hidden.has(path))
+      .map(({ component, path }) =>
+        component.type === 'group' && Array.isArray(component.children)
+          ? { ...component, children: filterList(component.children, `${path}.children`) }
+          : component,
+      );
+  return { ...program, components: filterList(program.components, 'components') };
 }
 
 /** Copies rather than mutates: `samples` is a shared module-level object. */

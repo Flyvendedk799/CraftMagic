@@ -21,10 +21,12 @@
  * cuts: the whole thing, one storey with its ceiling off, or one room boxed in and framed.
  * Without those, every room you drew is behind a wall and half the building is behind a floor.
  *
- * **No prompt box.** Deliberately. The editor has generation and refinement, and neither
- * belongs on a tool whose entire premise is that you know what you want and the fastest way to
- * get it is to draw it. Everything here is direct manipulation, and the two pages share the
- * expander, the mesher, the exports and the library rather than sharing a model.
+ * **The prompt box refines the drawing — it never replaces it.** The page's premise is still
+ * direct manipulation: you draw the plan, and the plan stays the document. But a compiled
+ * plan is an ordinary `BuildProgram`, and the server's refine pipeline takes any program —
+ * so "add window boxes and a chimney" on top of what you drew is a one-call trip through
+ * exactly the machinery the editor uses. The result opens in the editor as a generated
+ * build; the plan you drew is untouched and still here.
  *
  * The level editor engine from flyvendedk799/firstpgame is reused throughout — its plan
  * viewport, grid and wall-insert snapping, snapshot history, autosave, kit-driven materials
@@ -32,12 +34,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { expand, paletteColors, paletteFlags, type VoxelGrid } from '@craftmagic/core';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { expand, paletteColors, paletteFlags, voxelIndex, type BuildPart, type VoxelGrid } from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorCanvas.js';
+import type { VoxelHit } from '../editor/raycast.js';
 import { ExportBar } from '../editor/ExportBar.js';
 import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild } from '../editor/builds.js';
+import { PromptPanel } from '../generate/PromptPanel.js';
+import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
 import { AccountPanel } from '../library/AccountPanel.js';
 import { AppNav } from '../shell/AppNav.js';
 import { alignOffsets, distributeOffsets, type Offsets } from './arrange.js';
@@ -49,10 +54,13 @@ import { IssuesPanel, issueSummary } from './IssuesPanel.js';
 import { PlanCanvas } from './PlanCanvas.js';
 import { RoomSchedule, scheduleSummary } from './RoomSchedule.js';
 import { SitePanel } from './SitePanel.js';
+import { getBuild } from '../library/library.js';
 import {
   addItem,
   countItems,
   findItem,
+  floorHeight,
+  normalizePlan,
   planId,
   removeItem,
   replaceItem,
@@ -162,6 +170,45 @@ export function LayouterPage() {
     },
     [session, frame],
   );
+
+  // Open a plan saved in the library: `/layouter?plan=lib:<row>`. One fetch, then the param
+  // is dropped from the URL so a reload afterwards keeps whatever the user has since drawn
+  // rather than stamping the library copy back over it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const planParam = searchParams.get('plan');
+  useEffect(() => {
+    if (!planParam?.startsWith('lib:')) return;
+    let cancelled = false;
+    getBuild(planParam.slice(4))
+      .then((detail) => {
+        if (cancelled) return;
+        if (!detail.plan) {
+          setImportError('That library build has no plan saved with it — only its blocks.');
+          return;
+        }
+        load(normalizePlan(detail.plan));
+        setImportError(null);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setImportError((err as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          // Drop only our own param. The studio shell keeps its mode in the same query, and
+          // wiping it would flip the page out of Plan mode the moment a plan finished loading.
+          setSearchParams(
+            (params) => {
+              params.delete('plan');
+              return params;
+            },
+            { replace: true },
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [planParam, load, setSearchParams]);
 
   // A plan that lost a storey — an undo, a delete, an import — must not leave the canvas
   // editing a floor that no longer exists.
@@ -444,6 +491,18 @@ export function LayouterPage() {
     [built.program, navigate],
   );
 
+  // A finished AI pass lands in the editor, exactly like the hand-off button: the result is
+  // a generated build, not a plan, and the editor is where a generated build lives. The plan
+  // here is left untouched — it remains the drawing the refine started from.
+  const onGenerated = useCallback(
+    (result: GenerationResult) => {
+      const id = registerGeneratedBuild(result.program);
+      navigate(`/editor?build=${encodeURIComponent(id)}`);
+    },
+    [navigate],
+  );
+  const generation = useGeneration(onGenerated);
+
   const onImport = useCallback(
     async (file: File | undefined) => {
       if (!file) return;
@@ -455,6 +514,31 @@ export function LayouterPage() {
       }
     },
     [load],
+  );
+
+  /**
+   * Click a wall in the model, select the item that drew it on the plan.
+   *
+   * The chain is the compiler's provenance tag run backwards: voxel → part (the expander's
+   * `origin` array) → component path → the component's `id`, whose prefix is the plan item's
+   * id. Anything without a tag — the ground, a furnishing detail op — falls through silently;
+   * a click that selects nothing reads as a miss, which it is.
+   */
+  const onModelClick = useCallback(
+    (hit: VoxelHit) => {
+      if (hit.ground || !built.partOf) return;
+      const partId = built.partOf[voxelIndex(built.grid.size, hit.x, hit.y, hit.z)];
+      if (!partId) return;
+      const part = built.parts.find((entry) => entry.id === partId);
+      const match = part?.path.match(/^components\[(\d+)\]$/);
+      const componentId = match ? built.program.components[Number(match[1])]?.id : undefined;
+      const found = componentId ? findItem(plan, componentId.split('.')[0]!) : null;
+      if (!found) return;
+      setFloorIndex(found.floorIndex);
+      setSelectedId(found.item.id);
+      setNotice(null);
+    },
+    [built, plan, setSelectedId],
   );
 
   // What the model shows, as a cut and a camera framing. Recomputed from the deferred build
@@ -575,13 +659,13 @@ export function LayouterPage() {
               count={selectedItems.length}
               onAlign={(mode) =>
                 arrange(
-                  alignOffsets(selectedItems, selectedIds, plan.wallThickness, plan.storeyHeight, mode),
+                  alignOffsets(selectedItems, selectedIds, plan.wallThickness, floorHeight(plan, activeFloor), mode),
                   'align',
                 )
               }
               onDistribute={(axis) =>
                 arrange(
-                  distributeOffsets(selectedItems, selectedIds, plan.wallThickness, plan.storeyHeight, axis),
+                  distributeOffsets(selectedItems, selectedIds, plan.wallThickness, floorHeight(plan, activeFloor), axis),
                   'space out',
                 )
               }
@@ -671,6 +755,9 @@ export function LayouterPage() {
           program={built.program}
           name={plan.name}
           detached={false}
+          // The drawing rides beside the building it compiles to, so a library save from
+          // here can be reopened *as a plan* — walls still walls — not just as blocks.
+          plan={plan}
           // The guide is offered as a button below rather than as a link: it needs the compiled
           // program registered under an id first, and doing that on every keystroke would fill
           // the generated-build store with a hundred drafts of the same building.
@@ -720,6 +807,29 @@ export function LayouterPage() {
             ))}
             {session.saved.length === 0 && <li className="plans__empty">Nothing saved yet.</li>}
           </ul>
+        </Section>
+
+        <Section id="layouter-ai" title="Refine with AI" defaultOpen={false}>
+          <PromptPanel
+            phase={generation.phase}
+            spend={generation.spend}
+            estimate={generation.estimate}
+            estimating={generation.estimating}
+            onEstimate={generation.requestEstimate}
+            onGenerate={(instruction, size) => void generation.generate(instruction, undefined, size)}
+            onCancel={generation.cancel}
+            // The drawn plan, compiled, is the program the model edits. Zero blocks means an
+            // empty plan, and refining nothing would silently become "invent something".
+            onRefine={
+              built.blockCount > 0
+                ? (instruction) => void generation.generate(instruction, built.program)
+                : null
+            }
+          />
+          <p className="site-panel__hint">
+            Sends the compiled building, not the drawing — the result opens in the editor as a
+            new build, and the plan here stays exactly as you drew it.
+          </p>
         </Section>
 
         <Section id="layouter-handoff" title="Hand off" defaultOpen={false}>
@@ -784,6 +894,7 @@ export function LayouterPage() {
           paletteFlags={built.paletteFlags}
           clip={shown.clip}
           view={view}
+          onClick={onModelClick}
         />
 
         {/* Says which storey you are looking at, because every mode but Whole shows one and
@@ -859,6 +970,9 @@ interface Built {
   paletteFlags: Uint8Array;
   blockCount: number;
   messages: string[];
+  /** Per-voxel part id from the provenance expansion, for click-to-select. Null on failure. */
+  partOf: Uint16Array | null;
+  parts: BuildPart[];
 }
 
 /**
@@ -872,7 +986,9 @@ interface Built {
 function buildFrom(plan: LayoutPlan): Built {
   const compiled = compilePlan(plan);
   try {
-    const result = expand(compiled.program);
+    // Provenance costs one extra array per compile, and compiles are already deferred behind
+    // the drag — it is what lets a click on the model land back on the plan item that drew it.
+    const result = expand(compiled.program, { provenance: true });
     return {
       program: compiled.program,
       origin: compiled.origin,
@@ -885,6 +1001,8 @@ function buildFrom(plan: LayoutPlan): Built {
         ...result.errors.map((issue) => `${issue.path}: ${issue.message}`),
         ...result.warnings.map((issue) => `${issue.path}: ${issue.message}`),
       ],
+      partOf: result.origin,
+      parts: result.parts,
     };
   } catch (error) {
     return {
@@ -895,6 +1013,8 @@ function buildFrom(plan: LayoutPlan): Built {
       paletteFlags: paletteFlags(EMPTY_GRID.palette),
       blockCount: 0,
       messages: [...compiled.warnings, (error as Error).message],
+      partOf: null,
+      parts: [],
     };
   }
 }

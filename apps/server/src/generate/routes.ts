@@ -67,8 +67,12 @@ export interface GenerateRoutesOptions {
 }
 
 const DEFAULT_MAX_TOKENS = 16_000;
-/** Long enough for a detailed brief, short enough that nobody pastes a novel into it. */
-const MAX_PROMPT_LENGTH = 600;
+/**
+ * Long enough for a genuinely detailed brief — a wing-by-wing description, a style sheet, a
+ * list of rooms — short enough that nobody pastes a novel into it. The old cap of 600 fit a
+ * sentence or two and quietly foreclosed the kind of prompt the model does best on.
+ */
+const MAX_PROMPT_LENGTH = 2000;
 
 /**
  * Body limit for the two routes that can carry a picture.
@@ -376,6 +380,12 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 			return reply.code(202).send({ id: generation.id });
 
 			async function runGeneration(): Promise<void> {
+				// Every program the model emits, kept as it arrives. `generateBuild` documents the
+				// contract — "a paid response must never be thrown away" — and this is the caller
+				// holding up its end: when the pipeline throws *after* the model has answered
+				// (empty build, failed expansion), the raw program still reaches the audit row
+				// below instead of evaporating with the error.
+				let lastProgram: BuildProgram | null = null;
 				try {
 					const result = await generateBuild(
 						{ provider: chosen, ledger: options.ledger },
@@ -387,11 +397,15 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 							model,
 							effort: 'medium',
 							maxTokens,
+							onProgram: (program) => {
+								lastProgram = program;
+							},
 							onProgress: (event) => {
 								store.emit(generation.id, {
 									type: 'progress',
 									stage: event.stage,
 									...(event.stage === 'emitting' ? { components: event.components } : {}),
+									...(event.stage === 'emitting' && event.partial ? { partial: event.partial } : {}),
 									...(event.stage === 'done' ? { blockCount: event.blockCount } : {}),
 								});
 							},
@@ -452,6 +466,10 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 						await quota
 							.finish(recordId, {
 								status: 'failed',
+								// The program the model emitted, when it got that far. The failure
+								// may be in our expansion rather than in the program, and this row
+								// is the only place the evidence survives.
+								...(lastProgram ? { program: lastProgram } : {}),
 								error: {
 									message,
 									provider: ai.provider,

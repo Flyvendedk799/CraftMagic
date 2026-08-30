@@ -42,7 +42,12 @@ export type GenerationPhase =
   | { kind: 'idle' }
   | { kind: 'starting' }
   | { kind: 'thinking' }
-  | { kind: 'emitting'; components: number }
+  | {
+      kind: 'emitting';
+      components: number;
+      /** The program so far — only fully-closed components. Drives the live 3D preview. */
+      partial?: BuildProgram;
+    }
   | { kind: 'validating' }
   | { kind: 'repairing' }
   | { kind: 'failed'; message: string };
@@ -154,7 +159,9 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
           prompt: trimmed,
           ...(refineOf ? { refineOf } : {}),
           ...(size && !refineOf ? { size } : {}),
-          ...(image && !refineOf ? { image } : {}),
+          // A picture rides along on a refine too: "make it look like this" with a
+          // reference image is exactly what a refine is for.
+          ...(image ? { image } : {}),
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -183,7 +190,15 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
       const data = JSON.parse(event.data);
 
       if (data.type === 'progress') {
-        if (data.stage === 'emitting') setPhase({ kind: 'emitting', components: data.components ?? 0 });
+        if (data.stage === 'emitting') {
+          // Count-only events land between previews; they must not blank the preview a
+          // moment after it appeared, so the last partial is carried forward.
+          setPhase((previous) => ({
+            kind: 'emitting',
+            components: data.components ?? 0,
+            partial: data.partial ?? (previous.kind === 'emitting' ? previous.partial : undefined),
+          }));
+        }
         else if (data.stage === 'thinking') setPhase({ kind: 'thinking' });
         else if (data.stage === 'validating') setPhase({ kind: 'validating' });
         else if (data.stage === 'repairing') setPhase({ kind: 'repairing' });

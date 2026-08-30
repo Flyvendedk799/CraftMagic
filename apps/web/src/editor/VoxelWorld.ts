@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import { voxelIndex, type EditOp, type VoxelGrid } from '@craftmagic/core';
+import { classicMaterials, type WorldMaterials } from './materials.js';
 import {
   CHUNK_SIZE,
   chunkCounts,
@@ -62,15 +63,8 @@ interface ChunkEntry {
 export class VoxelWorld {
   readonly group = new THREE.Group();
 
-  private readonly opaqueMaterial = new THREE.MeshBasicMaterial({ vertexColors: true });
-  private readonly transparentMaterial = new THREE.MeshBasicMaterial({
-    vertexColors: true,
-    transparent: true,
-    // Without this, panes of glass in the same chunk occlude each other in draw order.
-    depthWrite: false,
-    opacity: 0.72,
-    side: THREE.DoubleSide,
-  });
+  private readonly opaqueMaterial: THREE.Material;
+  private readonly transparentMaterial: THREE.Material;
 
   /**
    * The cut surface, as one mesh rather than a chunked set.
@@ -120,7 +114,15 @@ export class VoxelWorld {
   /** The box the skin was last built for, kept so an edit can rebuild it unprompted. */
   private clipBox: ClipBox | null = null;
 
-  constructor() {
+  /**
+   * @param materials The opaque/transparent pair every chunk (and the cut skin) shares.
+   *   Injected rather than built here so the render style — Classic's unlit vertex colours,
+   *   Enhanced's lit-and-grained Lambert — is the caller's choice, and this class stays a
+   *   mesh manager with no opinion about shading.
+   */
+  constructor(materials: WorldMaterials = classicMaterials()) {
+    this.opaqueMaterial = materials.opaque;
+    this.transparentMaterial = materials.transparent;
     this.group.name = 'voxel-world';
     this.group.matrixAutoUpdate = false;
   }

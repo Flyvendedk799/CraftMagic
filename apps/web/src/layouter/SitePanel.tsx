@@ -10,7 +10,7 @@
  */
 
 import { KITS } from './kits.js';
-import { LIMITS, type LayoutPlan, type RoofStyle } from './plan.js';
+import { LIMITS, type LayoutPlan, type RoofPitch, type RoofStyle } from './plan.js';
 
 const ROOFS: { value: RoofStyle; label: string; hint: string }[] = [
   { value: 'gable', label: 'Gable', hint: 'Two slopes meeting at a ridge.' },
@@ -92,6 +92,32 @@ export function SitePanel({ plan, onChange }: SitePanelProps) {
         </select>
       </label>
       <p className="site-panel__hint">{ROOFS.find((roof) => roof.value === plan.roof)?.hint}</p>
+
+      {(plan.roof === 'gable' || plan.roof === 'hip') && (
+        <>
+          <label className="field">
+            <span className="field__label">Pitch</span>
+            <select
+              className="field__input"
+              value={plan.roofPitch}
+              onChange={(event) => onChange({ ...plan, roofPitch: event.target.value as RoofPitch })}
+            >
+              <option value="low">Low — gentle slopes</option>
+              <option value="classic">Classic — 45°</option>
+              <option value="steep">Steep — a spire of a roof</option>
+            </select>
+          </label>
+          <div className="field-row">
+            <Slider
+              label="Overhang"
+              value={plan.roofOverhang}
+              min={0}
+              max={2}
+              onChange={(value) => onChange({ ...plan, roofOverhang: value })}
+            />
+          </div>
+        </>
+      )}
 
       <div className="field-row">
         <Slider

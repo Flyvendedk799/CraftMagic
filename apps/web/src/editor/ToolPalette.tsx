@@ -50,6 +50,8 @@ export interface ToolPaletteProps {
 
   brushRadius: number;
   brushShape: BrushShape;
+  symmetry: boolean;
+  onSymmetry: (value: boolean) => void;
   onBrushRadius: (radius: number) => void;
   onBrushShape: (shape: BrushShape) => void;
 
@@ -57,11 +59,13 @@ export interface ToolPaletteProps {
   stampMode: StampMode;
   onStampMode: (mode: StampMode) => void;
   onRotateClip: () => void;
-  onMirrorClip: () => void;
+  onMirrorClip: (axis: 'x' | 'z') => void;
   onForgetClip: () => void;
 
   edits: number;
   detached: boolean;
+  /** Edits whose coordinates fall outside the current size — invisible until it grows back. */
+  outside: number;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -107,6 +111,20 @@ export function ToolPalette(props: ToolPaletteProps) {
           shortcuts
         </button>
       </p>
+
+      {/* Symmetry rides above the per-tool controls because it belongs to the *hand*, not to
+          any one tool: whatever the drawing tools produce lands twice, mirrored across the
+          build's east–west midplane, stair facings and all. */}
+      <div className="tools__row">
+        <button
+          type="button"
+          aria-pressed={props.symmetry}
+          title="Draw both halves at once — every place, erase, fill and line is mirrored across the build's middle."
+          onClick={() => props.onSymmetry(!props.symmetry)}
+        >
+          ⇋ Symmetry {props.symmetry ? 'on' : 'off'}
+        </button>
+      </div>
 
       {spec.usesBrush && (
         <div className="tools__row tools__row--brush">
@@ -195,8 +213,11 @@ export function ToolPalette(props: ToolPaletteProps) {
                 <button type="button" onClick={props.onRotateClip} title="Rotate 90°  (R)">
                   ⟳ Rotate
                 </button>
-                <button type="button" onClick={props.onMirrorClip} title="Mirror  (M)">
-                  ⇄ Mirror
+                <button type="button" onClick={() => props.onMirrorClip('x')} title="Mirror east–west  (M)">
+                  ⇄ Mirror X
+                </button>
+                <button type="button" onClick={() => props.onMirrorClip('z')} title="Mirror north–south  (Shift+M)">
+                  ⇅ Mirror Z
                 </button>
                 <button type="button" onClick={props.onForgetClip} title="Empty the clipboard">
                   Forget
@@ -241,9 +262,11 @@ export function ToolPalette(props: ToolPaletteProps) {
 
       {props.detached && (
         <p className="tools__detached">
-          Modified — no longer matches the program.{' '}
+          Hand edits ride over the program — sliders, resize and refine keep them.
+          {props.outside > 0 &&
+            ` ${props.outside} sit${props.outside === 1 ? 's' : ''} outside the current size.`}{' '}
           <button type="button" className="tools__inline" onClick={props.onDiscard}>
-            revert
+            clear edits
           </button>
         </p>
       )}

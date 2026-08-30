@@ -11,6 +11,7 @@ function build(id: string, updatedAt: string, blockCount = 100): LibraryBuild {
     sizeZ: 8,
     blockCount,
     hasProgram: true,
+    hasPlan: false,
     detached: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt,

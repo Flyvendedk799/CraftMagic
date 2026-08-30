@@ -11,7 +11,7 @@
  * regrouped, because a shortcut that silently moves is worse than one that was never there.
  */
 
-export type ToolId = 'place' | 'erase' | 'fill' | 'select' | 'swap' | 'line' | 'stamp' | 'pick';
+export type ToolId = 'place' | 'erase' | 'fill' | 'select' | 'swap' | 'line' | 'stamp' | 'pick' | 'grab';
 
 export interface ToolSpec {
   id: ToolId;
@@ -100,6 +100,15 @@ export const TOOLS: readonly ToolSpec[] = [
     needsBlock: false,
     usesBrush: false,
     key: '8',
+  },
+  {
+    id: 'grab',
+    verb: 'grab a structure',
+    label: 'Grab',
+    hint: 'Click any block to lift the whole connected structure into the clipboard — then stamp it back down wherever you like. Undo puts it back.',
+    needsBlock: false,
+    usesBrush: false,
+    key: '9',
   },
 ];
 

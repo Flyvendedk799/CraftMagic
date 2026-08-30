@@ -1,0 +1,14 @@
+-- Hand edits as a layer beside the program, instead of a point of no return.
+--
+-- A build used to be saved as either a live program or dead voxels: the `detached` flag said
+-- which, and a hand-edited build came back to the editor with `program` ignored — sliders
+-- gone, refine gone, permanently. Edits now live in their own sparse layer (the client's
+-- `EditLayer`: a palette of canonical block refs plus positions), and a saved build carries
+-- program + edits + composited voxels all three.
+--
+-- `voxels` and `detached` keep being written exactly as before, deliberately: the guide, the
+-- agent's schematic route, and any old tab read the composited voxels and never need to know
+-- the layer exists. `edits` is only read by the editor's load path, which composites it over
+-- a fresh expansion — and old rows, where it is NULL, fall back to a diff against the
+-- program's own expansion, or to voxels-only exactly as today.
+ALTER TABLE builds ADD COLUMN edits jsonb;

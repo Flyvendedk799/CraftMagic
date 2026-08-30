@@ -21,6 +21,7 @@
  */
 
 import type { Face } from '@craftmagic/core';
+import { furnishingById, furnishingFootprint } from './furniture.js';
 import type { LayoutPlan, PlanAxis, PlanItem, Rect, RoomItem } from './plan.js';
 
 // Re-exported because every caller that measures with this module also has to name what it
@@ -183,6 +184,9 @@ export function itemFootprint(item: PlanItem, wallThickness: number, storeyHeigh
 
     case 'column':
       return { x: item.x, z: item.z, w: item.size, d: item.size };
+
+    case 'furnish':
+      return furnishingFootprint(furnishingById(item.itemId), item.x, item.z, item.facing);
   }
 }
 
@@ -230,6 +234,7 @@ export function hitTest(
   const order: Record<PlanItem['kind'], number> = {
     door: 0,
     window: 0,
+    furnish: 0,
     column: 1,
     stair: 2,
     opening: 3,

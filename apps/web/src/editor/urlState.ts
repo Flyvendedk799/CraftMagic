@@ -15,6 +15,13 @@ export const PARAM_PREFIX = 'p.';
 /** Scale lives in the URL too, so a resized build is shareable and survives a reload. */
 export const SCALE_PREFIX = 's.';
 
+/**
+ * The style pack applied over the build's own palette, by id. Absent means the program's
+ * own materials. In the URL for the same reason scale is: a restyled build is a different
+ * *look* at the same program, and a look worth sharing needs a link that reproduces it.
+ */
+export const STYLE_PARAM = 'style';
+
 /** Slider bounds, in percent. Below a quarter a small build loses its features entirely. */
 export const SCALE_MIN = 25;
 export const SCALE_MAX = 400;
@@ -50,7 +57,9 @@ export function parseScale(key: string): ScalePercent {
 /** Copy a build's settings onto a link to the same build elsewhere in the app. */
 export function carrySettings(from: URLSearchParams, to: URLSearchParams): void {
   for (const [key, value] of from.entries()) {
-    if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX)) to.set(key, value);
+    if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX) || key === STYLE_PARAM) {
+      to.set(key, value);
+    }
   }
 }
 

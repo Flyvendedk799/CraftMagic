@@ -22,7 +22,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AIR_BLOCK, displayName, voxelIndex } from '@craftmagic/core';
+import {
+  AIR_BLOCK,
+  displayName,
+  expand,
+  labelParts,
+  paletteColors,
+  paletteFlags,
+  readSchematic,
+  STYLE_PACKS,
+  voxelIndex,
+  type Vec3,
+} from '@craftmagic/core';
+import { Outliner, type OutlinePart } from './Outliner.js';
 import { EditorCanvas, type ViewKind, type ViewRequest } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
@@ -30,6 +42,7 @@ import {
   BUILD_IDS,
   expandBuild,
   generatedBuilds,
+  importedBuilds,
   isBuildId,
   muralBuilds,
   paramsOf,
@@ -39,6 +52,7 @@ import {
   NO_SCALE,
   type ScalePercent,
   registerGeneratedBuild,
+  registerImportedBuild,
 } from './builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
 import {
@@ -48,6 +62,7 @@ import {
   writeScale,
   PARAM_PREFIX,
   SCALE_PREFIX,
+  STYLE_PARAM,
 } from './urlState.js';
 import { ExportBar } from './ExportBar.js';
 import { ScalePanel } from './ScalePanel.js';
@@ -57,24 +72,23 @@ import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
 import { ToolPalette, type RegionAction } from './ToolPalette.js';
 import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor } from './preview.js';
+import { useAssembly } from './useAssembly.js';
 import { useEditSession } from './useEditSession.js';
-import { placementCell } from './tools/place.js';
-import { erase } from './tools/erase.js';
-import { floodFill } from './tools/fill.js';
+import { TOOL_IMPL, type EditorTool, type ToolCtx, type ToolResult } from './tools/registry.js';
+import { withMirror } from './tools/symmetry.js';
+import { pickBlock } from './tools/pick.js';
 import { boxBounds, boxEdit, moveEdit, type BoxCorner } from './tools/boxSelect.js';
-import { brushEdit, MAX_BRUSH_RADIUS, type BrushShape, type Cell } from './tools/brush.js';
-import { lineEdit } from './tools/line.js';
+import { MAX_BRUSH_RADIUS, type BrushShape } from './tools/brush.js';
 import {
   ClipTooLargeError,
   copyRegion,
   mirrorClip,
   rotateClip,
+  stampBounds,
   stampEdit,
   type Clip,
   type StampMode,
 } from './tools/clipboard.js';
-import { pickBlock } from './tools/pick.js';
-import { familyOf, swapFamily, swapPaletteIndex } from './tools/paletteSwap.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { ImagePanel } from '../image/ImagePanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
@@ -97,6 +111,21 @@ const DEFAULT_BUILD = BLANK_BUILD;
 /** Common enough to be a sane starting block, and present in most sample palettes. */
 const DEFAULT_BLOCK = 'minecraft:oak_planks';
 
+/** Where the Classic/Enhanced choice lives between visits. */
+const RENDER_STYLE_KEY = 'craftmagic.renderStyle';
+
+/** While the ghost build is showing, the session must not be handed the ghost's world. */
+const noopWorld = () => {};
+
+/** Provenance bounds are Vec3 tuples; the camera and outlines speak {x,y,z}. */
+function partBounds(part: { min?: Vec3; max?: Vec3 }): { min: BoxCorner; max: BoxCorner } | null {
+  if (!part.min || !part.max) return null;
+  return {
+    min: { x: part.min[0], y: part.min[1], z: part.min[2] },
+    max: { x: part.max[0], y: part.max[1], z: part.max[2] },
+  };
+}
+
 const BUILD_LABELS: Record<string, string> = {
   blank: 'Empty',
   cottage: 'Cottage',
@@ -116,7 +145,8 @@ const VIEWS: readonly { kind: ViewKind; label: string }[] = [
 type PendingNav =
   | { kind: 'build'; build: string }
   | { kind: 'param'; name: string; value: number }
-  | { kind: 'scale'; scale: ScalePercent };
+  | { kind: 'scale'; scale: ScalePercent }
+  | { kind: 'style'; style: string | null };
 
 export function EditorPage() {
   const [params, setParams] = useSearchParams();
@@ -166,12 +196,97 @@ export function EditorPage() {
   // an object literal is a new object every render.
   const scaleKey = readScaleKey(params);
   const scale = useMemo(() => parseScale(scaleKey), [scaleKey]);
+  const styleId = params.get(STYLE_PARAM);
+
+  // Components hidden through the outliner. View state, not program state: kept per build id
+  // and reset on switch, because `components[3]` means something different in every program.
+  const [hidden, setHidden] = useState<{ id: string; paths: readonly string[] }>({
+    id: buildId,
+    paths: [],
+  });
+  const hiddenPaths = hidden.id === buildId ? hidden.paths : [];
+  const hiddenKey = hiddenPaths.join('|');
 
   const build = useMemo(
-    () => expandBuild(buildId, { params: parseOverrides(overrideKey), scale: parseScale(scaleKey) }),
-    [buildId, overrideKey, scaleKey],
+    () =>
+      expandBuild(buildId, {
+        params: parseOverrides(overrideKey),
+        scale: parseScale(scaleKey),
+        style: styleId,
+        hide: hiddenPaths,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hiddenPaths is keyed by hiddenKey
+    [buildId, overrideKey, scaleKey, styleId, hiddenKey],
   );
   const session = useEditSession(build);
+  // The opening reveal. It owns the canvas's grid and world handle while it runs; the
+  // session takes over the moment it finishes, through the same remount the canvas would
+  // have done anyway. Any click during the reveal skips to the finished build.
+  const assembly = useAssembly(build);
+
+  /**
+   * The outliner's part list, from a provenance expansion of the FULL program — hidden
+   * components included, or their rows would vanish and nothing could bring them back.
+   *
+   * Computed a beat after the build settles rather than inline: provenance costs a parallel
+   * array plus a measuring pass, and the main expansion runs on every frame of a slider
+   * drag. The delay means a drag re-schedules instead of paying that price per frame.
+   */
+  const [outline, setOutline] = useState<{ key: string; parts: OutlinePart[] } | null>(null);
+  const outlineKey = `${buildId}|${overrideKey}|${scaleKey}|${styleId ?? ''}`;
+  useEffect(() => {
+    if (!build.program) {
+      setOutline(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const full = expandBuild(
+        buildId,
+        { params: parseOverrides(overrideKey), scale: parseScale(scaleKey), style: styleId },
+        { provenance: true },
+      );
+      setOutline({ key: outlineKey, parts: labelParts(full.parts, full.grid.size) });
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- outlineKey carries the inputs
+  }, [outlineKey, build.program === null]);
+  const outlineParts = outline?.key === outlineKey ? outline.parts : null;
+
+  /** The part outlined in the canvas while the pointer rests on its outliner row. */
+  const [partHighlight, setPartHighlight] = useState<{ min: BoxCorner; max: BoxCorner } | null>(null);
+
+  const onPartToggle = useCallback(
+    (path: string) => {
+      setPartHighlight(null);
+      setHidden((prev) => {
+        const paths = prev.id === buildId ? prev.paths : [];
+        return {
+          id: buildId,
+          paths: paths.includes(path) ? paths.filter((p) => p !== path) : [...paths, path],
+        };
+      });
+    },
+    [buildId],
+  );
+  const onPartSolo = useCallback(
+    (path: string) => {
+      setPartHighlight(null);
+      setHidden({
+        id: buildId,
+        paths: (outlineParts ?? []).map((part) => part.path).filter((p) => p !== path),
+      });
+    },
+    [buildId, outlineParts],
+  );
+  const onPartsShowAll = useCallback(() => setHidden({ id: buildId, paths: [] }), [buildId]);
+  const onPartFocus = useCallback((part: { min?: Vec3; max?: Vec3 }) => {
+    const bounds = partBounds(part);
+    if (!bounds) return;
+    setView((prev) => ({ kind: 'iso', nonce: (prev?.nonce ?? 0) + 1, focus: bounds }));
+  }, []);
+  const onPartHighlight = useCallback((part: { min?: Vec3; max?: Vec3 } | null) => {
+    setPartHighlight(part ? partBounds(part) : null);
+  }, []);
 
   const { grid, name } = build;
 
@@ -181,13 +296,12 @@ export function EditorPage() {
   /**
    * The program a refine would edit, or null when refining makes no sense.
    *
-   * Null in two cases, both of which would otherwise silently become "generate something
-   * new": the empty plot has nothing to change, and a hand-edited build has no program behind
-   * it any more, so the model would be handed the pre-edit version and quietly discard the
-   * user's edits.
+   * Null for the empty plot (nothing to change) and for voxel-only builds (murals, old
+   * detached saves — no program to send). Hand edits no longer disable refine: they live in
+   * the overlay, the model refines the *program*, and the edits composite back over the
+   * refined expansion when it lands.
    */
-  const refineTarget =
-    buildId !== BLANK_BUILD && !session.detached ? build.program : null;
+  const refineTarget = buildId !== BLANK_BUILD ? build.program : null;
   const topLayer = grid.size.y - 1;
   const layer = readLayer(params.get('layer'), topLayer);
   // Isolate is meaningless without a cut, so it follows the layer rather than standing alone.
@@ -236,21 +350,27 @@ export function EditorPage() {
       toggleIsolate?: boolean;
       param?: { name: string; value: number };
       scale?: ScalePercent | null;
+      style?: string | null;
     }) => {
       setParams(
         () => {
           const search = new URLSearchParams(window.location.search);
           if (next.build !== undefined) {
             search.set('build', next.build);
-            // Layers and params are per-build; carrying either across is meaningless.
+            // Layers, params and the restyle are per-build; carrying any across is meaningless.
             search.delete('layer');
             search.delete('only');
+            search.delete(STYLE_PARAM);
             for (const key of [...search.keys()]) {
               if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX)) search.delete(key);
             }
           }
           if (next.param) search.set(PARAM_PREFIX + next.param.name, String(next.param.value));
           if (next.scale !== undefined) writeScale(search, next.scale);
+          if (next.style !== undefined) {
+            if (next.style === null) search.delete(STYLE_PARAM);
+            else search.set(STYLE_PARAM, next.style);
+          }
           if (next.layer !== undefined) {
             if (next.layer === null) {
               search.delete('layer');
@@ -298,8 +418,32 @@ export function EditorPage() {
   const [brushShape, setBrushShape] = useState<BrushShape>('ball');
   const [clip, setClip] = useState<Clip | null>(null);
   const [stampMode, setStampMode] = useState<StampMode>('merge');
+  /** Symmetry mode: drawing tools land twice, mirrored across the build's X midplane. */
+  const [symmetry, setSymmetry] = useState(false);
   const [help, setHelp] = useState(false);
   const [view, setView] = useState<ViewRequest | null>(null);
+  // Enhanced is the default — the lit, grained, sky-lit look is the product's face now.
+  // Classic remains one click away, persisted, for anyone (or any GPU) that prefers flat.
+  const [enhanced, setEnhanced] = useState(() => {
+    try {
+      return localStorage.getItem(RENDER_STYLE_KEY) !== 'classic';
+    } catch {
+      return true;
+    }
+  });
+  const toggleEnhanced = useCallback(() => {
+    setEnhanced((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(RENDER_STYLE_KEY, next ? 'enhanced' : 'classic');
+      } catch {
+        // Storage blocked — the choice still applies to this page view.
+      }
+      return next;
+    });
+  }, []);
+  // Deliberately not persisted: orthographic is a working view you reach for, not a home.
+  const [ortho, setOrtho] = useState(false);
 
   const onTool = useCallback((next: ToolId) => {
     setTool(next);
@@ -309,6 +453,24 @@ export function EditorPage() {
     // nothing on screen could act on.
     if (next !== 'select') setRegion(null);
   }, []);
+
+  // The screenshot-taker the canvas hands over on mount. A ref, not state: nothing renders
+  // differently for having it, and it changes on every canvas remount.
+  const snapshotRef = useRef<(() => string) | null>(null);
+  const registerSnapshot = useCallback((take: (() => string) | null) => {
+    snapshotRef.current = take;
+  }, []);
+  const takeScreenshot = useCallback(() => {
+    const dataUrl = snapshotRef.current?.();
+    if (!dataUrl) return;
+    const anchor = document.createElement('a');
+    anchor.href = dataUrl;
+    anchor.download = `${name.replace(/[^\w\- ]+/g, '').trim() || 'build'}.png`;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  }, [name]);
 
   const setViewKind = useCallback((kind: ViewKind) => {
     // A new nonce every time, so pressing the same preset twice really does re-frame — the
@@ -327,9 +489,9 @@ export function EditorPage() {
     setNotice('Clipboard rotated 90°.');
   }, []);
 
-  const mirrorClipboard = useCallback(() => {
-    setClip((prev) => (prev ? mirrorClip(prev, 'x') : prev));
-    setNotice('Clipboard mirrored.');
+  const mirrorClipboard = useCallback((axis: 'x' | 'z' = 'x') => {
+    setClip((prev) => (prev ? mirrorClip(prev, axis) : prev));
+    setNotice(`Clipboard mirrored ${axis === 'x' ? 'east–west' : 'north–south'}.`);
   }, []);
 
   /** Non-air blocks inside the standing box, so Clear and Copy are not blind. */
@@ -355,15 +517,50 @@ export function EditorPage() {
         bounds.max.z - bounds.min.z + 1
       }`;
 
-      if (action === 'copy') {
+      if (action === 'copy' || action === 'cut') {
         try {
           const copied = copyRegion(grid, region.min, region.max);
           setClip(copied);
           // Straight to the tool that uses it: copying is never the goal, and the box is left
           // standing so coming back to it costs nothing.
           setTool('stamp');
+          if (action === 'cut') {
+            session.apply(boxEdit(grid, region.min, region.max, 'clear', 0));
+          }
           setNotice(
-            `Copied ${extent} — ${copied.blocks.toLocaleString()} blocks. Click to stamp it; R rotates.`,
+            `${action === 'cut' ? 'Cut' : 'Copied'} ${extent} — ${copied.blocks.toLocaleString()} blocks. Click to stamp it; R rotates.`,
+          );
+        } catch (err) {
+          setNotice(err instanceof ClipTooLargeError ? err.message : String(err));
+        }
+        return;
+      }
+
+      if (action === 'rotate' || action === 'mirrorX' || action === 'mirrorZ') {
+        // In-place transform = copy → clear → stamp back, recentred about the box's own
+        // middle so a rotated wing pivots where it stands instead of walking to a corner.
+        // Two ops on the undo stack (the clear and the stamp), which is honest: undo once
+        // and the transformed copy lifts off, undo twice and the original is back.
+        try {
+          const copied = copyRegion(grid, region.min, region.max);
+          const transformed =
+            action === 'rotate'
+              ? rotateClip(copied, 1)
+              : mirrorClip(copied, action === 'mirrorX' ? 'x' : 'z');
+          session.apply(boxEdit(grid, region.min, region.max, 'clear', 0));
+          const at = {
+            x: Math.max(0, Math.round((bounds.min.x + bounds.max.x) / 2 - (transformed.size.x - 1) / 2)),
+            y: bounds.min.y,
+            z: Math.max(0, Math.round((bounds.min.z + bounds.max.z) / 2 - (transformed.size.z - 1) / 2)),
+          };
+          const result = stampEdit(grid, transformed, at, session.resolveBlock, 'merge');
+          session.apply(result.op);
+          const landed = stampBounds(transformed, at);
+          setRegion({ min: landed.min, max: landed.max });
+          setNotice(
+            action === 'rotate'
+              ? `Rotated ${extent} in place — the box follows the new footprint.`
+              : `Flipped ${extent} in place.`,
           );
         } catch (err) {
           setNotice(err instanceof ClipTooLargeError ? err.message : String(err));
@@ -433,222 +630,76 @@ export function EditorPage() {
    * The two exceptions prove it: `copy` produces a clip instead of an op because it changes
    * nothing, and `pick` produces a block ref for the same reason.
    */
+  /** The context a tool call reads — a view over the page's state, built per gesture. */
+  const toolCtx = useCallback(
+    (): ToolCtx => ({
+      grid,
+      block,
+      brush: { radius: brushRadius, shape: brushShape },
+      anchor,
+      clip,
+      stampMode,
+      familyMode,
+      resolveBlock: session.resolveBlock,
+    }),
+    [grid, block, brushRadius, brushShape, anchor, clip, stampMode, familyMode, session],
+  );
+
+  /**
+   * Apply what a tool decided. This is the whole seam between tools and React: a
+   * `ToolResult` is plain data, and every field is optional so a tool only touches the
+   * state it means to. Symmetry mode intercepts the op on its way through — the tool never
+   * knows it drew twice.
+   */
+  const runTool = useCallback(
+    (impl: EditorTool, result: ToolResult) => {
+      if (result.op !== undefined) {
+        const op =
+          symmetry && impl.mirrorable
+            ? withMirror(grid, result.op, session.resolveBlock)
+            : result.op;
+        session.apply(op);
+      }
+      if (result.anchor !== undefined) setAnchor(result.anchor);
+      if (result.region !== undefined) setRegion(result.region);
+      if (result.pickBlock !== undefined) setBlock(result.pickBlock);
+      if (result.clip !== undefined) setClip(result.clip);
+      if (result.switchTool !== undefined) setTool(result.switchTool);
+      if (result.notice !== undefined) setNotice(result.notice);
+    },
+    [grid, session, symmetry],
+  );
+
   const onCanvasClick = useCallback(
     (hit: VoxelHit) => {
-      // A ground hit names an empty floor cell rather than a block, which is the whole point
-      // of it — it is how the first block of an empty build gets placed. The tools below act
-      // on whatever is *already* under the pointer, and on the floor there is nothing: a
-      // flood fill would spread through the air, and a palette swap would find every empty
-      // cell in the build and turn the sky into stone.
-      const refusal = hit.ground ? NEEDS_A_BLOCK[tool] : undefined;
-      if (refusal) {
-        setNotice(refusal);
+      const impl = TOOL_IMPL[tool];
+      // A ground hit names an empty floor cell rather than a block — it is how the first
+      // block of an empty build gets placed. Tools that read what is already under the
+      // pointer have nothing to read there, and each says so in its own words.
+      if (hit.ground && impl.groundRefusal) {
+        setNotice(impl.groundRefusal);
         return;
       }
-
-      const slot = () => {
-        const index = session.resolveBlock(block);
-        if (index < 0) setNotice('Palette is full — this build cannot hold another block type.');
-        return index;
-      };
-
-      switch (tool) {
-        case 'place': {
-          const index = slot();
-          if (index < 0) return;
-          const cell = placementCell(grid, hit);
-          if (!cell) {
-            setNotice('Nothing to place there — that face is already covered.');
-            return;
-          }
-          const result = brushEdit(grid, [cell], index, {
-            radius: brushRadius,
-            shape: brushShape,
-            onlyAir: true,
-          });
-          session.apply(result.op);
-          setNotice(
-            result.cells === 0
-              ? 'Nothing to place there — every cell the brush covers is already filled.'
-              : brushRadius === 0
-                ? null
-                : `Placed ${result.cells.toLocaleString()} blocks.`,
-          );
-          return;
-        }
-
-        case 'erase': {
-          if (brushRadius === 0) {
-            session.apply(erase(grid, hit));
-            setNotice(null);
-            return;
-          }
-          const result = brushEdit(grid, [hit], 0, {
-            radius: brushRadius,
-            shape: brushShape,
-            onlySolid: true,
-          });
-          session.apply(result.op);
-          setNotice(
-            result.cells === 0 ? 'Nothing there to erase.' : `Erased ${result.cells.toLocaleString()} blocks.`,
-          );
-          return;
-        }
-
-        case 'fill': {
-          const index = slot();
-          if (index < 0) return;
-          const result = floodFill(grid, hit, index);
-          session.apply(result.op);
-          setNotice(
-            result.capped
-              ? `Filled ${result.cells.toLocaleString()} blocks — stopped at the cap; click again to continue.`
-              : `Filled ${result.cells.toLocaleString()} connected block${result.cells === 1 ? '' : 's'}.`,
-          );
-          return;
-        }
-
-        case 'line': {
-          if (!anchor) {
-            setAnchor({ x: hit.x, y: hit.y, z: hit.z });
-            setNotice('Now click the other end.');
-            return;
-          }
-          const index = slot();
-          if (index < 0) return;
-          const result = lineEdit(grid, anchor, hit, index, {
-            radius: brushRadius,
-            shape: brushShape,
-          });
-          session.apply(result.op);
-          setAnchor(null);
-          setNotice(`Drew a line of ${result.cells.toLocaleString()} blocks.`);
-          return;
-        }
-
-        case 'select': {
-          if (!anchor) {
-            setAnchor({ x: hit.x, y: hit.y, z: hit.z });
-            setRegion(null);
-            setNotice('Now click the opposite corner.');
-            return;
-          }
-
-          // The second corner selects and stops. It used to edit — which meant aiming the box
-          // and committing to a verb were the same act, and a box you wanted to hollow after
-          // filling had to be aimed a second time.
-          const bounds = boxBounds(grid, anchor, hit);
-          setAnchor(null);
-          setRegion({ min: bounds.min, max: bounds.max });
-          setNotice(null);
-          return;
-        }
-
-        case 'stamp': {
-          if (!clip) {
-            setNotice('Nothing copied yet — use the Box tool in Copy mode first.');
-            return;
-          }
-          const cell = placementCell(grid, hit) ?? hit;
-          const result = stampEdit(grid, clip, cell, (ref) => session.resolveBlock(ref), stampMode);
-          session.apply(result.op);
-          setNotice(
-            result.truncated
-              ? 'Palette is full — part of the clipboard could not be stamped.'
-              : `Stamped ${result.cells.toLocaleString()} blocks at ${cell.x}, ${cell.y}, ${cell.z}.`,
-          );
-          return;
-        }
-
-        case 'pick': {
-          const picked = pickBlock(grid, hit);
-          if (!picked) {
-            setNotice('Nothing to pick there.');
-            return;
-          }
-          setBlock(picked);
-          setNotice(`Picked ${displayName(picked)}.`);
-          return;
-        }
-
-        case 'swap': {
-          const from = grid.voxels[voxelIndex(grid.size, hit.x, hit.y, hit.z)] ?? 0;
-
-          if (familyMode) {
-            // Deliberately not `slot()`: a family swap resolves its own replacements, and
-            // reserving a slot for the chosen block would leave an unused palette entry
-            // whenever its category has no counterpart in the source family.
-            const source = familyOf(grid.palette[from] ?? AIR_BLOCK);
-            const target = familyOf(block);
-            if (!source || !target) {
-              setNotice('Family swap needs two blocks the registry knows a family for.');
-              return;
-            }
-            const op = swapFamily(grid, source, target, (ref) => session.resolveBlock(ref));
-            session.apply(op);
-            setNotice(
-              op
-                ? `Re-skinned ${source} → ${target}: ${op.indices.length.toLocaleString()} blocks.`
-                : `Nothing in the ${source} family to re-skin.`,
-            );
-            return;
-          }
-
-          const index = slot();
-          if (index < 0) return;
-          const op = swapPaletteIndex(grid, from, index);
-          session.apply(op);
-          setNotice(
-            op
-              ? `Swapped ${op.indices.length.toLocaleString()} blocks of ${displayName(grid.palette[from] ?? AIR_BLOCK)}.`
-              : 'That block is already the chosen one.',
-          );
-          return;
-        }
-      }
+      runTool(impl, impl.onClick(toolCtx(), hit));
     },
-    [tool, block, familyMode, anchor, grid, session, brushRadius, brushShape, clip, stampMode],
+    [tool, toolCtx, runTool],
   );
 
   /**
    * A Shift-drag, delivered once with every cell it crossed.
    *
    * Folded into a single op rather than replayed as one edit per cell: a stroke is one
-   * gesture, so it has to be one press of Ctrl+Z. Offered only for the two tools where
-   * "keep going" means something — the canvas reads the absence of this callback as
-   * permission to let the drag orbit the camera instead.
+   * gesture, so it has to be one press of Ctrl+Z. Only tools that implement `onStroke`
+   * take it — the canvas reads the absence of the callback as permission to let the drag
+   * orbit the camera instead.
    */
   const onStroke = useCallback(
     (hits: VoxelHit[]) => {
-      if (tool === 'place') {
-        const index = session.resolveBlock(block);
-        if (index < 0) {
-          setNotice('Palette is full — this build cannot hold another block type.');
-          return;
-        }
-        const cells = hits
-          .map((hit) => placementCell(grid, hit))
-          .filter((cell): cell is Cell => cell !== null);
-        const result = brushEdit(grid, cells, index, {
-          radius: brushRadius,
-          shape: brushShape,
-          onlyAir: true,
-        });
-        session.apply(result.op);
-        setNotice(result.op ? `Placed ${result.cells.toLocaleString()} blocks in one stroke.` : null);
-        return;
-      }
-
-      if (tool !== 'erase') return;
-      const result = brushEdit(grid, hits, 0, {
-        radius: brushRadius,
-        shape: brushShape,
-        onlySolid: true,
-      });
-      session.apply(result.op);
-      setNotice(result.op ? `Erased ${result.cells.toLocaleString()} blocks in one stroke.` : null);
+      const impl = TOOL_IMPL[tool];
+      if (!impl.onStroke) return;
+      runTool(impl, impl.onStroke(toolCtx(), hits));
     },
-    [tool, block, grid, session, brushRadius, brushShape],
+    [tool, toolCtx, runTool],
   );
 
   /** Alt+click, from any tool: sample the block under the pointer rather than editing it. */
@@ -724,8 +775,11 @@ export function EditorPage() {
         if (clip) rotateClipboard();
         return;
       case 'm':
+        if (clip) mirrorClipboard('x');
+        return;
       case 'M':
-        if (clip) mirrorClipboard();
+        // Shift+M is the other axis — both flips, no extra key to learn.
+        if (clip) mirrorClipboard('z');
         return;
       case 'f':
       case 'F':
@@ -772,6 +826,47 @@ export function EditorPage() {
   // loses builds that were paid for.
   const [saved, setSaved] = useState(() => generatedBuilds());
   const [murals, setMurals] = useState(() => muralBuilds());
+  const [imported, setImported] = useState(() => importedBuilds());
+  const [importError, setImportError] = useState<string | null>(null);
+
+  /**
+   * Open a file as a build: a `.schem` becomes voxels, a program `.json` becomes a program.
+   *
+   * The two paths land in different stores on purpose — a schematic has no recipe and gets
+   * the voxel treatment, while a program JSON re-enters the product exactly where a
+   * generated program does, sliders and refine included.
+   */
+  const onImportFile = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setImportError(null);
+      try {
+        if (/\.schem(atic)?$/i.test(file.name)) {
+          const grid = readSchematic(new Uint8Array(await file.arrayBuffer()));
+          const id = registerImportedBuild(file.name.replace(/\.[^.]+$/, ''), grid);
+          setImported(importedBuilds());
+          update({ build: id, scale: null });
+        } else {
+          const parsed: unknown = JSON.parse(await file.text());
+          if (
+            typeof parsed !== 'object' ||
+            parsed === null ||
+            !('components' in parsed) ||
+            !Array.isArray((parsed as { components: unknown }).components) ||
+            !('size' in parsed)
+          ) {
+            throw new Error('not a build program — expected the JSON the editor exports');
+          }
+          const id = registerGeneratedBuild(parsed as Parameters<typeof registerGeneratedBuild>[0]);
+          setSaved(generatedBuilds());
+          update({ build: id, scale: programScale(id) });
+        }
+      } catch (error) {
+        setImportError((error as Error).message);
+      }
+    },
+    [update],
+  );
   const [generated, setGenerated] = useState<{ id: string; result: GenerationResult } | null>(null);
 
   // A generated program is registered like any other build and then simply selected, so it
@@ -792,6 +887,30 @@ export function EditorPage() {
   );
 
   const generation = useGeneration(onGenerated);
+
+  /**
+   * The ghost build: the program-so-far, expanded and shown in place of the current build
+   * while the model is still emitting. This is what turns the 15–60 second wait into
+   * watching the structure assemble. Each preview is a fresh expand + world load — at
+   * preview cadence (~400ms) and generated-build sizes that is tens of milliseconds — and
+   * a preview too large to be worth remeshing live falls back to the count-only progress.
+   */
+  const ghost = useMemo(() => {
+    const phase = generation.phase;
+    if (phase.kind !== 'emitting' || !phase.partial) return null;
+    try {
+      const result = expand(phase.partial);
+      if (result.blockCount === 0 || result.blockCount > 150_000) return null;
+      return {
+        grid: result.grid,
+        colors: paletteColors(result.grid.palette),
+        flags: paletteFlags(result.grid.palette),
+      };
+    } catch {
+      // expand() does not throw by contract, but a preview must never take the page down.
+      return null;
+    }
+  }, [generation.phase]);
 
   // Same two conditions the prompt box enforces: a generation is charged to an account's
   // daily allowance, and there has to be budget left to charge.
@@ -815,24 +934,20 @@ export function EditorPage() {
     [update],
   );
 
-  // --- re-expansion guard --------------------------------------------------
+  // --- re-expansion -------------------------------------------------------
 
-  const [pending, setPending] = useState<PendingNav | null>(null);
-  /** Anything that re-runs `expand()` discards the edits, so it has to ask first. */
-  const guard = useCallback(
-    (nav: PendingNav) => {
-      if (session.detached && session.edits > 0) setPending(nav);
-      else applyNav(nav, update);
-    },
-    [session.detached, session.edits, update],
-  );
+  // This used to be a guard with a confirmation dialog: re-expanding destroyed hand edits,
+  // so everything that could re-expand had to ask first. Edits live in an overlay now and
+  // ride across every re-expansion, so the guard is a plain dispatcher — kept as a function
+  // only so the dozen call sites did not all need rewriting for a behavioural no-op.
+  const guard = useCallback((nav: PendingNav) => applyNav(nav, update), [update]);
 
   const meshed = totalChunks === 0 ? 1 : 1 - remaining / totalChunks;
   const issues = [...build.errors, ...build.warnings];
   // "Air" would be true and useless. A ground hit is the floor, and saying so is what tells
   // someone staring at an empty plot that the click they are about to make will land.
   const hoverBlock = !hover ? null : hover.ground ? 'Ground' : blockAt(grid, hover);
-  const strokable = tool === 'place' || tool === 'erase';
+  const strokable = TOOL_IMPL[tool].onStroke !== undefined;
 
   // After every hook, never before: an early return above one would change the hook order
   // between renders. The cost is expanding the default build while a library one is in
@@ -877,21 +992,27 @@ export function EditorPage() {
 
       <div className="editor__canvas">
         <EditorCanvas
-          grid={grid}
-          paletteColors={session.paletteColors}
-          paletteFlags={session.paletteFlags}
-          layerClip={layer}
-          layerFloor={isolate && layer !== null ? layer : 0}
+          // Precedence: the streaming ghost while the model emits, then the opening reveal,
+          // then the build itself. The ghost swaps grids at preview cadence; when the real
+          // program lands the navigation to `gen:<n>` plays the reveal over the final build.
+          grid={ghost?.grid ?? assembly.grid}
+          paletteColors={ghost?.colors ?? session.paletteColors}
+          paletteFlags={ghost?.flags ?? session.paletteFlags}
+          layerClip={ghost ? null : layer}
+          layerFloor={!ghost && isolate && layer !== null ? layer : 0}
           onHover={setHover}
-          onClick={onCanvasClick}
-          onStroke={strokable ? onStroke : undefined}
-          onPick={onPick}
-          marker={anchor}
-          region={region}
-          preview={preview}
+          onClick={ghost ? undefined : assembly.assembling ? assembly.skip : onCanvasClick}
+          onStroke={ghost || assembly.assembling ? undefined : strokable ? onStroke : undefined}
+          onPick={ghost ? undefined : assembly.assembling ? assembly.skip : onPick}
+          marker={ghost ? null : anchor}
+          region={ghost ? null : (partHighlight ?? region)}
+          preview={ghost || assembly.assembling ? null : preview}
           onProgress={setRemaining}
-          onWorld={session.attachWorld}
+          onWorld={ghost ? noopWorld : assembly.assembling ? assembly.onWorld : session.attachWorld}
           view={view}
+          onSnapshot={registerSnapshot}
+          enhanced={enhanced}
+          ortho={ortho}
         />
       </div>
 
@@ -938,6 +1059,35 @@ export function EditorPage() {
               ▧ {entry.name}
             </button>
           ))}
+          {imported.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              aria-pressed={buildId === entry.id}
+              onClick={() => guard({ kind: 'build', build: entry.id })}
+              title={`${entry.name} — imported from a schematic`}
+            >
+              ⬇ {entry.name}
+            </button>
+          ))}
+          {/* Import is a build source like the picker rows above it: a .schem opens as
+              voxels, a program .json opens with its sliders live. */}
+          <label className="plans__import" title="Open a .schem or a program .json">
+            Import…
+            <input
+              type="file"
+              accept=".schem,.schematic,application/json,.json"
+              onChange={(event) => {
+                void onImportFile(event.target.files?.[0]);
+                event.target.value = '';
+              }}
+            />
+          </label>
+          {importError && (
+            <p className="tools__notice" role="alert">
+              {importError}
+            </p>
+          )}
         </div>
 
         <Section id="tools" title="Edit" summary={session.edits > 0 ? `${session.edits} edits` : undefined}>
@@ -961,6 +1111,8 @@ export function EditorPage() {
           onFamilyMode={setFamilyMode}
           brushRadius={brushRadius}
           brushShape={brushShape}
+          symmetry={symmetry}
+          onSymmetry={setSymmetry}
           onBrushRadius={setBrushRadius}
           onBrushShape={setBrushShape}
           clip={clip}
@@ -974,6 +1126,7 @@ export function EditorPage() {
           }}
           edits={session.edits}
           detached={session.detached}
+          outside={session.outside}
           canUndo={session.canUndo}
           canRedo={session.canRedo}
           onUndo={session.undo}
@@ -1014,30 +1167,6 @@ export function EditorPage() {
         </dl>
         </Section>
 
-        {pending && (
-          <div className="detach" role="alertdialog">
-            <p className="detach__text">
-              {pending.kind === 'build' ? 'Switching build' : pending.kind === 'scale' ? 'Scaling' : 'Resizing'} re-expands the program
-              and discards {session.edits} manual edit{session.edits === 1 ? '' : 's'}. The program
-              itself is unchanged.
-            </p>
-            <div className="detach__actions">
-              <button
-                type="button"
-                className="detach__confirm"
-                onClick={() => {
-                  applyNav(pending, update);
-                  setPending(null);
-                }}
-              >
-                Discard edits
-              </button>
-              <button type="button" onClick={() => setPending(null)}>
-                Keep editing
-              </button>
-            </div>
-          </div>
-        )}
 
         {build.program && (
           <ScalePanel
@@ -1046,6 +1175,62 @@ export function EditorPage() {
             base={scaleBase}
             onChange={(next) => guard({ kind: 'scale', scale: next })}
           />
+        )}
+
+        {/* Restyle: swap the whole palette for a curated material set. Program builds only —
+            a mural is a picture, and repainting a picture in spruce is not a feature. The
+            pack rides in the URL like the scale does, so a restyled build is shareable and
+            the guide prints it in the same materials. */}
+        {build.program && (
+          <div className="restyle">
+            <p className="params__title">Restyle — same build, new materials</p>
+            <div className="hud__actions">
+              <button
+                type="button"
+                aria-pressed={styleId === null}
+                title="The build's own materials"
+                onClick={() => guard({ kind: 'style', style: null })}
+              >
+                Original
+              </button>
+              {STYLE_PACKS.map((pack) => (
+                <button
+                  key={pack.id}
+                  type="button"
+                  aria-pressed={styleId === pack.id}
+                  title={pack.description}
+                  onClick={() => guard({ kind: 'style', style: pack.id })}
+                >
+                  {pack.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {build.program && build.program.components.length > 0 && (
+          <Section
+            id="outline"
+            title="Components"
+            summary={
+              hiddenPaths.length > 0
+                ? `${hiddenPaths.length} hidden`
+                : outlineParts
+                  ? `${outlineParts.length}`
+                  : undefined
+            }
+            defaultOpen={false}
+          >
+            <Outliner
+              parts={outlineParts}
+              hidden={new Set(hiddenPaths)}
+              onToggle={onPartToggle}
+              onSolo={onPartSolo}
+              onShowAll={onPartsShowAll}
+              onFocus={onPartFocus}
+              onHighlight={onPartHighlight}
+            />
+          </Section>
         )}
 
         {build.params.length > 0 && (
@@ -1093,6 +1278,7 @@ export function EditorPage() {
           detached={session.detached}
           guideHref={guideHref}
           blockCount={session.blockCount}
+          getEdits={session.exportEdits}
         />
 
         {generated && buildId === generated.id && (
@@ -1194,6 +1380,25 @@ export function EditorPage() {
               {entry.label}
             </button>
           ))}
+          <button
+            type="button"
+            aria-pressed={ortho}
+            title="Orthographic projection — no perspective, true proportions"
+            onClick={() => setOrtho((prev) => !prev)}
+          >
+            Ortho
+          </button>
+          <button
+            type="button"
+            aria-pressed={enhanced}
+            title="Lit, grained rendering with sky and fog. Classic is the flat look."
+            onClick={toggleEnhanced}
+          >
+            ✨
+          </button>
+          <button type="button" title="Save the current view as a PNG" onClick={takeScreenshot}>
+            📷
+          </button>
         </span>
       </section>
 
@@ -1218,15 +1423,8 @@ export function EditorPage() {
  * through the whole sky, and a palette swap keyed on air would turn every empty cell in the
  * build into stone.
  */
-const NEEDS_A_BLOCK: Readonly<Partial<Record<ToolId, string>>> = {
-  erase: 'Nothing there to erase — that is bare ground.',
-  fill: 'Nothing to fill there — a flood fill has to start from a block.',
-  swap: 'Nothing to swap there — click the block you want replaced everywhere.',
-  pick: 'Nothing to pick there — click a block to make it the active one.',
-};
-
 /** Keys a shortcut claims, so everything else still reaches the browser. */
-const HANDLED = /^([1-8]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape)$/;
+const HANDLED = /^([1-9]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape)$/;
 
 const VERB: Record<string, string> = {
   fill: 'Filled',
@@ -1241,12 +1439,14 @@ function applyNav(
     build?: string;
     param?: { name: string; value: number };
     scale?: ScalePercent | null;
+    style?: string | null;
   }) => void,
 ): void {
   // Switching build seeds the scale from the program, for the same reason a generation does:
   // a build that was fitted to a size opens at that size, and the slider says so.
   if (nav.kind === 'build') update({ build: nav.build, scale: programScale(nav.build) });
   else if (nav.kind === 'scale') update({ scale: nav.scale });
+  else if (nav.kind === 'style') update({ style: nav.style });
   else update({ param: { name: nav.name, value: nav.value } });
 }
 

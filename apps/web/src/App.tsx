@@ -1,13 +1,12 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AdminPage } from './admin/AdminPage.js';
 import { DashboardPage } from './dashboard/DashboardPage.js';
-import { EditorPage } from './editor/EditorPage.js';
 import { GuidePage } from './guide/GuidePage.js';
 import { LandingPage } from './landing/LandingPage.js';
-import { LayouterPage } from './layouter/LayouterPage.js';
 import { LibraryPage } from './library/LibraryPage.js';
 import { ModPage } from './mod/ModPage.js';
 import { StatusPage } from './StatusPage.js';
+import { StudioPage } from './studio/StudioPage.js';
 
 /**
  * Routes, all load-bearing. `/status` keeps the M0 API and WebSocket round-trips reachable —
@@ -31,10 +30,11 @@ import { StatusPage } from './StatusPage.js';
  * `/mod` is where "Send to game" sends anyone who does not have the mod yet. Without it the
  * pairing instructions name a command that cannot exist on their machine.
  *
- * `/layouter` is the editor's counterpart for interiors: a floorplan tool that compiles to the
- * same `BuildProgram` and therefore reaches the same exports. It takes no query at all — a
- * plan lives in the browser rather than in the URL, because a floorplan is far too big to put
- * in a link and, unlike a build, it is a document someone keeps working on.
+ * `/studio` hosts both ways of making a building — the voxel editor (Build mode) and the
+ * layouter (Plan mode, `?mode=plan`) — behind one address with a mode switch and a Ctrl+K
+ * command palette. `/editor` and `/layouter` live on as search-preserving redirects, because
+ * every link shared before the studio existed has one of those shapes, and a link that
+ * breaks silently is a visitor lost without a report.
  */
 export function App() {
   return (
@@ -42,8 +42,9 @@ export function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/editor" element={<EditorPage />} />
-        <Route path="/layouter" element={<LayouterPage />} />
+        <Route path="/studio" element={<StudioPage />} />
+        <Route path="/editor" element={<ToStudio />} />
+        <Route path="/layouter" element={<ToStudio mode="plan" />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/mod" element={<ModPage />} />
@@ -67,6 +68,23 @@ export function App() {
  */
 function Home() {
   const { search } = useLocation();
-  if (search.length > 1) return <Navigate replace to={{ pathname: '/editor', search }} />;
+  if (search.length > 1) return <Navigate replace to={{ pathname: '/studio', search }} />;
   return <LandingPage />;
+}
+
+/**
+ * `/editor` and `/layouter`, redirected with their query intact.
+ *
+ * The same pattern as `Home`: the search string is the payload — `?build=gen:3&p.floors=2`
+ * is a specific building at a specific size — and a redirect that dropped it would land
+ * every old link on the default cottage. The layouter's redirect adds `mode=plan`; the
+ * editor's strips it, since absent means Build.
+ */
+function ToStudio({ mode }: { mode?: 'plan' }) {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  if (mode) params.set('mode', mode);
+  else params.delete('mode');
+  const next = params.toString();
+  return <Navigate replace to={{ pathname: '/studio', search: next ? `?${next}` : '' }} />;
 }

@@ -569,6 +569,12 @@
 						},
 						"fill": {
 							"$ref": "#/$defs/fill"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -604,6 +610,12 @@
 						},
 						"ceiling": {
 							"type": "boolean"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -639,6 +651,12 @@
 						},
 						"fill": {
 							"$ref": "#/$defs/fill"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -675,6 +693,12 @@
 						},
 						"fill": {
 							"$ref": "#/$defs/fill"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -711,6 +735,12 @@
 						},
 						"fill": {
 							"$ref": "#/$defs/fill"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -754,6 +784,12 @@
 						},
 						"trimRole": {
 							"$ref": "#/$defs/role"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -789,6 +825,12 @@
 						},
 						"roofRole": {
 							"$ref": "#/$defs/role"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -836,6 +878,12 @@
 						},
 						"carve": {
 							"type": "boolean"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -898,6 +946,12 @@
 						},
 						"sill": {
 							"type": "boolean"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -936,6 +990,12 @@
 						},
 						"role": {
 							"$ref": "#/$defs/role"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -964,6 +1024,12 @@
 						},
 						"fill": {
 							"$ref": "#/$defs/fill"
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -1004,6 +1070,12 @@
 								"stairs",
 								"blocks"
 							]
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				},
@@ -1034,10 +1106,29 @@
 							"items": {
 								"$ref": "#/$defs/transform"
 							}
+						},
+						"id": {
+							"$ref": "#/$defs/componentId"
+						},
+						"label": {
+							"$ref": "#/$defs/componentLabel"
 						}
 					}
 				}
 			]
+		},
+		"componentId": {
+			"description": "Optional stable identity for this component, used to address edits to it. Preserve ids you were given; never invent duplicates.",
+			"type": "string",
+			"minLength": 1,
+			"maxLength": 40,
+			"pattern": "^[A-Za-z0-9_.:-]+$"
+		},
+		"componentLabel": {
+			"description": "Optional human-readable name shown in the editor outliner.",
+			"type": "string",
+			"minLength": 1,
+			"maxLength": 60
 		}
 	}
 }

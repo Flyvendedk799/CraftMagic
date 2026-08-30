@@ -77,7 +77,22 @@ export interface WeightedRole {
   weight: number;
 }
 
-export type Component =
+/**
+ * Optional identity, carried by every component variant.
+ *
+ * `id` exists for the things that need to point at a component from outside the program: the
+ * diff-refine tool addresses its edits to `id`s, and the layouter tags each component with the
+ * plan item that produced it so a click in 3D can find its way back to the plan. `label` is a
+ * human name for the outliner. Both are additive — the expander ignores them, `version` stays
+ * 1, and a program without them is exactly as valid as it always was.
+ */
+export interface ComponentTag {
+  id?: string;
+  label?: string;
+}
+
+export type Component = ComponentTag &
+  (
   | { type: 'box'; pos: CVec3; size: CVec3; fill: Fill }
   | {
       type: 'hollow_box';
@@ -167,7 +182,8 @@ export type Component =
       role: string;
       style?: 'stairs' | 'blocks';
     }
-  | { type: 'group'; children: Component[]; transform?: Transform[] };
+  | { type: 'group'; children: Component[]; transform?: Transform[] }
+  );
 
 export type ComponentType = Component['type'];
 
@@ -309,7 +325,9 @@ export type ExpandIssueCode =
   | 'SIZE_CAP'
   | 'DETAIL_CAP'
   | 'BAD_STATE'
-  | 'EMPTY_COMPONENT';
+  | 'EMPTY_COMPONENT'
+  /** A diff-refine op that could not be applied (unknown id, malformed shape). */
+  | 'BAD_PATCH';
 
 /**
  * A structured problem, addressed to both the user and the model. `path` is a JSON

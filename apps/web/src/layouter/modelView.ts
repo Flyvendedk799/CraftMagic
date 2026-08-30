@@ -25,7 +25,7 @@
 import type { FocusBox } from '../editor/EditorCanvas.js';
 import type { ClipBox } from '../editor/VoxelWorld.js';
 import { itemFootprint } from './geometry.js';
-import type { LayoutPlan, PlanItem } from './plan.js';
+import { floorHeight, slabY, type LayoutPlan, type PlanItem } from './plan.js';
 
 export type ModelMode = 'whole' | 'storey' | 'room';
 
@@ -44,8 +44,8 @@ export const MODEL_MODES: readonly { id: ModelMode; label: string; hint: string 
  * storey with no floor.
  */
 export function storeyBand(plan: LayoutPlan, floorIndex: number): { min: number; max: number } {
-  const base = plan.foundation + floorIndex * plan.storeyHeight;
-  return { min: base, max: base + plan.storeyHeight - 1 };
+  const base = slabY(plan, floorIndex);
+  return { min: base, max: base + floorHeight(plan, floorIndex) - 1 };
 }
 
 export interface ModelViewInput {
@@ -104,7 +104,7 @@ export function modelView({ plan, mode, floorIndex, selected, grid, origin }: Mo
     };
   }
 
-  const rect = itemFootprint(selected, plan.wallThickness, plan.storeyHeight);
+  const rect = itemFootprint(selected, plan.wallThickness, floorHeight(plan, floorIndex));
   // Into grid space, then clamped: a room drawn against the site edge can sit outside the
   // cropped build once the eave padding is accounted for, and a clip box that starts past the
   // far edge of the grid hides everything.

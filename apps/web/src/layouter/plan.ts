@@ -34,7 +34,8 @@ export type ItemKind =
   | 'stair'
   | 'opening'
   | 'platform'
-  | 'column';
+  | 'column'
+  | 'furnish';
 
 /** Min corner plus size, in blocks. `w` runs along x, `d` along z. */
 export interface Rect {
@@ -162,6 +163,21 @@ export interface ColumnItem {
   role?: string;
 }
 
+/**
+ * A furnishing from the catalogue — a chair, a table, a bed — placed at a cell.
+ *
+ * `x`/`z` is the min corner of its footprint and `facing` turns the whole piece, blocks and
+ * footprint together. The catalogue (furniture.ts) owns what each `itemId` builds.
+ */
+export interface FurnishItem {
+  kind: 'furnish';
+  id: string;
+  x: number;
+  z: number;
+  facing: Face;
+  itemId: string;
+}
+
 export type PlanItem =
   | RoomItem
   | WallItem
@@ -170,15 +186,43 @@ export type PlanItem =
   | StairItem
   | OpeningItem
   | PlatformItem
-  | ColumnItem;
+  | ColumnItem
+  | FurnishItem;
 
 export interface Floor {
   id: string;
   name: string;
+  /**
+   * This storey's own height in blocks, overriding the building's `storeyHeight`.
+   *
+   * Absent means "the building's" — which is why it is optional rather than copied in: change
+   * the building height and every storey that never asked for its own follows along.
+   */
+  height?: number;
   items: PlanItem[];
 }
 
+/** The height storey `index` actually builds at. */
+export function floorHeight(plan: LayoutPlan, index: number): number {
+  return plan.floors[index]?.height ?? plan.storeyHeight;
+}
+
+/** Build-space y of storey `index`'s floor slab. */
+export function slabY(plan: LayoutPlan, index: number): number {
+  let y = plan.foundation;
+  for (let i = 0; i < index; i++) y += floorHeight(plan, i);
+  return y;
+}
+
+/** Build-space y of the roof deck — the ceiling above the top storey. */
+export function deckY(plan: LayoutPlan): number {
+  return slabY(plan, plan.floors.length);
+}
+
 export type RoofStyle = 'flat' | 'gable' | 'hip' | 'none';
+
+/** How steeply a pitched roof climbs: rise ≈ span/4, span/2, or span. */
+export type RoofPitch = 'low' | 'classic' | 'steep';
 
 export interface LayoutPlan {
   version: typeof PLAN_VERSION;
@@ -195,6 +239,10 @@ export interface LayoutPlan {
   /** Blocks of plinth below the ground floor slab. Zero sits the building straight on grade. */
   foundation: number;
   roof: RoofStyle;
+  /** Only meaningful for gable and hip. Older plans have no field and read as 'classic'. */
+  roofPitch: RoofPitch;
+  /** Eave projection past the wall, 0–2 blocks. */
+  roofOverhang: number;
   kitId: string;
   floors: Floor[];
   updatedAt: string;
@@ -305,6 +353,10 @@ export function createPlatform(rect: Rect, options: Partial<PlatformItem> = {}):
   return normalizeItem({ kind: 'platform', id: planId('plat'), rect, raise: 1, ...options }) as PlatformItem;
 }
 
+export function createFurnish(x: number, z: number, options: Partial<FurnishItem> = {}): FurnishItem {
+  return normalizeItem({ kind: 'furnish', id: planId('furnish'), x, z, facing: 'south', itemId: 'chair', ...options }) as FurnishItem;
+}
+
 export function createColumn(x: number, z: number, options: Partial<ColumnItem> = {}): ColumnItem {
   return normalizeItem({ kind: 'column', id: planId('col'), x, z, size: 1, ...options }) as ColumnItem;
 }
@@ -329,6 +381,8 @@ export function createPlan(options: Partial<LayoutPlan> = {}): LayoutPlan {
     wallThickness: 1,
     foundation: 1,
     roof: 'gable',
+    roofPitch: 'classic',
+    roofOverhang: 1,
     kitId: 'oak-cottage',
     floors: [createFloor(floorName(0))],
     updatedAt: new Date().toISOString(),
@@ -450,6 +504,18 @@ export function normalizeItem(raw: unknown, site: { x: number; z: number } = DEF
         role: optionalRole(item.role),
       };
 
+    case 'furnish':
+      return {
+        kind: 'furnish',
+        id,
+        x: clampInt(item.x, 0, site.x - 1, 0),
+        z: clampInt(item.z, 0, site.z - 1, 0),
+        facing: isFace(item.facing) ? item.facing : 'south',
+        // An id the catalogue no longer carries falls back to its first entry at read time,
+        // so a plan from a newer version degrades to *a* piece rather than to nothing.
+        itemId: typeof item.itemId === 'string' && item.itemId ? item.itemId : 'chair',
+      };
+
     default:
       return null;
   }
@@ -467,6 +533,11 @@ export function normalizeFloor(raw: unknown, index: number, site: { x: number; z
   return {
     id: typeof floor.id === 'string' && floor.id ? floor.id : planId('floor'),
     name: typeof floor.name === 'string' && floor.name.trim() ? floor.name.slice(0, 40) : floorName(index),
+    // Absent stays absent: an override is a choice, and coercing every floor to a number
+    // would freeze the building height into each one.
+    ...(typeof floor.height === 'number'
+      ? { height: clampInt(floor.height, LIMITS.minStorey, LIMITS.maxStorey, 5) }
+      : {}),
     items: items
       .slice(0, LIMITS.maxItemsPerFloor)
       .map((item) => normalizeItem(item, site))
@@ -504,6 +575,10 @@ export function normalizePlan(raw: unknown): LayoutPlan {
     roof: (['flat', 'gable', 'hip', 'none'] as const).includes(plan.roof as RoofStyle)
       ? (plan.roof as RoofStyle)
       : 'gable',
+    roofPitch: (['low', 'classic', 'steep'] as const).includes(plan.roofPitch as RoofPitch)
+      ? (plan.roofPitch as RoofPitch)
+      : 'classic',
+    roofOverhang: clampInt(plan.roofOverhang, 0, 2, 1),
     kitId: typeof plan.kitId === 'string' && plan.kitId ? plan.kitId : 'oak-cottage',
     floors: floors.length > 0 ? floors : [createFloor(floorName(0))],
     updatedAt: typeof plan.updatedAt === 'string' ? plan.updatedAt : new Date().toISOString(),

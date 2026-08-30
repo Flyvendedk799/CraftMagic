@@ -25,17 +25,19 @@
  * what is actually drawn, pads it for the roof overhang, and emits a program that starts at
  * the building's own corner.
  *
- * Vertical convention, for the whole file:
+ * Vertical convention, for the whole file (heights are per storey now, so the arithmetic
+ * lives in `slabY`/`deckY` in plan.ts rather than in a multiplication here):
  *
- *     y = 0                          bottom of the foundation
- *     y = foundation + i*storey      storey i's floor slab (one block)
- *     y = foundation + i*storey + 1  storey i's walking surface, and the base of its walls
- *     y = foundation + n*storey      the top ceiling — the roof deck
+ *     y = 0                     bottom of the foundation
+ *     y = slabY(i)              storey i's floor slab (one block)
+ *     y = slabY(i) + 1          storey i's walking surface, and the base of its walls
+ *     y = deckY                 the top ceiling — the roof deck
  */
 
-import { LIMITS as IR_LIMITS, type BuildProgram, type Component } from '@craftmagic/core';
+import { LIMITS as IR_LIMITS, type BuildProgram, type Component, type DetailOp } from '@craftmagic/core';
+import { furnishingById, furnishingCells } from './furniture.js';
 import { paletteFor } from './kits.js';
-import type { LayoutPlan, PlanItem, Rect, RoomItem } from './plan.js';
+import { deckY as roofDeckY, floorHeight, slabY as slabYOf, type LayoutPlan, type PlanItem, type Rect, type RoomItem } from './plan.js';
 import { planFootprint, rectBottom, rectRight, stairFootprint, unionRect } from './geometry.js';
 
 export interface CompileResult {
@@ -46,8 +48,8 @@ export interface CompileResult {
   warnings: string[];
 }
 
-/** Eaves project this far past the wall on every side. */
-const OVERHANG = 1;
+/** How far a pitched roof climbs per unit of half-span, by the plan's pitch setting. */
+const PITCH_RISE: Record<string, number> = { low: 0.5, classic: 1, steep: 2 };
 
 /**
  * Held below the IR's own component cap so the expander is never the thing that refuses.
@@ -60,11 +62,10 @@ const MAX_COMPONENTS = IR_LIMITS.maxComponents - 8;
 
 export function compilePlan(plan: LayoutPlan): CompileResult {
   const warnings: string[] = [];
-  const storey = plan.storeyHeight;
   const floors = plan.floors.length;
 
   const drawn = planFootprint(plan);
-  const pad = plan.roof === 'gable' || plan.roof === 'hip' ? OVERHANG + 1 : 1;
+  const pad = plan.roof === 'gable' || plan.roof === 'hip' ? plan.roofOverhang + 1 : 1;
 
   // An empty plan still compiles. It produces a plot rather than an error, which is what the
   // editor does with its blank build and what the export controls expect to be handed.
@@ -74,7 +75,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
 
   const origin = { x: footprint.x, z: footprint.z };
 
-  const deckY = plan.foundation + floors * storey;
+  const deckY = roofDeckY(plan);
   const roofHeight = roofRise(plan, footprint);
   // Nothing drawn means nothing to be tall: a plan with no rooms compiles to a single empty
   // cell rather than to a storey-high sliver of air, which is what the preview would frame.
@@ -89,10 +90,29 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
 
   const components: Component[] = [];
   let dropped = 0;
-  const push = (component: Component) => {
+  /**
+   * How many components each plan item has emitted, for id suffixes.
+   *
+   * Every component is tagged with the id of the plan item that produced it — the round-trip
+   * half of the compiler. An item that emits several (a room is a slab, a wall ring and a
+   * lid) numbers the extras `<id>.2`, `<id>.3`, so ids stay unique for the diff-refine tool
+   * while `id.split('.')[0]` still names the item. Clicking a wall in the 3D model resolves
+   * voxel → part → component id → plan item through exactly this tag.
+   */
+  const emitted = new Map<string, number>();
+  const push = (component: Component, itemId?: string, label?: string) => {
     if (components.length >= MAX_COMPONENTS) {
       dropped++;
       return;
+    }
+    if (itemId) {
+      const n = (emitted.get(itemId) ?? 0) + 1;
+      emitted.set(itemId, n);
+      component = {
+        ...component,
+        id: n === 1 ? itemId : `${itemId}.${n}`,
+        ...(label && n === 1 ? { label } : {}),
+      };
     }
     components.push(component);
   };
@@ -111,11 +131,12 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
       pos: [base.x - origin.x, 0, base.z - origin.z],
       size: [base.w, plan.foundation, base.d],
       fill: { type: 'solid', role: 'foundation' },
-    });
+    }, 'foundation', 'Foundation');
   }
 
   for (let index = 0; index < floors; index++) {
-    const slabY = plan.foundation + index * storey;
+    const storey = floorHeight(plan, index);
+    const slabY = slabYOf(plan, index);
     const wallY = slabY + 1;
     const wallHeight = storey - 1;
     const ceilingY = slabY + storey;
@@ -132,7 +153,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
               pos: [rect.x - ox, slabY, rect.z - oz],
               size: [rect.w, 1, rect.d],
               fill: { type: 'solid', role: item.floorRole ?? 'floor' },
-            });
+            }, item.id, item.label.trim() || undefined);
           }
           push({
             type: 'hollow_box',
@@ -142,7 +163,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             floor: false,
             ceiling: false,
             fill: { type: 'solid', role: item.wallRole ?? 'wall_primary' },
-          });
+          }, item.id, item.label.trim() || undefined);
           // The lid. On the top storey it doubles as the roof deck, which is why `roof: none`
           // is the one case that leaves a room open to the sky.
           if (!top || plan.roof !== 'none') {
@@ -151,7 +172,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
               pos: [rect.x - ox, ceilingY, rect.z - oz],
               size: [rect.w, 1, rect.d],
               fill: { type: 'solid', role: top ? 'roof_primary' : 'ceiling' },
-            });
+            }, item.id);
           }
           break;
         }
@@ -166,7 +187,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.x - ox, wallY, item.z - oz],
             size,
             fill: { type: 'solid', role: item.role ?? 'wall_primary' },
-          });
+          }, item.id);
           break;
         }
 
@@ -176,7 +197,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.rect.x - ox, wallY, item.rect.z - oz],
             size: [item.rect.w, item.raise, item.rect.d],
             fill: { type: 'solid', role: item.role ?? 'floor' },
-          });
+          }, item.id);
           break;
 
         case 'column':
@@ -185,7 +206,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             pos: [item.x - ox, wallY, item.z - oz],
             size: [item.size, wallHeight, item.size],
             fill: { type: 'solid', role: item.role ?? 'frame' },
-          });
+          }, item.id);
           break;
 
         default:
@@ -199,7 +220,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   if (plan.roof !== 'none' && floors > 0) {
     const topRooms = unionRect(roomRectsOf(plan.floors[floors - 1]!.items));
     const roofOver = topRooms ?? drawn;
-    if (roofOver) for (const component of roofComponents(plan, roofOver, deckY, origin)) push(component);
+    if (roofOver) for (const component of roofComponents(plan, roofOver, deckY, origin)) push(component, 'roof', 'Roof');
   }
 
   // --- pass 2: carves ----------------------------------------------------
@@ -209,7 +230,8 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   // or four.
 
   for (let index = 0; index < floors; index++) {
-    const slabY = plan.foundation + index * storey;
+    const storey = floorHeight(plan, index);
+    const slabY = slabYOf(plan, index);
     const [ox, oz] = [origin.x, origin.z];
 
     for (const item of plan.floors[index]!.items) {
@@ -219,7 +241,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
           pos: [item.rect.x - ox, slabY, item.rect.z - oz],
           size: [item.rect.w, 1, item.rect.d],
           fill: { type: 'solid', role: 'air' },
-        });
+        }, item.id);
       } else if (item.kind === 'stair') {
         const run = stairFootprint(item.x, item.z, item.facing, item.width, storey);
         push({
@@ -227,7 +249,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
           pos: [run.x - ox, slabY + storey, run.z - oz],
           size: [run.w, 1, run.d],
           fill: { type: 'solid', role: 'air' },
-        });
+        }, item.id);
       }
     }
   }
@@ -235,7 +257,8 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   // --- pass 3: apertures -------------------------------------------------
 
   for (let index = 0; index < floors; index++) {
-    const wallY = plan.foundation + index * storey + 1;
+    const storey = floorHeight(plan, index);
+    const wallY = slabYOf(plan, index) + 1;
     const [ox, oz] = [origin.x, origin.z];
 
     for (const item of plan.floors[index]!.items) {
@@ -248,7 +271,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
           pos: [item.x - ox, wallY, item.z - oz],
           size: horizontal ? [along, item.height, across] : [across, item.height, along],
           fill: { type: 'solid', role: 'air' },
-        });
+        }, item.id);
         // An open doorway is the carve and nothing else — the archway between two rooms that
         // a swinging door would only get in the way of.
         if (!item.open) {
@@ -259,19 +282,66 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
             width: item.width,
             height: item.height,
             role: 'door',
-          });
+          }, item.id);
+        }
+        // A lintel over the opening, when a wall course remains above it to replace. It is
+        // what stops a doorway reading as a slot cut with a saw.
+        if (item.height < storey - 1) {
+          push({
+            type: 'box',
+            pos: [item.x - ox, wallY + item.height, item.z - oz],
+            size: horizontal ? [along, 1, across] : [across, 1, along],
+            fill: { type: 'solid', role: 'frame' },
+          }, item.id);
         }
       } else if (item.kind === 'window') {
         const across = plan.wallThickness;
+        const horizontal = item.axis === 'x';
+        const opening: [number, number, number] = horizontal
+          ? [item.length, item.height, across]
+          : [across, item.height, item.length];
+
+        // A window used to be a solid slug of glass the full thickness of the wall — on a
+        // 3-block wall, a 3-block-deep aquarium pane. Now the wall is carved through, and a
+        // single sheet of glass sits centred in the reveal, the way a builder would set it.
         push({
           type: 'box',
           pos: [item.x - ox, wallY + item.sill, item.z - oz],
-          size:
-            item.axis === 'x'
-              ? [item.length, item.height, across]
-              : [across, item.height, item.length],
+          size: opening,
+          fill: { type: 'solid', role: 'air' },
+        }, item.id);
+        const inset = Math.floor((across - 1) / 2);
+        push({
+          type: 'box',
+          pos: horizontal
+            ? [item.x - ox, wallY + item.sill, item.z - oz + inset]
+            : [item.x - ox + inset, wallY + item.sill, item.z - oz],
+          size: horizontal ? [item.length, item.height, 1] : [1, item.height, item.length],
           fill: { type: 'solid', role: 'window' },
-        });
+        }, item.id);
+
+        // Sill below and lintel above, in the frame role — the trim that makes an opening
+        // read as a window rather than as a missing bit of wall. Each only where a wall
+        // course actually exists to replace.
+        const frame: [number, number, number] = horizontal
+          ? [item.length, 1, across]
+          : [across, 1, item.length];
+        if (item.sill > 0) {
+          push({
+            type: 'box',
+            pos: [item.x - ox, wallY + item.sill - 1, item.z - oz],
+            size: frame,
+            fill: { type: 'solid', role: 'frame' },
+          }, item.id);
+        }
+        if (item.sill + item.height < storey - 1) {
+          push({
+            type: 'box',
+            pos: [item.x - ox, wallY + item.sill + item.height, item.z - oz],
+            size: frame,
+            fill: { type: 'solid', role: 'frame' },
+          }, item.id);
+        }
       }
     }
   }
@@ -282,7 +352,8 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   // carve painted afterwards would take the top step with it.
 
   for (let index = 0; index < floors; index++) {
-    const wallY = plan.foundation + index * storey + 1;
+    const storey = floorHeight(plan, index);
+    const wallY = slabYOf(plan, index) + 1;
     const [ox, oz] = [origin.x, origin.z];
 
     for (const item of plan.floors[index]!.items) {
@@ -300,7 +371,34 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
         steps: storey,
         role: 'stair',
         style: 'stairs',
-      });
+      }, item.id);
+    }
+  }
+
+  // --- pass 5: furnishings ------------------------------------------------
+  //
+  // Raw voxel patches, painted after everything else: a chair does not negotiate with the
+  // slab it stands on, it lands on whatever the structure passes drew. `details` is exactly
+  // the IR feature for this — singular placed things no parametric component describes.
+
+  const details: DetailOp[] = [];
+  for (let index = 0; index < floors; index++) {
+    const surfaceY = slabYOf(plan, index) + 1;
+    for (const item of plan.floors[index]!.items) {
+      if (item.kind !== 'furnish') continue;
+      const piece = furnishingById(item.itemId);
+      const cells = furnishingCells(piece, item.x, item.z, item.facing);
+      if (details.length + cells.length > IR_LIMITS.maxDetailOps - 8) {
+        dropped++;
+        continue;
+      }
+      for (const cell of cells) {
+        details.push({
+          op: 'set',
+          at: [cell.x - origin.x, surfaceY + cell.y, cell.z - origin.z],
+          block: cell.block,
+        });
+      }
     }
   }
 
@@ -324,6 +422,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
     },
     palette: paletteFor(plan.kitId),
     components,
+    ...(details.length > 0 ? { details } : {}),
   };
 
   return { program, origin, warnings };
@@ -350,7 +449,8 @@ function roofRise(plan: LayoutPlan, footprint: Rect): number {
   if (plan.roof === 'none') return 0;
   if (plan.roof === 'flat') return 1;
   const span = Math.min(footprint.w, footprint.d);
-  return Math.max(1, Math.ceil(span / 2));
+  const rate = PITCH_RISE[plan.roofPitch] ?? 1;
+  return Math.max(1, Math.ceil((span / 2) * rate));
 }
 
 function roofComponents(
@@ -385,7 +485,7 @@ function roofComponents(
         type: 'hip_roof',
         pos,
         size: [over.w, rise, over.d],
-        overhang: OVERHANG,
+        overhang: plan.roofOverhang,
         style: 'stairs',
         roofRole: 'roof_primary',
       },
@@ -400,7 +500,7 @@ function roofComponents(
       // slopes at a sane pitch.
       size: [over.w, rise, over.d],
       ridgeAxis: over.w >= over.d ? 'x' : 'z',
-      overhang: OVERHANG,
+      overhang: plan.roofOverhang,
       style: 'stairs',
       roofRole: 'roof_primary',
       trimRole: 'roof_trim',

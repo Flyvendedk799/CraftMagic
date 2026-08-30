@@ -1,0 +1,11 @@
+-- The layouter's drawing, saved beside the build it compiles to.
+--
+-- A plan saved only as its compiled voxels is a drawing lost: reopening it gives you blocks,
+-- and blocks cannot say "this wall is one wall, move it". Storing the plan document itself —
+-- the client's `LayoutPlan` JSON — beside program + voxels means a library row saved from the
+-- layouter reopens *as a plan*, storey by storey, exactly as drawn.
+--
+-- The server only ferries it, the same deal `edits` has: the client normalises anything it
+-- reads back (`normalizePlan`), so the column needs no schema beyond "json". NULL on every
+-- build that did not come from the layouter, which is most of them.
+ALTER TABLE builds ADD COLUMN plan jsonb;

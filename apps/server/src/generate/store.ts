@@ -19,7 +19,14 @@ import type { BuildProgram, ExpandIssue } from '@craftmagic/core';
 import type { ProgressEvent } from './pipeline.js';
 
 export type GenerationEvent =
-	| { type: 'progress'; stage: ProgressEvent['stage']; components?: number; blockCount?: number }
+	| {
+			type: 'progress';
+			stage: ProgressEvent['stage'];
+			components?: number;
+			blockCount?: number;
+			/** The streaming preview program — see `ProgressEvent`. Additive; old clients ignore it. */
+			partial?: BuildProgram;
+	  }
 	| {
 			type: 'done';
 			program: BuildProgram;
@@ -71,6 +78,16 @@ export class GenerationStore {
 	emit(id: string, event: GenerationEvent): void {
 		const generation = this.generations.get(id);
 		if (!generation || generation.finished) return;
+
+		// A preview replaces the previous preview in the replay buffer rather than joining
+		// it. Every partial supersedes the one before, and a long generation would otherwise
+		// buffer dozens of near-complete programs — the one unbounded-memory path in here.
+		if (event.type === 'progress' && event.partial) {
+			const prior = generation.events.findIndex(
+				(buffered) => buffered.type === 'progress' && buffered.partial !== undefined,
+			);
+			if (prior >= 0) generation.events.splice(prior, 1);
+		}
 
 		generation.events.push(event);
 		if (event.type === 'done' || event.type === 'error') generation.finished = true;

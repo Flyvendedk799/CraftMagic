@@ -51,6 +51,35 @@ describe('schema accepts real programs', () => {
 		expect(valid(samples[name] as BuildProgram)).toBe(true);
 	});
 
+	it('accepts components carrying id and label, so a diff-refined program round-trips', () => {
+		// The pipeline assigns ids before a diff refine and the model echoes them back;
+		// rejecting the field would turn every diff refine into a paid repair round.
+		expect(
+			valid(
+				withComponent({
+					type: 'box',
+					id: 'walls',
+					label: 'Main walls',
+					pos: [0, 0, 0],
+					size: [1, 1, 1],
+					fill: { type: 'solid', role: 'wall_primary' },
+				}),
+			),
+		).toBe(true);
+		// Still additive, not lax: an id has to look like an identifier.
+		expect(
+			validate(
+				withComponent({
+					type: 'box',
+					id: 'not a valid id!',
+					pos: [0, 0, 0],
+					size: [1, 1, 1],
+					fill: { type: 'solid', role: 'wall_primary' },
+				}),
+			),
+		).toBe(false);
+	});
+
 	it('accepts a resized program, so refining one does not cost a repair round', () => {
 		// The editor writes `scale` into the program and refine hands that program back to the
 		// model. If the schema did not know the field, the model echoing it would fail

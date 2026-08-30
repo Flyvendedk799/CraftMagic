@@ -67,22 +67,13 @@ import {
 import { ExportBar } from './ExportBar.js';
 import { ScalePanel } from './ScalePanel.js';
 import { Section } from './Section.js';
-import { Shortcuts } from './Shortcuts.js';
+import { EDITOR_KEYS, Shortcuts } from './Shortcuts.js';
 import { SourcePicker } from './SourcePicker.js';
-import { StudioBar, type BuildSource } from './StudioBar.js';
+import { BuildIdentity, StudioBar, type BuildSource } from './StudioBar.js';
 import { ToolPalette, type ToolId } from './ToolPalette.js';
 import { ViewBar } from './ViewBar.js';
-import {
-  DEFAULT_DISPLAY,
-  isWholeBuild,
-  readDisplay,
-  readLayerRange,
-  writeDisplay,
-  type CameraPreset,
-  type DisplayOptions,
-  type LayerRange,
-  type ViewCommand,
-} from './viewport.js';
+import { isWholeBuild, readLayerRange, type LayerRange } from './viewport.js';
+import { useStudioChrome } from './useStudioChrome.js';
 import { useEditSession } from './useEditSession.js';
 import { place } from './tools/place.js';
 import { erase } from './tools/erase.js';
@@ -124,25 +115,6 @@ const TOOL_VERBS: Record<ToolId, string> = {
   select: 'set a corner',
   swap: 'swap',
 };
-
-/** Whether each dock is showing. Remembered, because it is a working preference. */
-const DOCK_KEY = 'craftmagic.docks';
-
-function readDocks(): { left: boolean; right: boolean } {
-  // Below the breakpoint the docks are overlays, so opening both on a first visit would bury
-  // the build under two panels. A stored preference always wins — someone who opened them on
-  // a narrow window meant it.
-  const wide = typeof window === 'undefined' || window.innerWidth > 1000;
-  const fallback = { left: wide, right: wide };
-  try {
-    const raw = localStorage.getItem(DOCK_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as { left?: boolean; right?: boolean };
-    return { left: parsed.left ?? fallback.left, right: parsed.right ?? fallback.right };
-  } catch {
-    return fallback;
-  }
-}
 
 /** A navigation that would re-expand the program, held back until the user confirms. */
 type PendingNav =
@@ -331,41 +303,11 @@ export function EditorPage() {
 
   // --- viewport ------------------------------------------------------------
 
-  const [display, setDisplay] = useState<DisplayOptions>(DEFAULT_DISPLAY);
-  const [docks, setDocks] = useState(() => ({ left: true, right: true }));
-  const [view, setView] = useState<ViewCommand | null>(null);
-  const [shortcuts, setShortcuts] = useState(false);
-  const viewNonce = useRef(0);
-
-  // Read after mount rather than during the first render: `localStorage` is not available
-  // while the page is being pre-rendered by a headless driver with storage disabled, and a
-  // throw there would take the whole studio down instead of one preference.
-  useEffect(() => {
-    setDisplay(readDisplay());
-    setDocks(readDocks());
-  }, []);
-
-  const changeDisplay = useCallback((next: DisplayOptions) => {
-    setDisplay(next);
-    writeDisplay(next);
-  }, []);
-
-  const onView = useCallback((preset: CameraPreset) => {
-    viewNonce.current += 1;
-    setView({ preset, nonce: viewNonce.current });
-  }, []);
-
-  const toggleDock = useCallback((side: 'left' | 'right') => {
-    setDocks((prev) => {
-      const next = { ...prev, [side]: !prev[side] };
-      try {
-        localStorage.setItem(DOCK_KEY, JSON.stringify(next));
-      } catch {
-        // Not remembering is survivable; refusing to collapse is not.
-      }
-      return next;
-    });
-  }, []);
+  // Docks, camera, display toggles and the keyboard sheet are the same on every surface of
+  // the studio, so they are the same hook. The planner uses it too, which is what keeps a
+  // dock from collapsing differently depending on which page you are standing on.
+  const { docks, toggleDock, display, setDisplay, view, sendView, shortcuts, setShortcuts } =
+    useStudioChrome();
 
   // --- editing ------------------------------------------------------------
 
@@ -539,16 +481,16 @@ export function EditorPage() {
         case 'f':
         case 'F':
           event.preventDefault();
-          onView('frame');
+          sendView('frame');
           return;
         case 'g':
         case 'G':
           event.preventDefault();
-          changeDisplay({ ...display, grid: !display.grid });
+          setDisplay({ ...display, grid: !display.grid });
           return;
         case '?':
           event.preventDefault();
-          setShortcuts((open) => !open);
+          setShortcuts(!shortcuts);
           return;
         case 'Escape':
           if (anchor) {
@@ -562,7 +504,7 @@ export function EditorPage() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onTool, layerRange, topLayer, setRange, onView, changeDisplay, display, anchor]);
+  }, [onTool, layerRange, topLayer, setRange, sendView, setDisplay, display, anchor, shortcuts, setShortcuts]);
 
   // --- generation ----------------------------------------------------------
 
@@ -644,15 +586,21 @@ export function EditorPage() {
       data-right={docks.right}
     >
       <StudioBar
-        name={name}
-        onRename={setRenamed}
-        source={source}
-        detached={session.detached}
-        edits={session.edits}
-        size={grid.size}
-        blockCount={session.blockCount}
+        identity={
+          <BuildIdentity
+            name={name}
+            onRename={setRenamed}
+            source={source}
+            detached={session.detached}
+            edits={session.edits}
+            size={grid.size}
+            blockCount={session.blockCount}
+          />
+        }
         leftOpen={docks.left}
         rightOpen={docks.right}
+        leftLabel="Build"
+        rightLabel="Tools"
         onToggleLeft={() => toggleDock('left')}
         onToggleRight={() => toggleDock('right')}
         onShowShortcuts={() => setShortcuts(true)}
@@ -860,8 +808,8 @@ export function EditorPage() {
         range={layerRange}
         onRange={setRange}
         display={display}
-        onDisplay={changeDisplay}
-        onView={onView}
+        onDisplay={setDisplay}
+        onView={sendView}
         hover={hover}
         hoverBlock={hoverBlock}
         toolVerb={TOOL_VERBS[tool]}
@@ -869,7 +817,7 @@ export function EditorPage() {
         totalChunks={totalChunks}
       />
 
-      {shortcuts && <Shortcuts onClose={() => setShortcuts(false)} />}
+      {shortcuts && <Shortcuts groups={EDITOR_KEYS} onClose={() => setShortcuts(false)} />}
     </div>
   );
 }

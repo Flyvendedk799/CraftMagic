@@ -423,6 +423,69 @@ The deployment drivers all still pass against it (`verify-ui`, `verify-edit`, `v
 `verify-download`), which was the constraint the rewrite was held to: the studio could be
 rearranged, but the evidence that it works had to keep working.
 
+**M7 (the planner) — done.** Every build in your library is a **component**, and `/plan`
+arranges them on one plot. Place the same watchtower four times and it is four corner towers;
+drag them on the ground, `R` turns one a quarter, arrows nudge it a block at a time. The
+result composes into a single `VoxelGrid`, which is the whole design — the viewer, the layer
+range, the schematic export, "save to library" and "send to game" are all the components the
+editor already uses, and none of them knows a plan from a build. There is no new server route.
+
+The unit of reuse is the **voxel grid**, not the program. Programs re-expand and that is their
+point, but a plan is about arrangement: the thing you dragged into place has to stay the shape
+you saw. It also means a hand-edited build — one with no program left — is as placeable as any
+other, which is the only answer that would not have been arbitrary.
+
+Two things rotate and they have to agree, or a turned cottage comes out with its stairs facing
+into the wall. **Positions** rotate in `packages/core/src/plan/compose.ts`; **blockstates**
+rotate in the registry. The shared convention is a quarter turn clockwise seen from above,
+`(x, z) → (depth - 1 - z, x)`, and it is checked against the registry's own table rather than
+asserted: a vector pointing north is `(0, -1)`, the map sends it to `(1, 0)` — east, and
+`rotate` sends `facing=north` to `facing=east`. A test places a north-facing stair in the
+origin corner and requires it to end up both *in* the north-east corner and *facing* east.
+
+Three decisions worth keeping:
+
+- **Stamping, not pasting.** A later placement wins only where it *has* a block; its air does
+  not punch a hole in an earlier one. Pasting would make it impossible to tuck a small
+  structure into the corner of a large one, because a small structure's bounding box is mostly
+  air. Overlaps are allowed and *counted*, because overlapping is both a way to join two
+  buildings and what an accident looks like.
+- **The plot is fixed at the engine's own caps** (256×160×256) rather than growing to fit, so
+  a drag can be clamped instead of discovering afterwards that the arrangement cannot be
+  expanded, exported or sent. Compose then trims to what is occupied, so a hamlet built in the
+  middle of the plot does not export a quarter of a million air blocks around itself.
+- **A drag moves an outline, not the building.** Composing walks every voxel of every
+  component and changes the grid's identity, which re-meshes the scene; doing that per frame
+  is unusable past a shed. The composition is rebuilt once, on release.
+
+A plan stores component *ids* and fetches the grids, so renaming a build in the library renames
+it in the plan and deleting one makes the plan say so rather than quietly drawing a stale copy.
+The plan itself lives in `localStorage` — it is content rather than view state, so the URL was
+wrong for it, and there is no plans table yet. The composed *result* saves to the library like
+any other build, which is the loop worth having: a saved plan becomes a component you can place
+inside another plan.
+
+```bash
+node tools/verify-plan.mjs         # seeds a library, composes, drags with real pointer events
+```
+
+That driver drags with real pointer events rather than calling a handler, because the drag is
+the part with somewhere to hide: pointer capture, suppressing the camera and the ground-plane
+projection are all invisible to a unit test and all of them can break individually while the
+placement list still shows the right numbers. It also reloads the page mid-run — restoring a
+plan takes a different path from building one, and the first version deadlocked on exactly
+that: marking a component id as loading re-ran the fetch effect, the re-run cancelled the
+request it had just started, and the next pass skipped the id because it was already marked
+loading. Placements came back, components never did, and the plan composed to an empty grid.
+
+One thing to know before writing another headless driver for this app: **meshing progress is
+reported from a `requestAnimationFrame` callback, and headless Chrome stops compositing once
+the page is visually static.** After the pointer stops moving, the last `remaining → 0` tick
+can simply never be delivered, so a driver waiting on `[data-remaining="0"]` hangs on a page
+that has actually finished. Capturing a throwaway frame forces a BeginFrame and unsticks it;
+`requestAnimationFrame` does not, because with compositing stopped the callback never runs and
+awaiting it hangs the driver outright.
+
 ## Deployment
 
 **It is one service.** The Fastify process in `apps/server` serves the built frontend as

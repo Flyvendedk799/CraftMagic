@@ -6,17 +6,25 @@
  * added here would have been invisible entirely. An unadvertised shortcut is not a feature,
  * it is a thing that happens to power users by accident.
  *
- * This is the single place the list lives. If a key is bound in `EditorPage` and not written
- * down here, that is the bug.
+ * The maps live here, one per surface, rather than in the pages that bind them: keeping them
+ * side by side is what makes it obvious when the editor and the planner disagree about what a
+ * key does. If a page binds a key that is not in its map here, that is the bug.
  */
 
 import { useEffect } from 'react';
 
+export interface KeyGroup {
+  title: string;
+  keys: readonly [string, string][];
+}
+
 export interface ShortcutsProps {
+  groups: readonly KeyGroup[];
   onClose: () => void;
 }
 
-const GROUPS: readonly { title: string; keys: readonly [string, string][] }[] = [
+/** The editor: tools, undo, the layer band, the camera. */
+export const EDITOR_KEYS: readonly KeyGroup[] = [
   {
     title: 'Tools',
     keys: [
@@ -54,7 +62,45 @@ const GROUPS: readonly { title: string; keys: readonly [string, string][] }[] = 
   },
 ];
 
-export function Shortcuts({ onClose }: ShortcutsProps) {
+/** The planner: moving, turning and duplicating whatever is selected. */
+export const PLAN_KEYS: readonly KeyGroup[] = [
+  {
+    title: 'Selection',
+    keys: [
+      ['Click', 'Select a building'],
+      ['Drag', 'Move it on the ground'],
+      ['Esc', 'Select nothing'],
+    ],
+  },
+  {
+    title: 'Move',
+    keys: [
+      ['←→↑↓', 'Nudge one block'],
+      ['⇧ ←→↑↓', 'Nudge five'],
+      ['PgUp', 'Raise'],
+      ['PgDn', 'Lower'],
+    ],
+  },
+  {
+    title: 'Arrange',
+    keys: [
+      ['R', 'Turn a quarter'],
+      ['Ctrl D', 'Duplicate'],
+      ['Del', 'Remove'],
+    ],
+  },
+  {
+    title: 'View',
+    keys: [
+      ['F', 'Frame the plot'],
+      ['G', 'Ground grid on or off'],
+      ['\\', 'Show every layer'],
+      ['?', 'This list'],
+    ],
+  },
+];
+
+export function Shortcuts({ groups, onClose }: ShortcutsProps) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -75,7 +121,7 @@ export function Shortcuts({ onClose }: ShortcutsProps) {
         </div>
 
         <div className="sheet__grid">
-          {GROUPS.map((group) => (
+          {groups.map((group) => (
             <section key={group.title}>
               <h3 className="sheet__group">{group.title}</h3>
               <dl className="sheet__keys">
@@ -95,8 +141,8 @@ export function Shortcuts({ onClose }: ShortcutsProps) {
         </div>
 
         <p className="sheet__foot">
-          Shortcuts stay out of the way while you are typing — the prompt box and the search
-          field keep every key to themselves.
+          Shortcuts stay out of the way while you are typing — the prompt box, the search field
+          and the coordinate boxes all keep every key to themselves.
         </p>
       </div>
     </div>

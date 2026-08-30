@@ -8,3 +8,5 @@ export * from './schem/write.js';
 export * from './guide/steps.js';
 export * from './voxels/codec.js';
 export * from './protocol/agent.js';
+export * from './plan/types.js';
+export * from './plan/compose.js';

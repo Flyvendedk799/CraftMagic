@@ -4,6 +4,7 @@ import { EditorPage } from './editor/EditorPage.js';
 import { GuidePage } from './guide/GuidePage.js';
 import { LibraryPage } from './library/LibraryPage.js';
 import { ModPage } from './mod/ModPage.js';
+import { PlanPage } from './plan/PlanPage.js';
 import { StatusPage } from './StatusPage.js';
 
 /**
@@ -20,12 +21,17 @@ import { StatusPage } from './StatusPage.js';
  *
  * `/mod` is where "Send to game" sends anyone who does not have the mod yet. Without it the
  * pairing instructions name a command that cannot exist on their machine.
+ *
+ * `/plan` arranges several saved builds on one plot. It shares the editor's whole frame and
+ * composes down to an ordinary `VoxelGrid`, so it needs no route of its own on the server and
+ * nothing downstream — export, save, send to game — knows a plan from a build.
  */
 export function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<EditorPage />} />
+        <Route path="/plan" element={<PlanPage />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/mod" element={<ModPage />} />

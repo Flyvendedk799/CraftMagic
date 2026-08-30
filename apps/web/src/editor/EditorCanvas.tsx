@@ -20,6 +20,18 @@ import { VoxelWorld } from './VoxelWorld.js';
 import { raycastVoxel, type VoxelHit } from './raycast.js';
 import type { CameraPreset, DisplayOptions, LayerRange, ViewCommand } from './viewport.js';
 
+interface Vec3Int {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Where a ray crossed the horizontal plane, in grid coordinates. Fractional on purpose. */
+export interface Ground {
+  x: number;
+  z: number;
+}
+
 export interface EditorCanvasProps {
   grid: VoxelGrid;
   paletteColors: Uint8Array;
@@ -37,6 +49,23 @@ export interface EditorCanvasProps {
   onClick?: (hit: VoxelHit) => void;
   /** A second highlight, e.g. the first corner of a box in progress. */
   marker?: { x: number; y: number; z: number } | null;
+  /**
+   * A box drawn around a region of the grid — the planner outlines whichever placement is
+   * selected. Inclusive of `max`, like every other box in this codebase.
+   */
+  region?: { min: Vec3Int; max: Vec3Int } | null;
+  /**
+   * A press, offered to the caller before the camera gets it.
+   *
+   * The caller is handed both what the ray hit and where it crossed the ground plane, and
+   * returns whether it wants the drag. Returning true takes the gesture: OrbitControls is
+   * switched off for its duration and `onDragMove`/`onDragEnd` follow. This is how the
+   * planner drags a building around without the camera orbiting underneath it, and it is a
+   * gesture protocol rather than a planner feature so the canvas stays ignorant of plans.
+   */
+  onPress?: (hit: VoxelHit | null, ground: Ground) => boolean;
+  onDragMove?: (ground: Ground) => void;
+  onDragEnd?: (ground: Ground) => void;
   /** Chunks still queued or in flight, for a loading indicator. Fires only on change. */
   onProgress?: (remaining: number) => void;
   /**
@@ -85,6 +114,10 @@ function Scene({
   onHover,
   onClick,
   marker,
+  region,
+  onPress,
+  onDragMove,
+  onDragEnd,
   onProgress,
   onWorld,
 }: EditorCanvasProps) {
@@ -147,8 +180,12 @@ function Scene({
         highlight={display.highlight}
         onHover={onHover}
         onClick={onClick}
+        onPress={onPress}
+        onDragMove={onDragMove}
+        onDragEnd={onDragEnd}
       />
       {marker && <Highlight at={marker} color="#fbbf24" />}
+      {region && <RegionOutline region={region} />}
     </>
   );
 }
@@ -259,9 +296,9 @@ function Furniture({ size, display }: { size: VoxelGrid['size']; display: Displa
 }
 
 /**
- * Hover highlight and click reporting, driven by the grid raycaster rather than r3f's
- * pointer events — the chunk meshes are not r3f objects, so they generate no pointer events
- * at all.
+ * Hover highlight, click reporting and the drag gesture, driven by the grid raycaster rather
+ * than r3f's pointer events — the chunk meshes are not r3f objects, so they generate no
+ * pointer events at all.
  */
 function Picker({
   grid,
@@ -269,15 +306,22 @@ function Picker({
   highlight,
   onHover,
   onClick,
+  onPress,
+  onDragMove,
+  onDragEnd,
 }: {
   grid: VoxelGrid;
   layerClip: LayerRange | null;
   highlight: boolean;
   onHover?: (hit: VoxelHit | null) => void;
   onClick?: (hit: VoxelHit) => void;
+  onPress?: (hit: VoxelHit | null, ground: Ground) => boolean;
+  onDragMove?: (ground: Ground) => void;
+  onDragEnd?: (ground: Ground) => void;
 }) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls) as unknown as { enabled: boolean } | null;
   const [hit, setHit] = useState<VoxelHit | null>(null);
 
   // Through refs, because the parent re-renders on every hover and inline callbacks in the
@@ -286,19 +330,32 @@ function Picker({
   notify.current = onHover;
   const notifyClick = useRef(onClick);
   notifyClick.current = onClick;
+  const press = useRef(onPress);
+  press.current = onPress;
+  const dragMove = useRef(onDragMove);
+  dragMove.current = onDragMove;
+  const dragEnd = useRef(onDragEnd);
+  dragEnd.current = onDragEnd;
 
   useEffect(() => {
     const canvas = gl.domElement;
     const raycaster = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
+    // The plane the drag runs on: y = 0, the ground the whole plot stands on.
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const groundPoint = new THREE.Vector3();
 
-    const cast = (event: PointerEvent): VoxelHit | null => {
+    const aim = (event: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
       ndc.set(
         ((event.clientX - rect.left) / rect.width) * 2 - 1,
         -((event.clientY - rect.top) / rect.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
+    };
+
+    const cast = (event: PointerEvent): VoxelHit | null => {
+      aim(event);
       return raycastVoxel(grid, raycaster.ray.origin, raycaster.ray.direction, {
         // The layer range clips with planes, so the picker has to be told where the cuts are
         // or it would happily edit a block nobody on screen can see.
@@ -307,7 +364,26 @@ function Picker({
       });
     };
 
+    /**
+     * Where the ray crosses the ground.
+     *
+     * Null when it does not — looking up at the sky, or exactly along the horizon. A drag
+     * that cannot be projected is dropped rather than clamped to some enormous coordinate:
+     * the alternative is a building teleporting to the far edge of the plot because the
+     * camera drifted a degree above level.
+     */
+    const ground = (event: PointerEvent): Ground | null => {
+      aim(event);
+      const point = raycaster.ray.intersectPlane(groundPlane, groundPoint);
+      return point ? { x: point.x, z: point.z } : null;
+    };
+
     const pick = (event: PointerEvent) => {
+      if (dragging) {
+        const at = ground(event);
+        if (at) dragMove.current?.(at);
+        return;
+      }
       const next = cast(event);
       setHit(next);
       notify.current?.(next);
@@ -322,15 +398,37 @@ function Picker({
     // cursor, so a click has to be distinguished from a drag by how far the pointer moved.
     // The threshold is in CSS pixels and generous enough to survive a shaky click.
     let downAt: { x: number; y: number; button: number } | null = null;
+    let dragging = false;
     const DRAG_SLOP = 4;
 
     const down = (event: PointerEvent) => {
       downAt = { x: event.clientX, y: event.clientY, button: event.button };
+      if (event.button !== 0) return;
+
+      const at = ground(event);
+      if (!at || !press.current) return;
+      if (!press.current(cast(event), at)) return;
+
+      // Taken. The camera must not orbit underneath a building being dragged, and the
+      // pointer is captured so the gesture survives leaving the canvas.
+      dragging = true;
+      if (controls) controls.enabled = false;
+      canvas.setPointerCapture(event.pointerId);
     };
 
     const up = (event: PointerEvent) => {
       const start = downAt;
       downAt = null;
+
+      if (dragging) {
+        dragging = false;
+        if (controls) controls.enabled = true;
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+        const at = ground(event);
+        if (at) dragEnd.current?.(at);
+        return;
+      }
+
       if (!start || start.button !== 0 || event.button !== 0) return;
       if (Math.abs(event.clientX - start.x) > DRAG_SLOP) return;
       if (Math.abs(event.clientY - start.y) > DRAG_SLOP) return;
@@ -350,11 +448,45 @@ function Picker({
       canvas.removeEventListener('pointerleave', clear);
       canvas.removeEventListener('pointerdown', down);
       canvas.removeEventListener('pointerup', up);
+      // A teardown mid-drag — the plan changed under the pointer — must not leave the camera
+      // switched off for the rest of the session.
+      if (dragging && controls) controls.enabled = true;
     };
-  }, [gl, camera, grid, layerClip]);
+  }, [gl, camera, controls, grid, layerClip]);
 
   if (!hit || !highlight) return null;
   return <Highlight at={hit} color="#6ee7b7" />;
+}
+
+/**
+ * The outline around a selected region.
+ *
+ * `depthTest` off, like the hover highlight: the point of the outline is to tell you which
+ * building you are about to move, and one hidden behind another is exactly when you need it.
+ */
+function RegionOutline({ region }: { region: { min: Vec3Int; max: Vec3Int } }) {
+  const box = useMemo(
+    () =>
+      new THREE.Box3(
+        new THREE.Vector3(region.min.x, region.min.y, region.min.z),
+        new THREE.Vector3(region.max.x + 1, region.max.y + 1, region.max.z + 1),
+      ),
+    [region.min.x, region.min.y, region.min.z, region.max.x, region.max.y, region.max.z],
+  );
+
+  const helper = useMemo(() => {
+    const created = new THREE.Box3Helper(box, new THREE.Color(0x6ee7b7));
+    const material = created.material as THREE.LineBasicMaterial;
+    material.depthTest = false;
+    material.transparent = true;
+    material.opacity = 0.95;
+    created.renderOrder = 3;
+    return created;
+  }, [box]);
+
+  useEffect(() => () => helper.geometry.dispose(), [helper]);
+
+  return <primitive object={helper} />;
 }
 
 function Highlight({ at, color }: { at: { x: number; y: number; z: number }; color: string }) {

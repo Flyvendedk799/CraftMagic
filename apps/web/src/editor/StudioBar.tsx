@@ -1,5 +1,5 @@
 /**
- * The studio's title bar.
+ * The studio's title bar, shared by the editor and the planner.
  *
  * It exists to answer three questions that the old HUD left the user to work out from
  * context: *what am I looking at*, *what state is it in*, and *where else can I go*. All
@@ -8,59 +8,37 @@
  * library, the mod and the deployment checks were at the bottom of a scrolling panel where
  * nobody ever scrolled.
  *
- * The badges are the load-bearing part. A build is one of four things — a sample, something
- * the model generated, something out of the library, or an empty plot — and it either still
- * matches its program or it does not. Both facts change what half the controls in the studio
- * will do, so both are stated where you cannot miss them rather than inferred from which
- * buttons happen to be disabled.
- *
- * The name is editable in place, which it was not before. It is not decoration: it is the
- * filename of the downloaded schematic, the title of the library row, and what the mod
- * announces in chat when the build lands in somebody's world. Until now the only way to
- * change it was to save the build, leave for the library page, rename it there and come back
- * — for a name you had already decided on before pressing anything.
+ * The middle is a slot rather than fixed markup, because the two surfaces are looking at
+ * different things — one build, or a plot with several on it — while the frame around them
+ * is identical. Making the planner its own bar would have been the quickest way to make it
+ * feel like a different product bolted on beside this one.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, NavLink } from 'react-router-dom';
 import { AccountPanel } from '../library/AccountPanel.js';
 
 export type BuildSource = 'blank' | 'sample' | 'generated' | 'library';
 
 export interface StudioBarProps {
-  name: string;
-  onRename: (name: string) => void;
-  source: BuildSource;
-  /** True once the grid has been hand-edited and no program describes it any more. */
-  detached: boolean;
-  edits: number;
-  size: { x: number; y: number; z: number };
-  blockCount: number;
+  /** What is on screen: a build's name and badges, or a plan's. */
+  identity: ReactNode;
   /** Whether each dock is showing, and how to flip it. */
   leftOpen: boolean;
   rightOpen: boolean;
+  leftLabel: string;
+  rightLabel: string;
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onShowShortcuts: () => void;
 }
 
-const SOURCE_LABEL: Record<BuildSource, string> = {
-  blank: 'Empty plot',
-  sample: 'Sample',
-  generated: 'Generated',
-  library: 'Library',
-};
-
 export function StudioBar({
-  name,
-  onRename,
-  source,
-  detached,
-  edits,
-  size,
-  blockCount,
+  identity,
   leftOpen,
   rightOpen,
+  leftLabel,
+  rightLabel,
   onToggleLeft,
   onToggleRight,
   onShowShortcuts,
@@ -72,8 +50,8 @@ export function StudioBar({
           type="button"
           className="topbar__dock"
           aria-pressed={leftOpen}
-          aria-label={leftOpen ? 'Hide the build panel' : 'Show the build panel'}
-          title="Build panel"
+          aria-label={`${leftOpen ? 'Hide' : 'Show'} the ${leftLabel.toLowerCase()} panel`}
+          title={`${leftLabel} panel`}
           onClick={onToggleLeft}
         >
           <PanelIcon side="left" />
@@ -88,26 +66,19 @@ export function StudioBar({
 
       {/* The identity of the thing on screen. Centred, because it is the subject of every
           control on either side of it. */}
-      <div className="topbar__identity">
-        <BuildName name={name} onRename={onRename} />
-        <span className={`badge badge--${source}`}>{SOURCE_LABEL[source]}</span>
-        {detached && (
-          <span className="badge badge--edited" title="Hand-edited — no program describes it now">
-            Edited · {edits}
-          </span>
-        )}
-        <span className="topbar__dims">
-          {size.x}×{size.y}×{size.z}
-          <span className="topbar__dot">·</span>
-          {blockCount.toLocaleString()} blocks
-        </span>
-      </div>
+      <div className="topbar__identity">{identity}</div>
 
       <div className="topbar__group topbar__group--end">
         <nav className="topbar__nav">
-          <Link to="/library">Library</Link>
-          <Link to="/mod">Mod</Link>
-          <Link to="/status">Status</Link>
+          {/* `end` on the editor link only: without it "/" matches every route and the
+              editor tab stays lit while you are standing in the planner. */}
+          <NavLink to="/" end>
+            Editor
+          </NavLink>
+          <NavLink to="/plan">Planner</NavLink>
+          <NavLink to="/library">Library</NavLink>
+          <NavLink to="/mod">Mod</NavLink>
+          <NavLink to="/status">Status</NavLink>
         </nav>
 
         <button
@@ -126,8 +97,8 @@ export function StudioBar({
           type="button"
           className="topbar__dock"
           aria-pressed={rightOpen}
-          aria-label={rightOpen ? 'Hide the tools panel' : 'Show the tools panel'}
-          title="Tools panel"
+          aria-label={`${rightOpen ? 'Hide' : 'Show'} the ${rightLabel.toLowerCase()} panel`}
+          title={`${rightLabel} panel`}
           onClick={onToggleRight}
         >
           <PanelIcon side="right" />
@@ -137,8 +108,63 @@ export function StudioBar({
   );
 }
 
+const SOURCE_LABEL: Record<BuildSource, string> = {
+  blank: 'Empty plot',
+  sample: 'Sample',
+  generated: 'Generated',
+  library: 'Library',
+};
+
+/** The editor's identity: a renameable title, what kind of build it is, and how big. */
+export function BuildIdentity({
+  name,
+  onRename,
+  source,
+  detached,
+  edits,
+  size,
+  blockCount,
+}: {
+  name: string;
+  onRename: (name: string) => void;
+  source: BuildSource;
+  detached: boolean;
+  edits: number;
+  size: { x: number; y: number; z: number };
+  blockCount: number;
+}) {
+  return (
+    <>
+      <StudioName name={name} onRename={onRename} />
+      <span className={`badge badge--${source}`}>{SOURCE_LABEL[source]}</span>
+      {detached && (
+        <span className="badge badge--edited" title="Hand-edited — no program describes it now">
+          Edited · {edits}
+        </span>
+      )}
+      <Dimensions size={size} blockCount={blockCount} />
+    </>
+  );
+}
+
+export function Dimensions({
+  size,
+  blockCount,
+}: {
+  size: { x: number; y: number; z: number };
+  blockCount: number;
+}) {
+  return (
+    <span className="topbar__dims">
+      {size.x}×{size.y}×{size.z}
+      <span className="topbar__dot">·</span>
+      {blockCount.toLocaleString()} blocks
+    </span>
+  );
+}
+
 /**
- * The build's name, edited in place.
+ * A name, edited in place.
  *
  * Uncontrolled while focused and re-synced from the prop when it is not: the name also changes
  * from *outside* this field — a new build, a generated one, one opened from the library — and
@@ -148,7 +174,7 @@ export function StudioBar({
  * downstream uses of it (a filename, a library row, a line of chat in someone's game) all
  * degrade badly to the empty string.
  */
-function BuildName({ name, onRename }: { name: string; onRename: (name: string) => void }) {
+export function StudioName({ name, onRename }: { name: string; onRename: (name: string) => void }) {
   const [draft, setDraft] = useState(name);
   const [editing, setEditing] = useState(false);
   const input = useRef<HTMLInputElement | null>(null);
@@ -170,7 +196,7 @@ function BuildName({ name, onRename }: { name: string; onRename: (name: string) 
       className="topbar__name"
       value={draft}
       title={`${name} — click to rename`}
-      aria-label="Build name"
+      aria-label="Name"
       maxLength={80}
       size={Math.max(8, Math.min(24, draft.length + 1))}
       onFocus={() => setEditing(true)}

@@ -28,11 +28,27 @@ export interface ExportBarProps {
   detached: boolean;
   /** Link to the printable guide, or null when this build cannot be reached by URL alone. */
   guideHref: string | null;
+  /**
+   * Why there is no program to download, when there is not.
+   *
+   * A hand-edited build and a composed plan are both program-less for different reasons, and
+   * a tooltip that names the wrong one is worse than none — it tells the user their plan was
+   * edited by hand.
+   */
+  programHint?: string;
   /** Non-air blocks. Zero on a fresh empty plot, where there is nothing to export yet. */
   blockCount: number;
 }
 
-export function ExportBar({ grid, program, name, detached, guideHref, blockCount }: ExportBarProps) {
+export function ExportBar({
+  grid,
+  program,
+  name,
+  detached,
+  guideHref,
+  blockCount,
+  programHint = 'This build was hand-edited, so no program describes it',
+}: ExportBarProps) {
   const [written, setWritten] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -81,12 +97,12 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
                 ? 'Nothing to export yet'
                 : program
                   ? 'The parametric program — a few KB, and re-expandable at any size'
-                  : 'This build was hand-edited, so no program describes it'
+                  : programHint
             }
           >
             Program JSON
             <span className="export__meta">
-              {program ? 'a few KB, re-expandable' : 'hand-edited — no program'}
+              {program ? 'a few KB, re-expandable' : 'no program describes this'}
             </span>
           </button>
           {guideHref && !empty && (

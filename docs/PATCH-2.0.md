@@ -107,17 +107,29 @@ remainder of the approved roadmap for follow-up work.
   number array with no `bodyLimit`, so a build at the engine's own 256×160×256 cap was a 20 MB
   body against Fastify's 1 MiB default — 20× too large to save. It is now 0.15 MB.
 
+**Delivery and persistence (S6):**
+- **Region-by-region delivery works.** `JobManager` centred every build on the player, so
+  without an offset every region of a world would have landed on top of the last. `job.offer`
+  now carries optional region metadata, the mod places region *n>0* at `anchor + turned
+  offset`, and the server refuses to offer a later region until region 0 has reported where
+  it landed. The rotation is the subtle half: a map placed at a quarter turn has to have its
+  region offsets turned with it, or it comes out scattered.
+- `maxVolume` was announced in `hello.ok` and checked by nobody. It is enforced now.
+- **Worlds have their own table** (migration 008) and five routes, with the heightfield in
+  `bytea` and a 32 MB body limit. The client picks its store from the auth state, so signed
+  out is not a degraded mode — it is the same code against IndexedDB.
+
 ## Remaining roadmap (approved, not yet built)
 
 1. **N-variation generation** with a thumbnail picker, and complexity-based effort/model
    routing — both gated on live eval numbers.
 2. **The renderer ceiling.** `VoxelWorld` still meshes every chunk at load and keeps every mesh,
-   so the honest limit is about 384×160×384 — fine for a region, not for a whole world in one
-   view. Camera-driven working set with eviction is the fix.
-3. **Region-by-region delivery.** `job.offer` carries exactly one build, and `JobManager`
-   centres every build on the player — so without a region offset every region of a world would
-   land on top of the last. The anchor round-trip the fix needs already exists.
-4. **Worlds server-side.** Drafts are local. A `worlds` table is what makes them portable.
+   so the honest limit is about 384×160×384 — fine for one region, not for a whole world in one
+   view. A camera-driven working set with eviction is the fix.
+3. **Truncated edge regions under rotation.** Anchor plus turned offset is exact while every
+   region shares a footprint, which holds when the map's extent divides by `regionSize`. An
+   edge region is narrower, and under a quarter turn it sits off by the difference. Unrotated
+   maps are exact regardless.
 
 Explicitly rejected (with reasons recorded in the plan): a Mojang texture atlas (asset
 redistribution), a program→plan decompiler (lossy inverse), a wall-graph rework, smart

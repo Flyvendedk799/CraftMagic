@@ -45,6 +45,55 @@ if (!EDGE) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// --- seed a component, so the parts bin has something in it ------------------------------
+//
+// Signed out, the shelf correctly says there is nothing to place, and a driver that only
+// ever ran signed out would leave the headline feature — putting a saved build on sculpted
+// ground — with no coverage at all.
+
+const EMAIL = `world-${Date.now()}@craftmagic.test`;
+const PASSWORD = 'verify-world-password';
+
+const { expand, samples } = await import('@craftmagic/core');
+
+let cookie = '';
+async function api(route, body, method = 'POST') {
+	const res = await fetch(ORIGIN + route, {
+		method,
+		headers: { 'Content-Type': 'application/json', ...(cookie ? { cookie } : {}) },
+		body: body ? JSON.stringify(body) : undefined,
+	});
+	const set = res.headers.get('set-cookie');
+	if (set) cookie = set.split(';')[0];
+	const text = await res.text();
+	return { status: res.status, body: text ? JSON.parse(text) : null };
+}
+
+let auth = await api('/api/auth/register', { email: EMAIL, password: PASSWORD });
+if (auth.status >= 400) auth = await api('/api/auth/login', { email: EMAIL, password: PASSWORD });
+const signedIn = auth.status < 400;
+
+let componentName = null;
+if (signedIn) {
+	const program = samples.cottage ?? Object.values(samples)[0];
+	const result = expand(program);
+	componentName = `verify-world-${Date.now()}`;
+	const saved = await api('/api/builds', {
+		name: componentName,
+		library: true,
+		detached: false,
+		kind: 'structure',
+		program,
+		grid: {
+			size: result.grid.size,
+			palette: result.grid.palette,
+			voxels: Array.from(result.grid.voxels),
+		},
+	});
+	if (!saved.body?.id) componentName = null;
+}
+
 const port = 9600 + (process.pid % 300);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-world-'));
 const child = spawn(
@@ -271,7 +320,13 @@ try {
 	// --- it survives a reload ----------------------------------------------------------------------
 	const before = { height: await fact('hoverHeight'), stratum: await fact('hoverStratum') };
 	// The draft autosave is debounced; a reload inside the window would prove nothing.
-	await sleep(1200);
+	// Wait for the draft to be on disk rather than sleeping and hoping. The autosave is
+	// debounced, so a fixed sleep is a guess — and it was wrong roughly one run in four, which
+	// is the worst rate for a check to fail at.
+	await waitFor(
+		"(() => { const d = document.querySelector('.world').dataset; return d.draft === d.revision; })()",
+		'the draft to be written',
+	);
 	await send('Page.navigate', { url: `${ORIGIN}/studio?mode=world` });
 	await waitFor("!!document.querySelector('.worldmap')", 'the map after a reload');
 	await sleep(1200);
@@ -282,6 +337,66 @@ try {
 		`y ${await fact('hoverHeight')} / ground ${await fact('hoverStratum')} vs y ${before.height} / ground ${before.stratum}`,
 	);
 	check('and the history starts clean rather than restoring somebody else’s undos', (await fact('history')) === 0);
+
+	// --- a saved build, placed on the ground -------------------------------------------------
+	if (!componentName) {
+		console.log('  skip  placing a component — could not seed a library on this server');
+	} else {
+		await evaluate(
+			`fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:${JSON.stringify(
+				JSON.stringify({ email: EMAIL, password: PASSWORD }),
+			)}}).then((r) => r.ok)`,
+		);
+		await send('Page.navigate', { url: `${ORIGIN}/studio?mode=world` });
+		await waitFor("!!document.querySelector('.worldmap')", 'the map, signed in');
+		await waitFor(
+			`[...document.querySelectorAll('.shelf__name')].some((n) => n.textContent.includes(${JSON.stringify(componentName)}))`,
+			'the component shelf',
+		);
+		check('a saved build reaches the world\u2019s parts bin', true, componentName);
+
+		const armed = await evaluate(
+			`(() => { const b = [...document.querySelectorAll('.shelf__item')]` +
+				`.find((x) => x.textContent.includes(${JSON.stringify(componentName)})); if (b) b.click(); return !!b; })()`,
+		);
+		check('picking one arms it', armed === true);
+		await sleep(250);
+		check(
+			'and hands the pointer the Place tool',
+			(await evaluate("document.querySelector('.world')?.dataset.tool")) === 'place',
+			String(await evaluate("document.querySelector('.world')?.dataset.tool")),
+		);
+
+		const freshBox = await mapBox();
+		const drop = { x: freshBox.x + freshBox.w * 0.4, y: freshBox.y + freshBox.h * 0.4 };
+		await mouse('mousePressed', drop.x, drop.y);
+		await mouse('mouseReleased', drop.x, drop.y);
+		await send('Page.captureScreenshot', { format: 'jpeg', quality: 1 });
+		await sleep(600);
+		check(
+			'clicking the map drops it',
+			(await fact('placements')) === 1,
+			`${await fact('placements')} placed`,
+		);
+
+		// The point of the whole tier: a component is not a box on a plan, it is blocks that
+		// land on the ground you sculpted. Asserted on the region's own placement count rather
+		// than on a block delta, because the delta races the prefab fetch — on localhost the
+		// blocks are often already in by the time a "before" could be read.
+		await waitFor(
+			"document.querySelector('.world__preview')?.dataset.placed === '1'",
+			'the placed build to reach the materialised region',
+		);
+		check(
+			'the 3D check follows the drop to its own region',
+			true,
+			String(await evaluate("document.querySelector('.world__preview')?.dataset.region")),
+		);
+		check(
+			'and its blocks are stamped into it, not merely referenced',
+			(await evaluate("Number(document.querySelector('.world__preview')?.dataset.unresolved ?? 1)")) === 0,
+		);
+	}
 
 	check('no uncaught errors', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 

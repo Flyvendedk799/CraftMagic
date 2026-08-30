@@ -60,6 +60,15 @@ export interface WorldSession {
   canRedo: boolean;
   historyDepth: number;
 
+  /**
+   * The revision the local draft was last written at.
+   *
+   * Exposed because the autosave is debounced, so "has this been persisted yet" is a real
+   * question with a real answer, and the alternative is every caller — the headless drivers
+   * included — sleeping for a guessed interval and being wrong some of the time.
+   */
+  draftRevision: number;
+
   saved: SavedWorld[];
   save: () => void;
   open: (doc: WorldDoc) => void;
@@ -83,6 +92,7 @@ export function useWorldSession(
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState<SavedWorld[]>([]);
   const [savedRevision, setSavedRevision] = useState(0);
+  const [draftRevision, setDraftRevision] = useState(0);
 
   const historyRef = useRef<WorldHistory | null>(null);
   const history = (historyRef.current ??= new WorldHistory());
@@ -132,7 +142,13 @@ export function useWorldSession(
     if (loading || revision === 0) return;
     const timer = setTimeout(() => {
       const doc = docRef.current;
-      if (doc) void saveDraft(doc);
+      if (!doc) return;
+      // Recorded only once the write resolves. Marking it saved when the write *starts*
+      // would be a promise the page cannot keep — IndexedDB can refuse, and a private
+      // window refuses everything.
+      void saveDraft(doc).then((ok) => {
+        if (ok) setDraftRevision(revision);
+      });
     }, AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
   }, [revision, loading]);
@@ -315,6 +331,7 @@ export function useWorldSession(
       canUndo: history.canUndo,
       canRedo: history.canRedo,
       historyDepth: history.depth,
+      draftRevision,
       saved,
       save,
       open,
@@ -324,6 +341,7 @@ export function useWorldSession(
     [
       revision, loading, beginStroke, endStroke, bump, commitCarve, commitPlacements,
       commitSettings, rename, undo, redo, history, saved, save, open, remove, savedRevision,
+      draftRevision,
     ],
   );
 }

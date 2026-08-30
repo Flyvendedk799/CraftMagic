@@ -356,6 +356,8 @@ export function WorldPage() {
       data-columns={doc.settings.size.x * doc.settings.size.z}
       data-placements={doc.placements.length}
       data-history={session.historyDepth}
+      data-revision={session.revision}
+      data-draft={session.draftRevision}
       data-tool={tool}
       data-hover-x={hover?.x}
       data-hover-z={hover?.z}

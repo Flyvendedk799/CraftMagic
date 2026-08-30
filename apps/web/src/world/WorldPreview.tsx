@@ -71,6 +71,9 @@ export function WorldPreview({ doc, revision, region, catalogue, live }: WorldPr
       data-region={`${region.rx},${region.rz}`}
       data-blocks={built.stats.blocks}
       data-unresolved={built.stats.unresolved}
+      /* Placements whose box reaches into this region — the honest answer to "did that
+         component actually land here", which a block count cannot give without a baseline. */
+      data-placed={built.stats.placements}
     >
       <EditorCanvas grid={built.grid} paletteColors={colors} paletteFlags={flags} />
       <div className="world__preview-bar">

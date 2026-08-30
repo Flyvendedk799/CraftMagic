@@ -279,6 +279,10 @@ export function WorldMap(props: WorldMapProps) {
         // noted a few hundred columns, changed nothing, and discarded the empty stroke. It
         // looked exactly like a dead button, which it was.
         props.onPlaceAt(world.x, world.z);
+        // Dropping a building is an edit like any other, so the 3D check moves to it. Without
+        // this the preview stays wherever the last brush stroke was, and a component placed
+        // in another region simply never appears — which reads as a placement that failed.
+        props.onEdited(world.x, world.z);
         return;
       }
 

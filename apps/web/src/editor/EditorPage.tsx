@@ -1,21 +1,41 @@
 /**
- * The editor page.
+ * The studio.
  *
  * Three features are on show and they pull in different directions, which is why they are
- * implemented differently. The **layer slider** must never re-mesh — it is a clipping plane,
- * so scrubbing a 200k-block build costs one uniform. The **param slider** must re-expand:
- * that is the whole point of the IR, and re-running `expand()` is what keeps walls on the
- * walls instead of stretching them. **Manual edits** are the awkward third: they write
+ * implemented differently. The **layer range** must never re-mesh — it is a pair of clipping
+ * planes, so scrubbing a 200k-block build costs two uniforms. The **param slider** must
+ * re-expand: that is the whole point of the IR, and re-running `expand()` is what keeps walls
+ * on the walls instead of stretching them. **Manual edits** are the awkward third: they write
  * straight to the voxels, so they are exactly what re-expanding destroys. That conflict is
  * settled here — the page holds the confirmation, `useEditSession` holds the evidence.
  *
- * View state lives in the query string (`?build=tower&p.height=24&layer=6`). It costs
+ * ## Layout
+ *
+ * A real frame rather than islands floating over a canvas: a title bar across the top, a
+ * **build** dock on the left, the viewport in the middle, a **studio** dock on the right, and
+ * the viewport's own controls along the bottom. The docks are grid columns, so the viewport
+ * is never underneath them and a panel can grow without covering the build it describes.
+ *
+ * The split between the two docks is the one rule that makes a control's home guessable. The
+ * left dock decides **which build exists**: the prompt that makes one, and the list of the
+ * ones you already have. The right dock is **everything you do to that build** and where it
+ * goes afterwards — tools, shape, scale, details, exports, the library, someone's Minecraft
+ * world. Shape and scale belong on the right for the same reason the tools do: they change
+ * the build, and they are the two controls the discard warning exists for. The old single
+ * column mixed all of it together and pushed "Send to game", the headline feature, below a
+ * fold that only existed because the panel was a floating box with a height cap.
+ *
+ * ## State
+ *
+ * View state lives in the query string (`?build=tower&p.height=24&layer=6&layer0=2`). It costs
  * nothing, makes a view linkable, and lets a headless screenshot reach any of these states
- * without a driver. Edits deliberately do not: a URL that claimed to describe an edited
- * build would be a lie the moment it was shared.
+ * without a driver. Edits deliberately do not: a URL that claimed to describe an edited build
+ * would be a lie the moment it was shared. Camera and display toggles do not either — they
+ * are preferences about *looking* at a build, not about the build, so they live in
+ * localStorage and never travel on a shared link.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AIR_BLOCK, displayName, voxelIndex } from '@craftmagic/core';
 import { EditorCanvas } from './EditorCanvas.js';
@@ -26,12 +46,12 @@ import {
   expandBuild,
   generatedBuilds,
   isBuildId,
+  isGeneratedId,
   isLibraryId,
   libraryRowId,
   paramsOf,
   previewScale,
   baseSize,
-  NO_SCALE,
   type ScalePercent,
   registerGeneratedBuild,
   registerLibraryBuild,
@@ -47,7 +67,22 @@ import {
 import { ExportBar } from './ExportBar.js';
 import { ScalePanel } from './ScalePanel.js';
 import { Section } from './Section.js';
+import { Shortcuts } from './Shortcuts.js';
+import { SourcePicker } from './SourcePicker.js';
+import { StudioBar, type BuildSource } from './StudioBar.js';
 import { ToolPalette, type ToolId } from './ToolPalette.js';
+import { ViewBar } from './ViewBar.js';
+import {
+  DEFAULT_DISPLAY,
+  isWholeBuild,
+  readDisplay,
+  readLayerRange,
+  writeDisplay,
+  type CameraPreset,
+  type DisplayOptions,
+  type LayerRange,
+  type ViewCommand,
+} from './viewport.js';
 import { useEditSession } from './useEditSession.js';
 import { place } from './tools/place.js';
 import { erase } from './tools/erase.js';
@@ -56,7 +91,6 @@ import { boxBounds, boxEdit, type BoxCorner, type BoxMode } from './tools/boxSel
 import { familyOf, swapFamily, swapPaletteIndex } from './tools/paletteSwap.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
-import { AccountPanel } from '../library/AccountPanel.js';
 import { getBuild } from '../library/library.js';
 import type { VoxelHit } from './raycast.js';
 import './editor.css';
@@ -82,13 +116,33 @@ const TOOL_KEYS: Record<string, ToolId> = {
   '5': 'swap',
 };
 
-const BUILD_LABELS: Record<string, string> = {
-  blank: 'Empty',
-  cottage: 'Cottage',
-  tower: 'Tower',
-  pavilion: 'Pavilion',
-  field: 'Stress test',
+/** What a click does right now, for the idle line in the status bar. */
+const TOOL_VERBS: Record<ToolId, string> = {
+  place: 'place',
+  erase: 'erase',
+  fill: 'fill',
+  select: 'set a corner',
+  swap: 'swap',
 };
+
+/** Whether each dock is showing. Remembered, because it is a working preference. */
+const DOCK_KEY = 'craftmagic.docks';
+
+function readDocks(): { left: boolean; right: boolean } {
+  // Below the breakpoint the docks are overlays, so opening both on a first visit would bury
+  // the build under two panels. A stored preference always wins — someone who opened them on
+  // a narrow window meant it.
+  const wide = typeof window === 'undefined' || window.innerWidth > 1000;
+  const fallback = { left: wide, right: wide };
+  try {
+    const raw = localStorage.getItem(DOCK_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as { left?: boolean; right?: boolean };
+    return { left: parsed.left ?? fallback.left, right: parsed.right ?? fallback.right };
+  } catch {
+    return fallback;
+  }
+}
 
 /** A navigation that would re-expand the program, held back until the user confirms. */
 type PendingNav =
@@ -152,7 +206,7 @@ export function EditorPage() {
   const buildId = isBuildId(rawBuild) ? rawBuild : DEFAULT_BUILD;
 
   // Only param values may re-expand. Keying the memo on a string of just those keeps the
-  // layer slider — which lives in the same query string — from rebuilding the world.
+  // layer range — which lives in the same query string — from rebuilding the world.
   const overrideKey = paramsOf(buildId)
     .map((spec) => `${spec.name}=${params.get(PARAM_PREFIX + spec.name) ?? ''}`)
     .join('&');
@@ -168,7 +222,19 @@ export function EditorPage() {
   );
   const session = useEditSession(build);
 
-  const { grid, name } = build;
+  const { grid } = build;
+
+  /**
+   * A name the user typed, or null to use the one the build came with.
+   *
+   * Held here rather than pushed into the build, because a build is a derived value: the next
+   * param drag re-runs `expand()` and would hand back the program's own name again. Cleared
+   * whenever the build identity changes, since a name typed for a cottage has nothing to do
+   * with the tower that replaced it.
+   */
+  const [renamed, setRenamed] = useState<string | null>(null);
+  useEffect(() => setRenamed(null), [buildId]);
+  const name = renamed ?? build.name;
 
   const scalePreview = useMemo(() => previewScale(buildId, scale), [buildId, scale]);
   const scaleBase = useMemo(() => baseSize(buildId), [buildId]);
@@ -184,7 +250,19 @@ export function EditorPage() {
   const refineTarget =
     buildId !== BLANK_BUILD && !session.detached ? build.program : null;
   const topLayer = grid.size.y - 1;
-  const layer = readLayer(params.get('layer'), topLayer);
+
+  // Memoised on the two raw strings, not rebuilt per render: this object is a prop of the
+  // canvas, and a fresh identity every render would re-run the clipping effect on every
+  // pointer move.
+  const rawLayerMax = params.get('layer');
+  const rawLayerMin = params.get('layer0');
+  const layerRange = useMemo(
+    () => readLayerRange(rawLayerMax, rawLayerMin, topLayer),
+    [rawLayerMax, rawLayerMin, topLayer],
+  );
+  // Clipping at the full extent is clipping for nothing, and `null` is the only value that
+  // lets the mesher skip binding planes at all.
+  const effectiveClip = isWholeBuild(layerRange, topLayer) ? null : layerRange;
 
   const totalChunks = useMemo(() => {
     const counts = chunkCounts(grid.size);
@@ -210,7 +288,7 @@ export function EditorPage() {
   const update = useCallback(
     (next: {
       build?: string;
-      layer?: number | null;
+      layer?: LayerRange | null;
       param?: { name: string; value: number };
       scale?: ScalePercent | null;
     }) => {
@@ -221,6 +299,7 @@ export function EditorPage() {
             search.set('build', next.build);
             // Layers and params are per-build; carrying either across is meaningless.
             search.delete('layer');
+            search.delete('layer0');
             for (const key of [...search.keys()]) {
               if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX)) search.delete(key);
             }
@@ -228,8 +307,16 @@ export function EditorPage() {
           if (next.param) search.set(PARAM_PREFIX + next.param.name, String(next.param.value));
           if (next.scale !== undefined) writeScale(search, next.scale);
           if (next.layer !== undefined) {
-            if (next.layer === null) search.delete('layer');
-            else search.set('layer', String(next.layer));
+            if (next.layer === null) {
+              search.delete('layer');
+              search.delete('layer0');
+            } else {
+              search.set('layer', String(next.layer.max));
+              // Absent rather than zero: the common case is a ceiling, and a link that only
+              // clips the top should not carry a second parameter saying "from the bottom".
+              if (next.layer.min > 0) search.set('layer0', String(next.layer.min));
+              else search.delete('layer0');
+            }
           }
           return search;
         },
@@ -240,32 +327,49 @@ export function EditorPage() {
     [setParams],
   );
 
+  const setRange = useCallback((next: LayerRange | null) => update({ layer: next }), [update]);
+
+  // --- viewport ------------------------------------------------------------
+
+  const [display, setDisplay] = useState<DisplayOptions>(DEFAULT_DISPLAY);
+  const [docks, setDocks] = useState(() => ({ left: true, right: true }));
+  const [view, setView] = useState<ViewCommand | null>(null);
+  const [shortcuts, setShortcuts] = useState(false);
+  const viewNonce = useRef(0);
+
+  // Read after mount rather than during the first render: `localStorage` is not available
+  // while the page is being pre-rendered by a headless driver with storage disabled, and a
+  // throw there would take the whole studio down instead of one preference.
+  useEffect(() => {
+    setDisplay(readDisplay());
+    setDocks(readDocks());
+  }, []);
+
+  const changeDisplay = useCallback((next: DisplayOptions) => {
+    setDisplay(next);
+    writeDisplay(next);
+  }, []);
+
+  const onView = useCallback((preset: CameraPreset) => {
+    viewNonce.current += 1;
+    setView({ preset, nonce: viewNonce.current });
+  }, []);
+
+  const toggleDock = useCallback((side: 'left' | 'right') => {
+    setDocks((prev) => {
+      const next = { ...prev, [side]: !prev[side] };
+      try {
+        localStorage.setItem(DOCK_KEY, JSON.stringify(next));
+      } catch {
+        // Not remembering is survivable; refusing to collapse is not.
+      }
+      return next;
+    });
+  }, []);
+
   // --- editing ------------------------------------------------------------
 
   const [tool, setTool] = useState<ToolId>('place');
-
-  /**
-   * Number keys pick a tool.
-   *
-   * Guarded against firing while someone is typing: the prompt box and the rename field are
-   * both on this page, and a shortcut that changes the tool mid-sentence is worse than no
-   * shortcut. Modifier combinations are left alone so Ctrl+Z still reaches undo.
-   */
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (target?.isContentEditable) return;
-
-      const picked = TOOL_KEYS[event.key];
-      if (!picked) return;
-      event.preventDefault();
-      setTool(picked);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
   const [block, setBlock] = useState<string>(DEFAULT_BLOCK);
   const [boxMode, setBoxMode] = useState<BoxMode>('fill');
   const [familyMode, setFamilyMode] = useState(false);
@@ -387,6 +491,79 @@ export function EditorPage() {
     setNotice(null);
   }, [grid]);
 
+  /**
+   * The unmodified keyboard map.
+   *
+   * Guarded against firing while someone is typing: the prompt box, the block search and the
+   * sign-in fields are all reachable from this screen, and a shortcut that changes the tool
+   * mid-sentence is worse than no shortcut. Modifier combinations are left alone so Ctrl+Z
+   * still reaches undo, which `useEditSession` binds separately.
+   *
+   * Every key here is listed in `Shortcuts`. A binding that is not is a bug.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (target?.isContentEditable) return;
+
+      const picked = TOOL_KEYS[event.key];
+      if (picked) {
+        event.preventDefault();
+        onTool(picked);
+        return;
+      }
+
+      // A step moves the whole band, so soloing a course and walking up through the build is
+      // the same two keys as raising a ceiling.
+      const step = (delta: number) => {
+        event.preventDefault();
+        const current = layerRange ?? { min: 0, max: topLayer };
+        const width = current.max - current.min;
+        const max = Math.min(topLayer, Math.max(width, current.max + delta));
+        setRange({ min: max - width, max });
+      };
+
+      switch (event.key) {
+        case '[':
+          step(-1);
+          return;
+        case ']':
+          step(1);
+          return;
+        case '\\':
+          event.preventDefault();
+          setRange(null);
+          return;
+        case 'f':
+        case 'F':
+          event.preventDefault();
+          onView('frame');
+          return;
+        case 'g':
+        case 'G':
+          event.preventDefault();
+          changeDisplay({ ...display, grid: !display.grid });
+          return;
+        case '?':
+          event.preventDefault();
+          setShortcuts((open) => !open);
+          return;
+        case 'Escape':
+          if (anchor) {
+            event.preventDefault();
+            setAnchor(null);
+            setNotice(null);
+          }
+          return;
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onTool, layerRange, topLayer, setRange, onView, changeDisplay, display, anchor]);
+
   // --- generation ----------------------------------------------------------
 
   // Seeded from anything restored out of sessionStorage, so a reload does not lose builds
@@ -422,9 +599,15 @@ export function EditorPage() {
     [session.detached, session.edits, update],
   );
 
-  const meshed = totalChunks === 0 ? 1 : 1 - remaining / totalChunks;
   const issues = [...build.errors, ...build.warnings];
   const hoverBlock = hover ? blockAt(grid, hover) : null;
+  const source: BuildSource = isGeneratedId(buildId)
+    ? 'generated'
+    : isLibraryId(buildId)
+      ? 'library'
+      : buildId === BLANK_BUILD
+        ? 'blank'
+        : 'sample';
 
   // After every hook, never before: an early return above one would change the hook order
   // between renders. The cost is expanding the default build while a library one is in
@@ -457,100 +640,98 @@ export function EditorPage() {
       data-build={buildId}
       data-edits={session.edits}
       data-detached={session.detached}
+      data-left={docks.left}
+      data-right={docks.right}
     >
-      <div className="editor__canvas">
+      <StudioBar
+        name={name}
+        onRename={setRenamed}
+        source={source}
+        detached={session.detached}
+        edits={session.edits}
+        size={grid.size}
+        blockCount={session.blockCount}
+        leftOpen={docks.left}
+        rightOpen={docks.right}
+        onToggleLeft={() => toggleDock('left')}
+        onToggleRight={() => toggleDock('right')}
+        onShowShortcuts={() => setShortcuts(true)}
+      />
+
+      {/* `.hud` is the shared panel surface, and the deployment drivers read the stats table
+          through it. Both docks carry it for that reason. */}
+      <aside className="hud dock dock--left" aria-label="Build" hidden={!docks.left}>
+        <PromptPanel
+          phase={generation.phase}
+          spend={generation.spend}
+          estimate={generation.estimate}
+          estimating={generation.estimating}
+          onEstimate={generation.requestEstimate}
+          onGenerate={generation.generate}
+          onCancel={generation.cancel}
+          onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
+        />
+
+        {generated && buildId === generated.id && (
+          <p className="hud__generated">
+            Generated for {generated.result.costUsd < 0.01
+              ? `$${generated.result.costUsd.toFixed(4)}`
+              : `$${generated.result.costUsd.toFixed(2)}`}
+            {generated.result.repaired && ' · needed one repair round'}
+          </p>
+        )}
+
+        <Section id="source" title="Build" summary={sourceSummary(source, saved.length)}>
+          <SourcePicker
+            current={buildId}
+            samples={BUILD_IDS}
+            generated={saved}
+            onPick={(id) => guard({ kind: 'build', build: id })}
+          />
+        </Section>
+
+
+        {issues.length > 0 && (
+          <ul className="hud__issues">
+            {issues.slice(0, 4).map((issue, i) => (
+              <li key={i} className={build.errors.includes(issue) ? 'issue--error' : 'issue--warn'}>
+                <code>{issue.path}</code> {issue.message}
+              </li>
+            ))}
+          </ul>
+        )}
+      </aside>
+
+      <main className="viewport">
         <EditorCanvas
           grid={grid}
           paletteColors={session.paletteColors}
           paletteFlags={session.paletteFlags}
-          layerClip={layer}
+          layerClip={effectiveClip}
+          display={display}
+          view={view}
           onHover={setHover}
           onClick={onCanvasClick}
           marker={anchor}
           onProgress={setRemaining}
           onWorld={session.attachWorld}
         />
-      </div>
 
-      <section className="hud hud--top">
-        <h1 className="hud__title">CraftMagic</h1>
-        <p className="hud__sub">Voxel editor</p>
-
-        <div className="hud__actions">
-          {BUILD_IDS.map((id) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={buildId === id}
-              onClick={() => guard({ kind: 'build', build: id })}
-            >
-              {BUILD_LABELS[id] ?? id}
-            </button>
-          ))}
-          {saved.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              aria-pressed={buildId === entry.id}
-              onClick={() => guard({ kind: 'build', build: entry.id })}
-              title={entry.name}
-            >
-              ✦ {entry.name}
-            </button>
-          ))}
-        </div>
-
-        <Section id="tools" title="Edit" summary={session.edits > 0 ? `${session.edits} edits` : undefined}>
-        <ToolPalette
-          tool={tool}
-          onTool={onTool}
-          block={block}
-          onBlock={setBlock}
-          boxMode={boxMode}
-          onBoxMode={setBoxMode}
-          anchor={anchor}
-          onClearAnchor={() => setAnchor(null)}
-          familyMode={familyMode}
-          onFamilyMode={setFamilyMode}
-          edits={session.edits}
-          detached={session.detached}
-          canUndo={session.canUndo}
-          canRedo={session.canRedo}
-          onUndo={session.undo}
-          onRedo={session.redo}
-          onDiscard={session.discard}
-          notice={notice}
-        />
-        </Section>
-
-        <Section
-          id="stats"
-          title="Details"
-          // Size and block count in the header, because they are what changes while scaling —
-          // collapsing this section must not cost the two numbers people watch.
-          summary={`${grid.size.x}×${grid.size.y}×${grid.size.z} · ${session.blockCount.toLocaleString()}`}
-          defaultOpen={false}
-        >
-        <dl className="hud__stats">
-          <dt>Build</dt>
-          <dd>{name}</dd>
-          <dt>Size</dt>
-          <dd>
-            {grid.size.x}×{grid.size.y}×{grid.size.z}
-          </dd>
-          <dt>Blocks</dt>
-          <dd>{session.blockCount.toLocaleString()}</dd>
-          <dt>Palette</dt>
-          <dd>{grid.palette.length}</dd>
-          <dt>Chunks</dt>
-          <dd>{totalChunks.toLocaleString()}</dd>
-          <dt>Layer</dt>
-          <dd>{layer === null ? 'all' : `0–${layer}`}</dd>
-        </dl>
-        </Section>
+        {/* An empty plot renders a ground grid and nothing else, which reads as a page that
+            failed to load rather than as a place to start. */}
+        {session.blockCount === 0 && (
+          <div className="viewport__empty">
+            <p className="viewport__empty-title">Nothing here yet</p>
+            <p className="viewport__empty-body">
+              Describe a build on the left, or pick a sample to take apart.
+            </p>
+          </div>
+        )}
 
         {pending && (
-          <div className="detach" role="alertdialog">
+          // Centred over the viewport rather than tucked into a panel: it is the one moment
+          // in the studio where nothing else should be clicked until it is answered.
+          <div className="detach" role="alertdialog" aria-label="Discard edits?">
             <p className="detach__text">
               {pending.kind === 'build' ? 'Switching build' : pending.kind === 'scale' ? 'Scaling' : 'Resizing'} re-expands the program
               and discards {session.edits} manual edit{session.edits === 1 ? '' : 's'}. The program
@@ -573,53 +754,96 @@ export function EditorPage() {
             </div>
           </div>
         )}
+      </main>
 
-        {build.program && (
-          <ScalePanel
-            scale={scale}
-            outcome={scalePreview}
-            base={scaleBase}
-            onChange={(next) => guard({ kind: 'scale', scale: next })}
+      <aside className="hud dock dock--right" aria-label="Tools" hidden={!docks.right}>
+        <Section id="tools" title="Edit" summary={session.edits > 0 ? `${session.edits}` : undefined}>
+          <ToolPalette
+            tool={tool}
+            onTool={onTool}
+            block={block}
+            onBlock={setBlock}
+            boxMode={boxMode}
+            onBoxMode={setBoxMode}
+            anchor={anchor}
+            onClearAnchor={() => setAnchor(null)}
+            familyMode={familyMode}
+            onFamilyMode={setFamilyMode}
+            edits={session.edits}
+            detached={session.detached}
+            canUndo={session.canUndo}
+            canRedo={session.canRedo}
+            onUndo={session.undo}
+            onRedo={session.redo}
+            onDiscard={session.discard}
+            notice={notice}
           />
-        )}
+        </Section>
 
         {build.params.length > 0 && (
-          <div className="params">
-            <p className="params__title">Shape — re-expands the program</p>
-            {build.params.map((param) => (
-              <label key={param.name} className="param">
-                <span className="param__label">{param.label}</span>
-                <input
-                  className="param__slider"
-                  type="range"
-                  min={param.min}
-                  max={param.max}
-                  value={param.value}
-                  onChange={(event) =>
-                    guard({ kind: 'param', name: param.name, value: Number(event.target.value) })
-                  }
-                />
-                <span className="param__value">{param.value}</span>
-              </label>
-            ))}
-          </div>
+          <Section id="shape" title="Shape" summary={`${build.params.length}`}>
+            <div className="params">
+              <p className="params__note">Re-expands the program — manual edits do not survive it.</p>
+              {build.params.map((param) => (
+                <label key={param.name} className="param">
+                  <span className="param__label">{param.label}</span>
+                  <span className="param__value">{param.value}</span>
+                  <input
+                    className="param__slider"
+                    type="range"
+                    min={param.min}
+                    max={param.max}
+                    value={param.value}
+                    onChange={(event) =>
+                      guard({ kind: 'param', name: param.name, value: Number(event.target.value) })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </Section>
         )}
 
-        {remaining > 0 && (
-          <div className="hud__progress" title={`${remaining} chunks left to mesh`}>
-            <span style={{ width: `${Math.round(meshed * 100)}%` }} />
-          </div>
+        {build.program && (
+          <Section
+            id="scale"
+            title="Scale"
+            summary={scale.x === scale.y && scale.y === scale.z ? `${scale.x}%` : 'per axis'}
+          >
+            <ScalePanel
+              scale={scale}
+              outcome={scalePreview}
+              base={scaleBase}
+              onChange={(next) => guard({ kind: 'scale', scale: next })}
+            />
+          </Section>
         )}
 
-        {issues.length > 0 && (
-          <ul className="hud__issues">
-            {issues.slice(0, 4).map((issue, i) => (
-              <li key={i} className={build.errors.includes(issue) ? 'issue--error' : 'issue--warn'}>
-                <code>{issue.path}</code> {issue.message}
-              </li>
-            ))}
-          </ul>
-        )}
+        <Section
+          id="stats"
+          title="Details"
+          // Size and block count in the header, because they are what changes while scaling —
+          // collapsing this section must not cost the two numbers people watch.
+          summary={`${grid.size.x}×${grid.size.y}×${grid.size.z} · ${session.blockCount.toLocaleString()}`}
+          defaultOpen={false}
+        >
+          <dl className="hud__stats">
+            <dt>Build</dt>
+            <dd>{name}</dd>
+            <dt>Size</dt>
+            <dd>
+              {grid.size.x}×{grid.size.y}×{grid.size.z}
+            </dd>
+            <dt>Blocks</dt>
+            <dd>{session.blockCount.toLocaleString()}</dd>
+            <dt>Palette</dt>
+            <dd>{grid.palette.length}</dd>
+            <dt>Chunks</dt>
+            <dd>{totalChunks.toLocaleString()}</dd>
+            <dt>Layer</dt>
+            <dd>{effectiveClip === null ? 'all' : `${effectiveClip.min}–${effectiveClip.max}`}</dd>
+          </dl>
+        </Section>
 
         <ExportBar
           grid={grid}
@@ -629,71 +853,33 @@ export function EditorPage() {
           guideHref={guideHref}
           blockCount={session.blockCount}
         />
-
-        {generated && buildId === generated.id && (
-          <p className="hud__generated">
-            Generated for {generated.result.costUsd < 0.01
-              ? `$${generated.result.costUsd.toFixed(4)}`
-              : `$${generated.result.costUsd.toFixed(2)}`}
-            {generated.result.repaired && ' · needed one repair round'}
-          </p>
-        )}
-
-        <div className="save">
-          <AccountPanel />
-        </div>
-
-        <p className="hud__sub" style={{ marginTop: '0.875rem' }}>
-          <Link className="hud__link" to="/mod">
-            Get the Minecraft mod →
-          </Link>
-          <br />
-          <Link className="hud__link" to="/status">
-            Deployment checks →
-          </Link>
-        </p>
-      </section>
-
-      <PromptPanel
-        phase={generation.phase}
-        spend={generation.spend}
-        estimate={generation.estimate}
-        estimating={generation.estimating}
-        onEstimate={generation.requestEstimate}
-        onGenerate={generation.generate}
-        onCancel={generation.cancel}
-        onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
-      />
-
-      <aside className="hover-readout">
-        {hover ? (
-          <>
-            <strong>{hoverBlock}</strong>
-            {hover.x}, {hover.y}, {hover.z} · {hover.face}
-          </>
-        ) : (
-          <>drag to orbit · scroll to zoom · click to {tool}</>
-        )}
       </aside>
 
-      <section className="hud hud--layers">
-        <span className="layers__label">Layer</span>
-        <input
-          className="layers__slider"
-          type="range"
-          min={0}
-          max={topLayer}
-          value={layer ?? topLayer}
-          onChange={(event) => update({ layer: Number(event.target.value) })}
-          aria-label="Highest visible layer"
-        />
-        <span className="layers__value">{layer === null ? `y 0–${topLayer}` : `y 0–${layer}`}</span>
-        <button type="button" onClick={() => update({ layer: null })} disabled={layer === null}>
-          Show all
-        </button>
-      </section>
+      <ViewBar
+        topLayer={topLayer}
+        range={layerRange}
+        onRange={setRange}
+        display={display}
+        onDisplay={changeDisplay}
+        onView={onView}
+        hover={hover}
+        hoverBlock={hoverBlock}
+        toolVerb={TOOL_VERBS[tool]}
+        remaining={remaining}
+        totalChunks={totalChunks}
+      />
+
+      {shortcuts && <Shortcuts onClose={() => setShortcuts(false)} />}
     </div>
   );
+}
+
+/** What the collapsed Build section says, so collapsing it never costs the answer. */
+function sourceSummary(source: BuildSource, generatedCount: number): string {
+  if (source === 'generated') return '✦ generated';
+  if (source === 'library') return 'from library';
+  if (generatedCount > 0) return `${generatedCount} generated`;
+  return source === 'blank' ? 'empty' : 'sample';
 }
 
 function applyNav(
@@ -718,14 +904,6 @@ function parseOverrides(key: string): Record<string, number> {
     if (Number.isFinite(value)) out[name] = value;
   }
   return out;
-}
-
-/** A hand-edited or stale `?layer=` must not be able to clip the whole structure away. */
-function readLayer(raw: string | null, topLayer: number): number | null {
-  if (raw === null) return null;
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isFinite(value)) return null;
-  return Math.min(topLayer, Math.max(0, value));
 }
 
 function blockAt(grid: { size: { x: number; y: number; z: number }; palette: string[]; voxels: Uint16Array }, at: VoxelHit): string {

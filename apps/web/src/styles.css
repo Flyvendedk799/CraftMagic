@@ -1,13 +1,47 @@
+/**
+ * Global tokens and the handful of primitives shared by every page.
+ *
+ * The studio is a dark tool sitting behind a lit 3D scene, so the surfaces step *up* from
+ * the canvas rather than down from a page: `--bg` is the void the build floats in, and each
+ * successive surface is the next thing stacked on top of it. Keeping them as an explicit
+ * ladder is what stops a panel-inside-a-panel from disappearing into its parent, which is
+ * how the old two-tone palette (`--panel` and one hard-coded `#212832`) kept failing.
+ */
+
 :root {
-  --bg: #0f1216;
-  --panel: #171b21;
-  --border: #262c35;
-  --text: #e6e9ee;
-  --muted: #8b949e;
+  /* --- surfaces, darkest first ------------------------------------------ */
+  --bg: #0b0e13;
+  /* Kept under its old name: the library, mod, admin and agent sheets are all built on it. */
+  --panel: #12171e;
+  --surface: #12171e;
+  --surface-2: #181f28;
+  --surface-3: #212a35;
+  --surface-4: #2b3542;
+
+  --border: #232c37;
+  --border-strong: #33404f;
+
+  --text: #e8ecf2;
+  --muted: #8b97a7;
+  --faint: #5e6a79;
+
   --ok: #4ade80;
   --fail: #f87171;
   --pending: #fbbf24;
   --accent: #6ee7b7;
+  /* Text laid *on* the accent. Not `--bg`: a near-black on mint is the readable pair. */
+  --accent-ink: #04241a;
+  --accent-dim: color-mix(in srgb, var(--accent) 22%, transparent);
+
+  /* --- geometry ---------------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius: 9px;
+  --radius-lg: 14px;
+
+  /* One shadow, used everywhere something floats. */
+  --shadow: 0 8px 28px rgb(0 0 0 / 0.45);
+
+  --mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
 
   color-scheme: dark;
 }
@@ -21,6 +55,20 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/**
+ * One focus ring for the whole app.
+ *
+ * `:focus-visible` rather than `:focus`, so clicking a tool button does not leave a ring
+ * behind on a surface where a dozen buttons sit shoulder to shoulder — but tabbing to it
+ * always does.
+ */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .shell {
@@ -93,7 +141,7 @@ h1 {
 
 .check__detail {
   color: var(--muted);
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-family: var(--mono);
   font-size: 0.8125rem;
   text-align: right;
 }
@@ -106,7 +154,7 @@ button {
   font: inherit;
   font-size: 0.875rem;
   padding: 0.5rem 1rem;
-  color: var(--bg);
+  color: var(--accent-ink);
   background: var(--accent);
   border: 0;
   border-radius: 8px;
@@ -115,4 +163,14 @@ button {
 
 button:hover {
   filter: brightness(1.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

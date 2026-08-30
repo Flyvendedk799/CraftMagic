@@ -4,6 +4,15 @@
  * It shows the price before spending anything. The account behind this runs on a small fixed
  * balance, so "Estimate" (free — it only counts tokens) is a first-class control rather than
  * a detail buried in settings, and the remaining budget is always on screen.
+ *
+ * Two jobs in one box, and which one it is doing is the thing that has to be unmistakable.
+ * With a build on screen the primary button *changes that build*; on an empty plot it makes a
+ * new one. They spend the same money and produce very different outcomes, so the panel
+ * relabels its heading, its placeholder, its examples and its primary button together rather
+ * than leaving a "Refine" button to be noticed among identical siblings.
+ *
+ * The button text is load-bearing beyond the UI: the deployment driver finds "Generate" by
+ * its exact label, so that one stays a plain word with nothing appended.
  */
 
 import { useState } from 'react';
@@ -39,6 +48,14 @@ const REFINEMENTS = [
   'make it twice as tall',
   'add a balcony on the south side',
   'swap the walls for dark oak',
+];
+
+/** The phases, in the order they happen, so the strip can show how far along a run is. */
+const PHASE_ORDER: readonly GenerationPhase['kind'][] = [
+  'starting',
+  'thinking',
+  'emitting',
+  'validating',
 ];
 
 function usd(amount: number): string {
@@ -81,9 +98,30 @@ export function PromptPanel({
   const canSubmit = prompt.trim().length > 0 && !running && signedIn;
   const outOfBudget = spend !== null && spend.remainingUsd <= 0;
 
+  // Repair is not a step of its own — it is a second lap of validation — so it lights the
+  // same segment rather than adding one the first run never reaches.
+  const reached = PHASE_ORDER.indexOf(phase.kind === 'repairing' ? 'validating' : phase.kind);
+
+  const submit = () => {
+    if (!canSubmit || outOfBudget) return;
+    if (onRefine) onRefine(prompt);
+    else onGenerate(prompt);
+  };
+
   return (
-    <section className="hud prompt" data-signed-in={signedIn}>
-      <h2 className="hud__section">{onRefine ? 'Change this build' : 'Generate a build'}</h2>
+    <section className="prompt" data-signed-in={signedIn}>
+      <div className="prompt__head">
+        <h2 className="hud__section">{onRefine ? 'Change this build' : 'Describe a build'}</h2>
+        {spend && (
+          <span
+            className="prompt__left"
+            title={`${usd(spend.remainingUsd)} left of ${usd(spend.monthlyBudgetUsd)} this month`}
+            data-empty={outOfBudget}
+          >
+            {usd(spend.remainingUsd)}
+          </span>
+        )}
+      </div>
 
       {auth.status === 'anonymous' && (
         <p className="prompt__notice">
@@ -99,10 +137,7 @@ export function PromptPanel({
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && canSubmit) {
-            if (onRefine) onRefine(prompt);
-            else onGenerate(prompt);
-          }
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submit();
         }}
         placeholder={
           onRefine
@@ -130,8 +165,14 @@ export function PromptPanel({
       </div>
 
       <div className="prompt__actions">
-        <button type="button" onClick={() => onEstimate(prompt)} disabled={!canSubmit || estimating}>
-          {estimating ? 'Estimating…' : 'Estimate (free)'}
+        <button
+          type="button"
+          className="prompt__secondary"
+          onClick={() => onEstimate(prompt)}
+          disabled={!canSubmit || estimating}
+          title="Counts the tokens without spending anything"
+        >
+          {estimating ? 'Estimating…' : 'Estimate'}
         </button>
         {running ? (
           <button type="button" className="prompt__primary" onClick={onCancel}>
@@ -141,6 +182,7 @@ export function PromptPanel({
           <>
             <button
               type="button"
+              className="prompt__secondary"
               onClick={() => onGenerate(prompt)}
               disabled={!canSubmit || outOfBudget}
               title="Start over from this description"
@@ -171,10 +213,24 @@ export function PromptPanel({
       </div>
 
       {running && (
-        <p className="prompt__status prompt__status--busy">
-          <span className="prompt__spinner" aria-hidden="true" />
-          {describe(phase)}
-        </p>
+        <div className="prompt__run">
+          <p className="prompt__status prompt__status--busy">
+            <span className="prompt__spinner" aria-hidden="true" />
+            {describe(phase)}
+          </p>
+          {/* A run takes the better part of a minute and used to show one line of text the
+              whole way through, which is indistinguishable from being stuck. */}
+          <div className="prompt__steps" aria-hidden="true">
+            {PHASE_ORDER.map((kind, index) => (
+              <span
+                key={kind}
+                className="prompt__step"
+                data-done={index < reached}
+                data-active={index === reached}
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       {phase.kind === 'failed' && (
@@ -197,6 +253,20 @@ export function PromptPanel({
 
       {spend && (
         <p className="prompt__budget">
+          <span
+            className="prompt__meter"
+            aria-hidden="true"
+            title={`${usd(spend.remainingUsd)} of ${usd(spend.monthlyBudgetUsd)}`}
+          >
+            <span
+              style={{
+                width: `${Math.max(
+                  0,
+                  Math.min(100, (spend.remainingUsd / Math.max(spend.monthlyBudgetUsd, 1e-6)) * 100),
+                )}%`,
+              }}
+            />
+          </span>
           <span className="prompt__muted">Budget</span> {usd(spend.remainingUsd)} left of{' '}
           {usd(spend.monthlyBudgetUsd)}
           <span className="prompt__muted"> · {spend.callsThisMonth} calls this month</span>

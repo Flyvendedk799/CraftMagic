@@ -5,6 +5,13 @@
  * active tool and hands the result of a canvas click to the matching pure tool, which is
  * what keeps the tools testable without a DOM and the palette re-orderable without touching
  * any of them.
+ *
+ * The layout says which controls belong to which tool. Everything below the tool row is the
+ * *options for the selected tool* — the block, the box mode, the family switch — so it lives
+ * in one bordered well that changes contents, instead of appearing and disappearing between
+ * unrelated controls and shuffling the panel under the cursor every time the tool changed.
+ * History and the result line sit outside that well because they are true whatever tool is
+ * selected.
  */
 
 import type { BlockRef } from '@craftmagic/core';
@@ -22,25 +29,36 @@ interface ToolSpec {
   needsBlock: boolean;
   /** Number key that selects it. Shown on the button, because an unadvertised shortcut is none. */
   key: string;
+  /** A shape, not a picture: these read at 14px where an emoji does not. */
+  glyph: string;
 }
 
 const TOOLS: readonly ToolSpec[] = [
-  { id: 'place', label: 'Place', hint: 'Click a face to add a block against it.', needsBlock: true, key: '1' },
-  { id: 'erase', label: 'Erase', hint: 'Click a block to remove it.', needsBlock: false, key: '2' },
+  {
+    id: 'place',
+    label: 'Place',
+    hint: 'Click a face to add a block against it.',
+    needsBlock: true,
+    key: '1',
+    glyph: '◧',
+  },
+  { id: 'erase', label: 'Erase', hint: 'Click a block to remove it.', needsBlock: false, key: '2', glyph: '⌫' },
   {
     id: 'fill',
     label: 'Fill',
     hint: 'Click to repaint every connected block of the same kind.',
     needsBlock: true,
     key: '3',
+    glyph: '◍',
   },
-  { id: 'select', label: 'Box', hint: 'Click two opposite corners.', needsBlock: true, key: '4' },
+  { id: 'select', label: 'Box', hint: 'Click two opposite corners.', needsBlock: true, key: '4', glyph: '▭' },
   {
     id: 'swap',
     label: 'Swap',
     hint: 'Click a block to replace it everywhere in the build.',
     needsBlock: true,
     key: '5',
+    glyph: '⇄',
   },
 ];
 
@@ -82,8 +100,7 @@ export function ToolPalette(props: ToolPaletteProps) {
 
   return (
     <div className="tools">
-
-      <div className="tools__row">
+      <div className="tools__row tools__row--tools">
         {TOOLS.map((entry) => (
           <button
             key={entry.id}
@@ -96,7 +113,10 @@ export function ToolPalette(props: ToolPaletteProps) {
             title={`${entry.hint}  (${entry.key})`}
             onClick={() => props.onTool(entry.id)}
           >
-            {entry.label}
+            <span className="tools__glyph" aria-hidden="true">
+              {entry.glyph}
+            </span>
+            <span className="tools__label">{entry.label}</span>
             <span className="tools__key" aria-hidden="true">
               {entry.key}
             </span>
@@ -104,47 +124,51 @@ export function ToolPalette(props: ToolPaletteProps) {
         ))}
       </div>
 
-      <p className="tools__hint">{spec.hint}</p>
+      <div className="tools__options">
+        <p className="tools__hint">{spec.hint}</p>
 
-      {spec.needsBlock && <BlockPicker value={props.block} onChange={props.onBlock} />}
+        {spec.needsBlock && <BlockPicker value={props.block} onChange={props.onBlock} />}
 
-      {props.tool === 'select' && (
-        <>
-          <div className="tools__row tools__row--modes">
-            {BOX_MODES.map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                className="tools__mode"
-                aria-pressed={props.boxMode === mode.id}
-                title={mode.title}
-                onClick={() => props.onBoxMode(mode.id)}
-              >
-                {mode.label}
-              </button>
-            ))}
-          </div>
-          {props.anchor && (
-            <p className="tools__hint">
-              Corner at {props.anchor.x}, {props.anchor.y}, {props.anchor.z} —{' '}
-              <button type="button" className="tools__inline" onClick={props.onClearAnchor}>
-                cancel
-              </button>
-            </p>
-          )}
-        </>
-      )}
+        {props.tool === 'select' && (
+          <>
+            <div className="tools__row tools__row--modes" role="group" aria-label="Box mode">
+              {BOX_MODES.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className="tools__mode"
+                  aria-pressed={props.boxMode === mode.id}
+                  title={mode.title}
+                  onClick={() => props.onBoxMode(mode.id)}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            {props.anchor && (
+              <p className="tools__anchor">
+                <span className="tools__anchor-dot" aria-hidden="true" />
+                Corner at {props.anchor.x}, {props.anchor.y}, {props.anchor.z} — click the
+                opposite one, or{' '}
+                <button type="button" className="tools__inline" onClick={props.onClearAnchor}>
+                  cancel
+                </button>
+              </p>
+            )}
+          </>
+        )}
 
-      {props.tool === 'swap' && (
-        <label className="tools__check">
-          <input
-            type="checkbox"
-            checked={props.familyMode}
-            onChange={(event) => props.onFamilyMode(event.target.checked)}
-          />
-          <span>Re-skin the whole family (every oak block → the chosen block&apos;s wood)</span>
-        </label>
-      )}
+        {props.tool === 'swap' && (
+          <label className="tools__check">
+            <input
+              type="checkbox"
+              checked={props.familyMode}
+              onChange={(event) => props.onFamilyMode(event.target.checked)}
+            />
+            <span>Re-skin the whole family (every oak block → the chosen block&apos;s wood)</span>
+          </label>
+        )}
+      </div>
 
       <div className="tools__row tools__row--history">
         <button type="button" onClick={props.onUndo} disabled={!props.canUndo} title="Ctrl+Z">

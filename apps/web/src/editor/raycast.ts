@@ -29,10 +29,12 @@ export interface RaycastOptions {
   /** In blocks. The default covers the diagonal of the largest legal structure. */
   maxDistance?: number;
   /**
-   * Treat everything above this layer as air. The layer slider clips geometry with a plane
+   * Treat everything above this layer as air. The layer range clips geometry with planes
    * rather than re-meshing, so the picker has to be told about the cut separately.
    */
   maxY?: number;
+  /** The other end of the same cut: everything below this layer is air to the picker too. */
+  minY?: number;
 }
 
 /** Neighbour of a hit, i.e. the empty cell a newly placed block would occupy. */
@@ -54,7 +56,8 @@ export function raycastVoxel(
   const { size, voxels } = grid;
   const maxDistance = options.maxDistance ?? 1024;
   const maxY = options.maxY ?? size.y - 1;
-  if (maxY < 0) return null;
+  const minY = options.minY ?? 0;
+  if (maxY < 0 || minY > maxY) return null;
 
   const len = Math.hypot(direction.x, direction.y, direction.z);
   if (len === 0) return null;
@@ -96,7 +99,7 @@ export function raycastVoxel(
   let face: VoxelFace = entry.face ?? dominantFace(dx, dy, dz);
 
   while (t <= maxDistance) {
-    if (voxels[voxelIndex(size, x, y, z)] !== 0) return { x, y, z, face };
+    if (y >= minY && voxels[voxelIndex(size, x, y, z)] !== 0) return { x, y, z, face };
 
     if (tMaxX < tMaxY && tMaxX < tMaxZ) {
       x += stepX;
@@ -110,6 +113,9 @@ export function raycastVoxel(
       tMaxY += tDeltaY;
       face = stepY > 0 ? 'down' : 'up';
       if (y < 0 || y > maxY) return null;
+      // Below the band only ends the ray when it is heading further down; a ray climbing
+      // towards the band from underneath has not missed anything yet.
+      if (y < minY && stepY < 0) return null;
     } else {
       z += stepZ;
       t = tMaxZ;

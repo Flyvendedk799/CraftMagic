@@ -1,10 +1,13 @@
-/* "Send to game" panel. Lives inside the editor HUD, so it inherits its tokens and stays
-   within the panel's fixed width. */
+/* "Send to game" panel. Lives inside a collapsible section in the studio's right dock, so it
+   inherits the dock's tokens and stays within its width.
+
+   No rule of its own: the section around it already draws the heading, the border and the
+   padding. It used to add a top border and a top margin from the days when the HUD was one
+   undivided column, which left a stray line and a gap of dead space under the section's own
+   heading. */
 
 .agent {
-  margin-top: 0.875rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
+  display: block;
 }
 
 .agent__note {
@@ -62,7 +65,7 @@
 .agent__pairing-actions button {
   font-size: 0.75rem;
   padding: 0.3rem 0.6rem;
-  background: #212832;
+  background: var(--surface-3);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -157,7 +160,7 @@
   margin-top: 0.35rem;
   height: 3px;
   border-radius: 2px;
-  background: #212832;
+  background: var(--surface-3);
   overflow: hidden;
 }
 

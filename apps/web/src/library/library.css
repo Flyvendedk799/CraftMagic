@@ -1,9 +1,9 @@
 /* Accounts and the build library.
 
-   Two homes, one stylesheet. The account panel is embedded in the editor's HUD, where it must
-   live inside a 19rem column and inherit the HUD's tokens; the library is an ordinary
-   document page built from the same `.panel` the status page uses. Nothing here introduces a
-   colour — every value is one of the tokens in styles.css. */
+   Two homes, one stylesheet. The account control appears as a chip in the studio's title bar,
+   where it has to fit in 3rem of height and open its form in a popover; the library is an
+   ordinary document page built from the same `.panel` the status page uses. Nothing here
+   introduces a colour — every value is one of the tokens in styles.css. */
 
 /* --- account ------------------------------------------------------------ */
 
@@ -40,11 +40,105 @@
 .account__actions button {
   font-size: 0.75rem;
   padding: 0.35rem 0.6rem;
-  background: #212832;
+  background: var(--surface-3);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
   cursor: pointer;
+}
+
+/* --- the title-bar variant -----------------------------------------------
+   Same component, same states, same submit — only the shape differs. The chip has to say who
+   you are and how much of today's allowance is left without opening anything, because those
+   are the two things people glance up to check. */
+
+.account--menu {
+  position: relative;
+  display: block;
+}
+
+.account--menu .account__note {
+  font-size: 0.6875rem;
+}
+
+.account__chip {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.2rem;
+  font-size: 0.75rem;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.account__chip:hover {
+  background: var(--surface-4);
+  filter: none;
+}
+
+/* Outlined, not filled. Signing in is worth offering but it is not the thing the studio is
+   for, and an accent-filled chip up here competed with the one button on screen that spends
+   money. */
+.account__chip--anon {
+  padding: 0.25rem 0.7rem;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  font-weight: 600;
+}
+
+.account__avatar {
+  display: grid;
+  place-items: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.account__quota {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+.account__quota[data-empty='true'] {
+  color: var(--pending);
+}
+
+.account__pop {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 40;
+  width: 17rem;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.account__signout {
+  width: 100%;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.account__signout:hover {
+  background: var(--surface-4);
+  filter: none;
 }
 
 .account__open {
@@ -131,10 +225,10 @@
 
 /* --- save to library ---------------------------------------------------- */
 
+/* Same story as `.agent`: the section around it owns the heading and the rule, so this must
+   not draw a second one. */
 .save {
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
+  display: block;
 }
 
 .save__actions {
@@ -301,7 +395,7 @@
 .library__rename button {
   font-size: 0.75rem;
   padding: 0.3rem 0.6rem;
-  background: #212832;
+  background: var(--surface-3);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;

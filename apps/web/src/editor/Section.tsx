@@ -1,9 +1,10 @@
 /**
- * A collapsible block in the editor HUD.
+ * A collapsible block in a studio dock.
  *
- * The HUD had grown into one long column — builds, tools, stats, scale, shape, export, save,
- * send to game — and "Send to game", the headline feature, sat below the fold on a laptop.
- * Scrolling to reach it is not the problem; not knowing it is there is.
+ * A dock is one column of these, and the header is the part that has to earn its keep: it is
+ * always visible, so it carries the one number worth seeing while the body is shut — the edit
+ * count, the size, how many generated builds there are. Collapsing a section should cost you
+ * the controls, never the answer.
  *
  * Open state is remembered per section in localStorage, because the useful arrangement is
  * personal and stable: someone building by hand keeps the tools open and everything else shut,

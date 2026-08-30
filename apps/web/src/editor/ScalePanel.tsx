@@ -12,11 +12,14 @@
  *     it bigger" almost never means "make it wider only".
  *   * **Per axis** — three sliders, for a tower that should be taller without becoming fatter.
  *
- * Linked is the default and stays selected until someone deliberately unlinks, so the simple
- * case needs one drag and the harder one is still reachable.
+ * The mode is state of its own rather than "are the three numbers equal". Deriving it read
+ * fine and behaved badly: unlinking could not be expressed at 100/100/100 without changing a
+ * number, so the button used to *nudge the height down by 5%* purely to make the three
+ * sliders appear. Clicking a mode switch and watching the build change shape is exactly the
+ * kind of small lie that makes a tool feel untrustworthy.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ScaleOutcome } from './builds.js';
 import { NO_SCALE, type ScalePercent } from './builds.js';
 // Shared with the URL clamp: a slider that ranges wider than the link can carry would snap
@@ -41,9 +44,16 @@ const AXES = [
   { key: 'z', label: 'Depth', hint: 'Z' },
 ] as const;
 
+const isUniform = (scale: ScalePercent) => scale.x === scale.y && scale.y === scale.z;
+
 export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) {
-  const linked = scale.x === scale.y && scale.y === scale.z;
-  const uniform = scale.x;
+  const [linked, setLinked] = useState(() => isUniform(scale));
+
+  // A link that arrives with unequal axes has to open unlinked, or the panel would show one
+  // slider for three different numbers and silently flatten them on the first drag.
+  useEffect(() => {
+    if (!isUniform(scale)) setLinked(false);
+  }, [scale]);
 
   const setUniform = useCallback(
     (percent: number) => onChange({ x: percent, y: percent, z: percent }),
@@ -55,17 +65,23 @@ export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) 
     [onChange, scale],
   );
 
+  // Re-linking has to pick a number, and width is the one people set first.
+  const link = useCallback(() => {
+    setLinked(true);
+    if (!isUniform(scale)) setUniform(scale.x);
+  }, [scale, setUniform]);
+
   const changed = scale.x !== 100 || scale.y !== 100 || scale.z !== 100;
 
   return (
     <div className="params scale">
       <div className="scale__head">
-        <p className="params__title">Scale</p>
-        <div className="scale__modes">
+        <div className="scale__modes" role="group" aria-label="Scale mode">
           <button
             type="button"
             className={`scale__mode ${linked ? 'scale__mode--on' : ''}`}
-            onClick={() => setUniform(uniform)}
+            aria-pressed={linked}
+            onClick={link}
             title="One slider for all three axes"
           >
             Linked
@@ -73,29 +89,37 @@ export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) 
           <button
             type="button"
             className={`scale__mode ${linked ? '' : 'scale__mode--on'}`}
-            // Nudging one axis is what makes the three sliders appear, so unlinking has to
-            // actually change something or the button would look inert.
-            onClick={() => onChange({ ...scale, y: Math.max(MIN, Math.min(MAX, scale.y - STEP)) })}
+            aria-pressed={!linked}
+            onClick={() => setLinked(false)}
             title="A slider per axis"
           >
             Per axis
           </button>
         </div>
+
+        {changed && (
+          <button type="button" className="scale__reset" onClick={() => onChange(NO_SCALE)}>
+            Reset
+          </button>
+        )}
       </div>
 
       {linked ? (
         <label className="param">
           <span className="param__label">Size</span>
+          {/* Before the slider, not after it: the slider spans both columns, so a value that
+              follows it in source order lands on a row of its own instead of beside its
+              label. */}
+          <span className="param__value">{scale.x}%</span>
           <input
             className="param__slider"
             type="range"
             min={MIN}
             max={MAX}
             step={STEP}
-            value={uniform}
+            value={scale.x}
             onChange={(event) => setUniform(Number(event.target.value))}
           />
-          <span className="param__value">{uniform}%</span>
         </label>
       ) : (
         AXES.map(({ key, label, hint }) => (
@@ -103,6 +127,7 @@ export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) 
             <span className="param__label">
               {label} <span className="scale__axis">{hint}</span>
             </span>
+            <span className="param__value">{scale[key]}%</span>
             <input
               className="param__slider"
               type="range"
@@ -112,7 +137,6 @@ export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) 
               value={scale[key]}
               onChange={(event) => setAxis(key, Number(event.target.value))}
             />
-            <span className="param__value">{scale[key]}%</span>
           </label>
         ))
       )}
@@ -125,18 +149,12 @@ export function ScalePanel({ scale, outcome, base, onChange }: ScalePanelProps) 
             </strong>
             {base && (
               <span className="scale__base">
-                {' '}
                 from {base.x}×{base.y}×{base.z}
               </span>
             )}
           </>
         ) : (
           '—'
-        )}
-        {changed && (
-          <button type="button" className="scale__reset" onClick={() => onChange(NO_SCALE)}>
-            Reset
-          </button>
         )}
       </p>
 

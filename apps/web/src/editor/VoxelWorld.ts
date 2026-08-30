@@ -65,7 +65,10 @@ export class VoxelWorld {
   /** Batches issued before the current `load()`; their results are dropped on arrival. */
   private generation = 0;
 
-  private readonly clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  /** Cuts away everything above the top of the visible range. */
+  private readonly clipTop = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  /** Cuts away everything below it. Two planes, because a range has two ends. */
+  private readonly clipBottom = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private clipped = false;
 
   constructor() {
@@ -163,20 +166,30 @@ export class VoxelWorld {
   }
 
   /**
-   * Hide everything above layer `y`.
+   * Show only layers `min..max`, inclusive; `null` shows the whole structure.
    *
-   * A clipping plane rather than a re-mesh: scrubbing the layer slider would otherwise
-   * rebuild every chunk on every pixel of drag. This costs one uniform and stays exact,
-   * because the plane cuts at the block boundary y+1.
+   * Clipping planes rather than a re-mesh: scrubbing the layer range would otherwise rebuild
+   * every chunk on every pixel of drag. This costs two uniforms and stays exact, because the
+   * planes cut on block boundaries — `max + 1` above and `min` below.
+   *
+   * Both planes are bound together or not at all. Only the *number* of bound planes
+   * recompiles the shader, so a range that is clipping already can be dragged from end to end
+   * for the price of two uniform writes; binding them as a pair is what keeps that number
+   * from flickering between one and two as an end reaches its extreme.
    */
-  setLayerClip(y: number | null): void {
-    const wanted = y !== null;
-    if (wanted) this.clipPlane.constant = y + 1;
+  setLayerClip(range: { min: number; max: number } | null): void {
+    if (range) {
+      this.clipTop.constant = range.max + 1;
+      // The plane's normal points up, so a point at y is on the kept side when y - min >= 0,
+      // which in three's convention is a constant of -min.
+      this.clipBottom.constant = -range.min;
+    }
 
+    const wanted = range !== null;
     if (wanted === this.clipped) return;
     this.clipped = wanted;
 
-    const planes = wanted ? [this.clipPlane] : null;
+    const planes = wanted ? [this.clipTop, this.clipBottom] : null;
     for (const material of [this.opaqueMaterial, this.transparentMaterial]) {
       material.clippingPlanes = planes;
       // Only the count change recompiles the shader, so a scrub never touches this.

@@ -1,14 +1,15 @@
 /**
- * Export controls.
+ * Everything that takes the build somewhere else.
  *
- * The schematic is written in the browser, so the download is instant and costs the server
- * nothing — `packages/core` is isomorphic specifically to allow that. The button reports the
- * file size after writing, since "did that actually produce anything?" is the first question
- * a 500-byte download raises.
+ * Three destinations, three sections, in the order people reach for them: a file on disk, a
+ * row in the library, a world in Minecraft. The schematic is written in the browser, so the
+ * download is instant and costs the server nothing — `packages/core` is isomorphic
+ * specifically to allow that. The button reports the file size after writing, since "did that
+ * actually produce anything?" is the first question a 500-byte download raises.
  *
- * Saving to the library sits here rather than beside the tools because it belongs with the
+ * Saving sits beside the exports rather than beside the tools because it belongs with the
  * other "take this build somewhere" actions, and because it is the one of them that needs an
- * account — grouping it with the exports makes that the only difference the user sees.
+ * account — grouping it here makes that the only difference the user sees.
  */
 
 import { useCallback, useState } from 'react';
@@ -59,48 +60,52 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
 
   return (
     <div className="export">
-      <Section id="export" title="Export" defaultOpen={false}>
+      <Section id="export" title="Export" summary={empty ? 'empty' : undefined} defaultOpen={false}>
+        <div className="export__actions">
+          <button
+            type="button"
+            className="export__primary"
+            onClick={onDownload}
+            disabled={empty}
+            title={empty ? 'Nothing to export yet' : 'WorldEdit-compatible .schem'}
+          >
+            Download schematic
+            <span className="export__meta">.schem · WorldEdit</span>
+          </button>
+          <button
+            type="button"
+            onClick={onDownloadProgram}
+            disabled={!program || empty}
+            title={
+              empty
+                ? 'Nothing to export yet'
+                : program
+                  ? 'The parametric program — a few KB, and re-expandable at any size'
+                  : 'This build was hand-edited, so no program describes it'
+            }
+          >
+            Program JSON
+            <span className="export__meta">
+              {program ? 'a few KB, re-expandable' : 'hand-edited — no program'}
+            </span>
+          </button>
+          {guideHref && !empty && (
+            <a className="export__link" href={guideHref} target="_blank" rel="noreferrer">
+              Printable build guide →
+            </a>
+          )}
+        </div>
 
-      <div className="export__actions">
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={empty}
-          title={empty ? 'Nothing to export yet' : 'WorldEdit-compatible .schem'}
-        >
-          Download schematic
-        </button>
-        <button
-          type="button"
-          onClick={onDownloadProgram}
-          disabled={!program || empty}
-          title={
-            empty
-              ? 'Nothing to export yet'
-              : program
-                ? 'The parametric program — a few KB, and re-expandable at any size'
-                : 'This build was hand-edited, so no program describes it'
-          }
-        >
-          Program JSON
-        </button>
-        {guideHref && !empty && (
-          <a className="export__link" href={guideHref} target="_blank" rel="noreferrer">
-            Build guide →
-          </a>
+        {empty && (
+          <p className="export__note">Describe a build or place some blocks, then export it here.</p>
         )}
-      </div>
 
-      {empty && (
-        <p className="export__note">Describe a build or place some blocks, then export it here.</p>
-      )}
-
-      {written && <p className="export__note">Saved {written}</p>}
-      {failed && (
-        <p className="export__note export__note--error" role="alert">
-          {failed}
-        </p>
-      )}
+        {written && <p className="export__note">Saved {written}</p>}
+        {failed && (
+          <p className="export__note export__note--error" role="alert">
+            {failed}
+          </p>
+        )}
       </Section>
 
       {/* Both write a build somewhere permanent — the library, or somebody's world. Neither

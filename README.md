@@ -375,6 +375,54 @@ test covers that:
 cd mod && JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew verifySchematic -Pschem=../out/oak-cottage.schem
 ```
 
+**M6 (the studio shell) — done.** Everything above worked; it was arranged badly. The editor
+had grown one 19rem floating panel holding the build picker, the tools, the stats, the scale,
+the shape sliders, the exports, the save form and the account form, capped at
+`calc(100vh - 6.5rem)` and scrolled. On a laptop "Send to game" — the headline feature — was
+below the fold of a panel most people never realised scrolled, and the links to the library,
+the mod and the status page were below *that*.
+
+It is a frame now, not islands floating over a canvas: a title bar, two docks, the viewport,
+a status bar, all one CSS grid. The viewport is never underneath a panel, a dock scrolls
+without the page scrolling, and collapsing a dock genuinely widens the render rather than
+revealing more canvas behind something.
+
+The split between the docks is the rule that makes a control's home guessable. **Left decides
+which build exists** — the prompt that makes one, the samples, this session's generated
+builds, and your saved library. **Right is everything you do to that build and where it
+goes** — tools, shape, scale, details, exports, the library, someone's Minecraft world.
+
+What the rearrangement made room for, and what was missing before:
+
+- **A layer *range*, not a ceiling.** Two clipping planes instead of one, so a build can be
+  cut open at both ends and `Solo` isolates a single course. A ceiling answers "how far up has
+  it been built"; a range answers "what does course 7 look like", which is the question
+  somebody copying a build block by block is actually asking. `[` and `]` walk the band up and
+  down. The picker is told about both cuts, so a hidden block cannot be edited by accident.
+- **Camera presets and display toggles.** Fit, iso, front, side, top; ground grid, bounds box
+  and hover cursor on or off. There was previously no way to get the camera back after
+  spinning it except reloading the page.
+- **The library, in the studio.** `?build=lib:<id>` always worked; the only way to reach that
+  URL was to leave for the library page and come back.
+- **Renaming in place.** The name is the schematic's filename, the library row's title and
+  what the mod announces in chat. Changing it used to mean saving first, leaving, renaming
+  there, and coming back.
+- **A keyboard sheet** behind `?`, listing every binding. Half of them existed already and
+  were advertised nowhere.
+- **A discard warning that is a dialog**, centred over the viewport rather than a yellow box
+  in a scrolling panel. It is the one moment in the studio where the answer decides whether
+  somebody's work survives.
+
+Two bugs fell out of the rewrite that were real and older than it. The scale panel's "Per
+axis" button had no way to express *unlinked at 100%*, so it nudged the height down by 5% to
+make the three sliders appear — clicking a mode switch and watching the build change shape.
+The mode is now state of its own. And the account form has one component with two shapes: a
+panel on the library page, a chip with a popover in the title bar.
+
+The deployment drivers all still pass against it (`verify-ui`, `verify-edit`, `verify-scale`,
+`verify-download`), which was the constraint the rewrite was held to: the studio could be
+rearranged, but the evidence that it works had to keep working.
+
 ## Deployment
 
 **It is one service.** The Fastify process in `apps/server` serves the built frontend as

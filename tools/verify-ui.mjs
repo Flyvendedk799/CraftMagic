@@ -103,19 +103,28 @@ try {
 	);
 	await send('Page.navigate', { url: `${ORIGIN}/?build=gen:1` });
 	await waitFor("document.querySelector('.editor')?.dataset.remaining === '0'", 'restored build', 60_000);
+
+	// The stats this script prints live in a section that starts collapsed, so open it the way
+	// a person would. Without this the name, size and block count all printed as "undefined",
+	// which looks like a broken restore and is really a shut drawer.
+	await evaluate(`(() => {
+		const head = [...document.querySelectorAll('.section__head')]
+			.find((h) => h.textContent.includes('Details'));
+		if (head && head.getAttribute('aria-expanded') !== 'true') head.click();
+		return true;
+	})()`);
 	await sleep(700);
 
 	const restored = await evaluate(`
 		(() => {
 			const dd = [...document.querySelectorAll('.hud__stats dd')].map((n) => n.textContent);
-			const hud = document.querySelector('.hud--top');
+			const dock = document.querySelector('.dock--left');
 			return {
 				build: document.querySelector('.editor').dataset.build,
 				name: dd[0], size: dd[1], blocks: dd[2],
-				restoredButton: [...document.querySelectorAll('.hud__actions button')]
-					.some((b) => b.textContent.includes('✦')),
+				restoredButton: !!document.querySelector('.source__card--generated'),
 				params: document.querySelectorAll('.param').length,
-				hudWidth: Math.round(hud.getBoundingClientRect().width),
+				dockWidth: Math.round(dock.getBoundingClientRect().width),
 				viewportWidth: window.innerWidth,
 			};
 		})()
@@ -124,12 +133,12 @@ try {
 	// Force a very long warning into the panel to prove the width cap holds.
 	const stretched = await evaluate(`
 		(() => {
-			const hud = document.querySelector('.hud--top');
+			const dock = document.querySelector('.dock--left');
 			const p = document.createElement('p');
 			p.className = 'hud__generated';
 			p.textContent = 'x'.repeat(400);
-			hud.appendChild(p);
-			return Math.round(hud.getBoundingClientRect().width);
+			dock.appendChild(p);
+			return Math.round(dock.getBoundingClientRect().width);
 		})()
 	`);
 
@@ -143,12 +152,12 @@ try {
 	console.log(`size / blocks  ${restored.size} / ${restored.blocks}`);
 	console.log(`picker button  ${restored.restoredButton ? 'present' : 'MISSING'}`);
 	console.log(`param sliders  ${restored.params}`);
-	console.log(`hud width      ${restored.hudWidth}px of ${restored.viewportWidth}px viewport`);
-	console.log(`with 400 chars ${stretched}px  ${stretched === restored.hudWidth ? '(unchanged — cap holds)' : '(GREW — cap failed)'}`);
+	console.log(`dock width     ${restored.dockWidth}px of ${restored.viewportWidth}px viewport`);
+	console.log(`with 400 chars ${stretched}px  ${stretched === restored.dockWidth ? '(unchanged — cap holds)' : '(GREW — cap failed)'}`);
 	console.log(`shot           ${outFile}`);
 
 	if (!restored.restoredButton) exitCode = 1;
-	if (stretched !== restored.hudWidth) exitCode = 1;
+	if (stretched !== restored.dockWidth) exitCode = 1;
 
 	socket.close();
 } catch (err) {

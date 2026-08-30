@@ -50,6 +50,8 @@ export interface ToolPaletteProps {
 
   brushRadius: number;
   brushShape: BrushShape;
+  symmetry: boolean;
+  onSymmetry: (value: boolean) => void;
   onBrushRadius: (radius: number) => void;
   onBrushShape: (shape: BrushShape) => void;
 
@@ -109,6 +111,20 @@ export function ToolPalette(props: ToolPaletteProps) {
           shortcuts
         </button>
       </p>
+
+      {/* Symmetry rides above the per-tool controls because it belongs to the *hand*, not to
+          any one tool: whatever the drawing tools produce lands twice, mirrored across the
+          build's east–west midplane, stair facings and all. */}
+      <div className="tools__row">
+        <button
+          type="button"
+          aria-pressed={props.symmetry}
+          title="Draw both halves at once — every place, erase, fill and line is mirrored across the build's middle."
+          onClick={() => props.onSymmetry(!props.symmetry)}
+        >
+          ⇋ Symmetry {props.symmetry ? 'on' : 'off'}
+        </button>
+      </div>
 
       {spec.usesBrush && (
         <div className="tools__row tools__row--brush">

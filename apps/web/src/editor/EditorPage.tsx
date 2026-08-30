@@ -74,12 +74,11 @@ import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor } from './preview.js';
 import { useAssembly } from './useAssembly.js';
 import { useEditSession } from './useEditSession.js';
-import { placementCell } from './tools/place.js';
-import { erase } from './tools/erase.js';
-import { floodFill } from './tools/fill.js';
+import { TOOL_IMPL, type EditorTool, type ToolCtx, type ToolResult } from './tools/registry.js';
+import { withMirror } from './tools/symmetry.js';
+import { pickBlock } from './tools/pick.js';
 import { boxBounds, boxEdit, moveEdit, type BoxCorner } from './tools/boxSelect.js';
-import { brushEdit, MAX_BRUSH_RADIUS, type BrushShape, type Cell } from './tools/brush.js';
-import { lineEdit } from './tools/line.js';
+import { MAX_BRUSH_RADIUS, type BrushShape } from './tools/brush.js';
 import {
   ClipTooLargeError,
   copyRegion,
@@ -90,8 +89,6 @@ import {
   type Clip,
   type StampMode,
 } from './tools/clipboard.js';
-import { pickBlock } from './tools/pick.js';
-import { familyOf, swapFamily, swapPaletteIndex } from './tools/paletteSwap.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { ImagePanel } from '../image/ImagePanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
@@ -421,6 +418,8 @@ export function EditorPage() {
   const [brushShape, setBrushShape] = useState<BrushShape>('ball');
   const [clip, setClip] = useState<Clip | null>(null);
   const [stampMode, setStampMode] = useState<StampMode>('merge');
+  /** Symmetry mode: drawing tools land twice, mirrored across the build's X midplane. */
+  const [symmetry, setSymmetry] = useState(false);
   const [help, setHelp] = useState(false);
   const [view, setView] = useState<ViewRequest | null>(null);
   // Enhanced is the default — the lit, grained, sky-lit look is the product's face now.
@@ -631,222 +630,76 @@ export function EditorPage() {
    * The two exceptions prove it: `copy` produces a clip instead of an op because it changes
    * nothing, and `pick` produces a block ref for the same reason.
    */
+  /** The context a tool call reads — a view over the page's state, built per gesture. */
+  const toolCtx = useCallback(
+    (): ToolCtx => ({
+      grid,
+      block,
+      brush: { radius: brushRadius, shape: brushShape },
+      anchor,
+      clip,
+      stampMode,
+      familyMode,
+      resolveBlock: session.resolveBlock,
+    }),
+    [grid, block, brushRadius, brushShape, anchor, clip, stampMode, familyMode, session],
+  );
+
+  /**
+   * Apply what a tool decided. This is the whole seam between tools and React: a
+   * `ToolResult` is plain data, and every field is optional so a tool only touches the
+   * state it means to. Symmetry mode intercepts the op on its way through — the tool never
+   * knows it drew twice.
+   */
+  const runTool = useCallback(
+    (impl: EditorTool, result: ToolResult) => {
+      if (result.op !== undefined) {
+        const op =
+          symmetry && impl.mirrorable
+            ? withMirror(grid, result.op, session.resolveBlock)
+            : result.op;
+        session.apply(op);
+      }
+      if (result.anchor !== undefined) setAnchor(result.anchor);
+      if (result.region !== undefined) setRegion(result.region);
+      if (result.pickBlock !== undefined) setBlock(result.pickBlock);
+      if (result.clip !== undefined) setClip(result.clip);
+      if (result.switchTool !== undefined) setTool(result.switchTool);
+      if (result.notice !== undefined) setNotice(result.notice);
+    },
+    [grid, session, symmetry],
+  );
+
   const onCanvasClick = useCallback(
     (hit: VoxelHit) => {
-      // A ground hit names an empty floor cell rather than a block, which is the whole point
-      // of it — it is how the first block of an empty build gets placed. The tools below act
-      // on whatever is *already* under the pointer, and on the floor there is nothing: a
-      // flood fill would spread through the air, and a palette swap would find every empty
-      // cell in the build and turn the sky into stone.
-      const refusal = hit.ground ? NEEDS_A_BLOCK[tool] : undefined;
-      if (refusal) {
-        setNotice(refusal);
+      const impl = TOOL_IMPL[tool];
+      // A ground hit names an empty floor cell rather than a block — it is how the first
+      // block of an empty build gets placed. Tools that read what is already under the
+      // pointer have nothing to read there, and each says so in its own words.
+      if (hit.ground && impl.groundRefusal) {
+        setNotice(impl.groundRefusal);
         return;
       }
-
-      const slot = () => {
-        const index = session.resolveBlock(block);
-        if (index < 0) setNotice('Palette is full — this build cannot hold another block type.');
-        return index;
-      };
-
-      switch (tool) {
-        case 'place': {
-          const index = slot();
-          if (index < 0) return;
-          const cell = placementCell(grid, hit);
-          if (!cell) {
-            setNotice('Nothing to place there — that face is already covered.');
-            return;
-          }
-          const result = brushEdit(grid, [cell], index, {
-            radius: brushRadius,
-            shape: brushShape,
-            onlyAir: true,
-          });
-          session.apply(result.op);
-          setNotice(
-            result.cells === 0
-              ? 'Nothing to place there — every cell the brush covers is already filled.'
-              : brushRadius === 0
-                ? null
-                : `Placed ${result.cells.toLocaleString()} blocks.`,
-          );
-          return;
-        }
-
-        case 'erase': {
-          if (brushRadius === 0) {
-            session.apply(erase(grid, hit));
-            setNotice(null);
-            return;
-          }
-          const result = brushEdit(grid, [hit], 0, {
-            radius: brushRadius,
-            shape: brushShape,
-            onlySolid: true,
-          });
-          session.apply(result.op);
-          setNotice(
-            result.cells === 0 ? 'Nothing there to erase.' : `Erased ${result.cells.toLocaleString()} blocks.`,
-          );
-          return;
-        }
-
-        case 'fill': {
-          const index = slot();
-          if (index < 0) return;
-          const result = floodFill(grid, hit, index);
-          session.apply(result.op);
-          setNotice(
-            result.capped
-              ? `Filled ${result.cells.toLocaleString()} blocks — stopped at the cap; click again to continue.`
-              : `Filled ${result.cells.toLocaleString()} connected block${result.cells === 1 ? '' : 's'}.`,
-          );
-          return;
-        }
-
-        case 'line': {
-          if (!anchor) {
-            setAnchor({ x: hit.x, y: hit.y, z: hit.z });
-            setNotice('Now click the other end.');
-            return;
-          }
-          const index = slot();
-          if (index < 0) return;
-          const result = lineEdit(grid, anchor, hit, index, {
-            radius: brushRadius,
-            shape: brushShape,
-          });
-          session.apply(result.op);
-          setAnchor(null);
-          setNotice(`Drew a line of ${result.cells.toLocaleString()} blocks.`);
-          return;
-        }
-
-        case 'select': {
-          if (!anchor) {
-            setAnchor({ x: hit.x, y: hit.y, z: hit.z });
-            setRegion(null);
-            setNotice('Now click the opposite corner.');
-            return;
-          }
-
-          // The second corner selects and stops. It used to edit — which meant aiming the box
-          // and committing to a verb were the same act, and a box you wanted to hollow after
-          // filling had to be aimed a second time.
-          const bounds = boxBounds(grid, anchor, hit);
-          setAnchor(null);
-          setRegion({ min: bounds.min, max: bounds.max });
-          setNotice(null);
-          return;
-        }
-
-        case 'stamp': {
-          if (!clip) {
-            setNotice('Nothing copied yet — use the Box tool in Copy mode first.');
-            return;
-          }
-          const cell = placementCell(grid, hit) ?? hit;
-          const result = stampEdit(grid, clip, cell, (ref) => session.resolveBlock(ref), stampMode);
-          session.apply(result.op);
-          setNotice(
-            result.truncated
-              ? 'Palette is full — part of the clipboard could not be stamped.'
-              : `Stamped ${result.cells.toLocaleString()} blocks at ${cell.x}, ${cell.y}, ${cell.z}.`,
-          );
-          return;
-        }
-
-        case 'pick': {
-          const picked = pickBlock(grid, hit);
-          if (!picked) {
-            setNotice('Nothing to pick there.');
-            return;
-          }
-          setBlock(picked);
-          setNotice(`Picked ${displayName(picked)}.`);
-          return;
-        }
-
-        case 'swap': {
-          const from = grid.voxels[voxelIndex(grid.size, hit.x, hit.y, hit.z)] ?? 0;
-
-          if (familyMode) {
-            // Deliberately not `slot()`: a family swap resolves its own replacements, and
-            // reserving a slot for the chosen block would leave an unused palette entry
-            // whenever its category has no counterpart in the source family.
-            const source = familyOf(grid.palette[from] ?? AIR_BLOCK);
-            const target = familyOf(block);
-            if (!source || !target) {
-              setNotice('Family swap needs two blocks the registry knows a family for.');
-              return;
-            }
-            const op = swapFamily(grid, source, target, (ref) => session.resolveBlock(ref));
-            session.apply(op);
-            setNotice(
-              op
-                ? `Re-skinned ${source} → ${target}: ${op.indices.length.toLocaleString()} blocks.`
-                : `Nothing in the ${source} family to re-skin.`,
-            );
-            return;
-          }
-
-          const index = slot();
-          if (index < 0) return;
-          const op = swapPaletteIndex(grid, from, index);
-          session.apply(op);
-          setNotice(
-            op
-              ? `Swapped ${op.indices.length.toLocaleString()} blocks of ${displayName(grid.palette[from] ?? AIR_BLOCK)}.`
-              : 'That block is already the chosen one.',
-          );
-          return;
-        }
-      }
+      runTool(impl, impl.onClick(toolCtx(), hit));
     },
-    [tool, block, familyMode, anchor, grid, session, brushRadius, brushShape, clip, stampMode],
+    [tool, toolCtx, runTool],
   );
 
   /**
    * A Shift-drag, delivered once with every cell it crossed.
    *
    * Folded into a single op rather than replayed as one edit per cell: a stroke is one
-   * gesture, so it has to be one press of Ctrl+Z. Offered only for the two tools where
-   * "keep going" means something — the canvas reads the absence of this callback as
-   * permission to let the drag orbit the camera instead.
+   * gesture, so it has to be one press of Ctrl+Z. Only tools that implement `onStroke`
+   * take it — the canvas reads the absence of the callback as permission to let the drag
+   * orbit the camera instead.
    */
   const onStroke = useCallback(
     (hits: VoxelHit[]) => {
-      if (tool === 'place') {
-        const index = session.resolveBlock(block);
-        if (index < 0) {
-          setNotice('Palette is full — this build cannot hold another block type.');
-          return;
-        }
-        const cells = hits
-          .map((hit) => placementCell(grid, hit))
-          .filter((cell): cell is Cell => cell !== null);
-        const result = brushEdit(grid, cells, index, {
-          radius: brushRadius,
-          shape: brushShape,
-          onlyAir: true,
-        });
-        session.apply(result.op);
-        setNotice(result.op ? `Placed ${result.cells.toLocaleString()} blocks in one stroke.` : null);
-        return;
-      }
-
-      if (tool !== 'erase') return;
-      const result = brushEdit(grid, hits, 0, {
-        radius: brushRadius,
-        shape: brushShape,
-        onlySolid: true,
-      });
-      session.apply(result.op);
-      setNotice(result.op ? `Erased ${result.cells.toLocaleString()} blocks in one stroke.` : null);
+      const impl = TOOL_IMPL[tool];
+      if (!impl.onStroke) return;
+      runTool(impl, impl.onStroke(toolCtx(), hits));
     },
-    [tool, block, grid, session, brushRadius, brushShape],
+    [tool, toolCtx, runTool],
   );
 
   /** Alt+click, from any tool: sample the block under the pointer rather than editing it. */
@@ -1094,7 +947,7 @@ export function EditorPage() {
   // "Air" would be true and useless. A ground hit is the floor, and saying so is what tells
   // someone staring at an empty plot that the click they are about to make will land.
   const hoverBlock = !hover ? null : hover.ground ? 'Ground' : blockAt(grid, hover);
-  const strokable = tool === 'place' || tool === 'erase';
+  const strokable = TOOL_IMPL[tool].onStroke !== undefined;
 
   // After every hook, never before: an early return above one would change the hook order
   // between renders. The cost is expanding the default build while a library one is in
@@ -1258,6 +1111,8 @@ export function EditorPage() {
           onFamilyMode={setFamilyMode}
           brushRadius={brushRadius}
           brushShape={brushShape}
+          symmetry={symmetry}
+          onSymmetry={setSymmetry}
           onBrushRadius={setBrushRadius}
           onBrushShape={setBrushShape}
           clip={clip}
@@ -1568,15 +1423,8 @@ export function EditorPage() {
  * through the whole sky, and a palette swap keyed on air would turn every empty cell in the
  * build into stone.
  */
-const NEEDS_A_BLOCK: Readonly<Partial<Record<ToolId, string>>> = {
-  erase: 'Nothing there to erase — that is bare ground.',
-  fill: 'Nothing to fill there — a flood fill has to start from a block.',
-  swap: 'Nothing to swap there — click the block you want replaced everywhere.',
-  pick: 'Nothing to pick there — click a block to make it the active one.',
-};
-
 /** Keys a shortcut claims, so everything else still reaches the browser. */
-const HANDLED = /^([1-8]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape)$/;
+const HANDLED = /^([1-9]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape)$/;
 
 const VERB: Record<string, string> = {
   fill: 'Filled',

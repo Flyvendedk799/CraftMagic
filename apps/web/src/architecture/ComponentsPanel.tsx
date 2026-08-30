@@ -19,7 +19,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { BuildKind } from '../library/library.js';
-import type { ShelfEntry } from './components.js';
+import type { ShelfEntry } from '../library/components.js';
 
 export interface ComponentsPanelProps {
   shelf: readonly ShelfEntry[];

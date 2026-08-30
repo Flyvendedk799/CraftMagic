@@ -41,7 +41,7 @@ import {
   type DetailOp,
   type Prefab,
 } from '@craftmagic/core';
-import type { Catalogue } from './components.js';
+import type { Catalogue } from '../library/components.js';
 import { furnishingById, furnishingCells } from './furniture.js';
 import { paletteFor } from './kits.js';
 import { deckY as roofDeckY, floorHeight, slabY as slabYOf, type LayoutPlan, type PlanItem, type Rect, type RoomItem } from './plan.js';

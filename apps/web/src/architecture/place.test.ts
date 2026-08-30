@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { encodePrefab, expand, type VoxelGrid } from '@craftmagic/core';
-import type { Catalogue, LoadedComponent } from './components.js';
+import type { Catalogue, LoadedComponent } from '../library/components.js';
 import { compilePlan } from './compile.js';
 import { createPlace, createRoom, normalizePlan, placeFootprint, type LayoutPlan } from './plan.js';
 

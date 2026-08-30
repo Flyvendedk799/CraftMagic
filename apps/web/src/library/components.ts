@@ -27,9 +27,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { encodePrefab, type Prefab } from '@craftmagic/core';
-import { useAuth } from '../library/auth.js';
-import { getBuild, gridOf, listBuilds, type BuildKind, type LibraryBuild } from '../library/library.js';
-import type { LayoutPlan, PlaceItem } from './plan.js';
+import { useAuth } from './auth.js';
+import { getBuild, gridOf, listBuilds, type BuildKind, type LibraryBuild } from './library.js';
+import type { LayoutPlan, PlaceItem } from '../architecture/plan.js';
 
 /** What the shelf shows: enough to pick a build without fetching its blocks. */
 export interface ShelfEntry {
@@ -83,6 +83,30 @@ function entryOf(build: LibraryBuild): ShelfEntry {
 }
 
 export function useComponentLibrary(plan: LayoutPlan): ComponentLibrary {
+  // Every build the plan places. Deduping and ordering happen inside `useComponents`, so this
+  // stays a plain gather rather than two places that both have an opinion about the key.
+  const referenced = useMemo(() => {
+    const ids: string[] = [];
+    for (const floor of plan.floors) {
+      for (const item of floor.items) {
+        if (item.kind === 'place' && item.buildId) ids.push(item.buildId);
+      }
+    }
+    return ids;
+  }, [plan]);
+  return useComponents(referenced);
+}
+
+/**
+ * The parts bin, driven by whichever build ids a document happens to reference.
+ *
+ * Architecture names those from a plan's `place` items and World from its placements, and
+ * neither difference reaches this far: what a caller owes is a list of build ids, and what it
+ * gets back is a shelf plus the blocks of the ones it named. Keeping the tiers out of here is
+ * what lets a world place an interior that Architecture drew without either tier importing the
+ * other, which is the whole point of a component being just a saved build.
+ */
+export function useComponents(referencedIds: readonly string[]): ComponentLibrary {
   const auth = useAuth();
   const [shelf, setShelf] = useState<ShelfEntry[]>([]);
   const [status, setStatus] = useState<ComponentLibrary['status']>('loading');
@@ -161,20 +185,16 @@ export function useComponentLibrary(plan: LayoutPlan): ComponentLibrary {
   }, []);
 
   /**
-   * Every build the plan places, as a stable key.
+   * The referenced ids as one stable key.
    *
-   * Keyed on the distinct ids rather than on the plan, so moving a placed building does not
-   * re-request its blocks — and there are a lot of moves in a drag.
+   * Distinct and sorted, so a re-render that merely reordered them — or added a second copy of
+   * a build already placed — does not re-run the fetch effect. During a drag there are a great
+   * many of those and none of them mean new blocks are needed.
    */
-  const referenced = useMemo(() => {
-    const ids = new Set<string>();
-    for (const floor of plan.floors) {
-      for (const item of floor.items) {
-        if (item.kind === 'place' && item.buildId) ids.add(item.buildId);
-      }
-    }
-    return [...ids].sort().join(',');
-  }, [plan]);
+  const referenced = useMemo(
+    () => [...new Set(referencedIds)].sort().join(','),
+    [referencedIds],
+  );
 
   useEffect(() => {
     if (!referenced) return;

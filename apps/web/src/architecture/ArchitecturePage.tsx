@@ -49,7 +49,7 @@ import { alignOffsets, distributeOffsets, type Offsets } from './arrange.js';
 import { ArrangePanel } from './ArrangePanel.js';
 import { compilePlan } from './compile.js';
 import { ComponentsPanel } from './ComponentsPanel.js';
-import { useComponentLibrary, type Catalogue } from './components.js';
+import { useComponentLibrary, type Catalogue } from '../library/components.js';
 import { FloorStack } from './FloorStack.js';
 import { Inspector } from './Inspector.js';
 import { IssuesPanel, issueSummary } from './IssuesPanel.js';

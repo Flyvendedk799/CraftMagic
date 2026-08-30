@@ -1,1134 +1,1220 @@
 {
-	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://craftmagic.dev/schema/build-program-v1.json",
-	"title": "BuildProgram",
-	"description": "A parametric description of a Minecraft structure. Coordinates are expressions rather than fixed numbers so the same program can be re-expanded at a different size.",
-	"type": "object",
-	"additionalProperties": false,
-	"required": [
-		"version",
-		"meta",
-		"size",
-		"palette",
-		"components"
-	],
-	"properties": {
-		"version": {
-			"enum": [
-				1,
-				"1"
-			],
-			"description": "Program format version. 1."
-		},
-		"meta": {
-			"type": "object",
-			"additionalProperties": false,
-			"required": [
-				"name"
-			],
-			"properties": {
-				"name": {
-					"type": "string",
-					"minLength": 1,
-					"maxLength": 80
-				},
-				"description": {
-					"type": "string",
-					"maxLength": 400
-				},
-				"style": {
-					"type": "string",
-					"maxLength": 80
-				}
-			}
-		},
-		"size": {
-			"type": "object",
-			"additionalProperties": false,
-			"required": [
-				"x",
-				"y",
-				"z"
-			],
-			"properties": {
-				"x": {
-					"type": "integer",
-					"minimum": 1,
-					"maximum": 256
-				},
-				"y": {
-					"type": "integer",
-					"minimum": 1,
-					"maximum": 160
-				},
-				"z": {
-					"type": "integer",
-					"minimum": 1,
-					"maximum": 256
-				}
-			}
-		},
-		"scale": {
-			"description": "Set by the editor's resize control, never by you. Percentage per axis of the size above; every coordinate in the program is multiplied by it. Omit it when writing a new build, and leave it untouched when editing one that already has it.",
-			"type": "object",
-			"additionalProperties": false,
-			"required": [
-				"x",
-				"y",
-				"z"
-			],
-			"properties": {
-				"x": {
-					"type": "number",
-					"minimum": 1,
-					"maximum": 1000
-				},
-				"y": {
-					"type": "number",
-					"minimum": 1,
-					"maximum": 1000
-				},
-				"z": {
-					"type": "number",
-					"minimum": 1,
-					"maximum": 1000
-				}
-			}
-		},
-		"params": {
-			"description": "Named numbers referenced from coordinate expressions as $name. Each becomes a slider, so the build must still make sense anywhere in the declared range.",
-			"type": "object",
-			"maxProperties": 8,
-			"additionalProperties": {
-				"type": "object",
-				"additionalProperties": false,
-				"required": [
-					"value",
-					"min",
-					"max"
-				],
-				"properties": {
-					"value": {
-						"type": "integer"
-					},
-					"min": {
-						"type": "integer"
-					},
-					"max": {
-						"type": "integer"
-					},
-					"label": {
-						"type": "string",
-						"maxLength": 40
-					}
-				}
-			}
-		},
-		"palette": {
-			"description": "Maps a semantic role (wall_primary, roof_primary, ...) to a block. Components reference roles, never blocks, so the whole build can be re-skinned.",
-			"type": "object",
-			"minProperties": 1,
-			"maxProperties": 32,
-			"additionalProperties": {
-				"anyOf": [
-					{
-						"$ref": "#/$defs/blockRef"
-					},
-					{
-						"type": "array",
-						"minItems": 1,
-						"maxItems": 8,
-						"items": {
-							"$ref": "#/$defs/weightedBlockRef"
-						}
-					}
-				]
-			}
-		},
-		"components": {
-			"description": "Drawn in order, painter's algorithm: later components overwrite earlier ones, and minecraft:air carves.",
-			"type": "array",
-			"minItems": 1,
-			"maxItems": 400,
-			"items": {
-				"$ref": "#/$defs/component"
-			}
-		},
-		"details": {
-			"description": "Raw voxel patches applied after every component. For small accents only.",
-			"type": "array",
-			"maxItems": 5000,
-			"items": {
-				"$ref": "#/$defs/detailOp"
-			}
-		}
-	},
-	"$defs": {
-		"coord": {
-			"description": "An integer, or an arithmetic expression over: min, max, center, a number (decimals allowed), a percentage (50%), and params ($name). Supports + - * / and parentheses, with any number of terms. Examples: 4, \"max-1\", \"center+2\", \"50%\", \"$floors*4+1\", \"$height*30%\" (30% of $height), \"$height-2+$radius\", \"max*0.42\", \"max/2\". A percentage alone is a share of the axis; after * it is a plain fraction. Prefer anchors and params over literals so the build survives a resize.",
-			"anyOf": [
-				{
-					"type": "integer"
-				},
-				{
-					"type": "string",
-					"minLength": 1,
-					"pattern": "^\\s*-?\\s*\\(?\\s*(min|max|center|\\$[A-Za-z_][A-Za-z0-9_]*|[0-9]+(\\.[0-9]+)?%?)\\s*\\)?(\\s*[-+*/]\\s*-?\\s*\\(?\\s*(min|max|center|\\$[A-Za-z_][A-Za-z0-9_]*|[0-9]+(\\.[0-9]+)?%?)\\s*\\)?)*\\s*$"
-				}
-			]
-		},
-		"cvec3": {
-			"type": "array",
-			"minItems": 3,
-			"maxItems": 3,
-			"items": {
-				"$ref": "#/$defs/coord"
-			}
-		},
-		"vec3": {
-			"type": "array",
-			"minItems": 3,
-			"maxItems": 3,
-			"items": {
-				"type": "integer"
-			}
-		},
-		"face": {
-			"enum": [
-				"north",
-				"south",
-				"east",
-				"west"
-			]
-		},
-		"axis": {
-			"enum": [
-				"x",
-				"y",
-				"z"
-			]
-		},
-		"horizontalAxis": {
-			"enum": [
-				"x",
-				"z"
-			]
-		},
-		"blockRef": {
-			"description": "A block id, optionally with states: \"minecraft:oak_stairs[facing=north,half=top]\". Orientation is normally computed by the expander, so states are rarely needed here.",
-			"type": "string",
-			"pattern": "^[a-z0-9_.-]+:[a-z0-9_/.-]+(\\[[a-z0-9_]+=[a-z0-9_]+(,[a-z0-9_]+=[a-z0-9_]+)*\\])?$"
-		},
-		"weightedBlockRef": {
-			"type": "object",
-			"additionalProperties": false,
-			"required": [
-				"block",
-				"weight"
-			],
-			"properties": {
-				"block": {
-					"$ref": "#/$defs/blockRef"
-				},
-				"weight": {
-					"type": "number",
-					"exclusiveMinimum": 0
-				}
-			}
-		},
-		"role": {
-			"type": "string",
-			"minLength": 1,
-			"maxLength": 40
-		},
-		"fill": {
-			"anyOf": [
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"role"
-					],
-					"properties": {
-						"type": {
-							"const": "solid"
-						},
-						"role": {
-							"$ref": "#/$defs/role"
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"a",
-						"b"
-					],
-					"properties": {
-						"type": {
-							"const": "checker"
-						},
-						"a": {
-							"$ref": "#/$defs/role"
-						},
-						"b": {
-							"$ref": "#/$defs/role"
-						},
-						"plane": {
-							"enum": [
-								"xz",
-								"xy",
-								"yz"
-							]
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"roles",
-						"axis"
-					],
-					"properties": {
-						"type": {
-							"const": "stripes"
-						},
-						"roles": {
-							"type": "array",
-							"minItems": 1,
-							"maxItems": 8,
-							"items": {
-								"$ref": "#/$defs/role"
-							}
-						},
-						"axis": {
-							"$ref": "#/$defs/axis"
-						},
-						"period": {
-							"type": "integer",
-							"minimum": 1
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"roles"
-					],
-					"properties": {
-						"type": {
-							"const": "noise"
-						},
-						"roles": {
-							"type": "array",
-							"minItems": 1,
-							"maxItems": 8,
-							"items": {
-								"type": "object",
-								"additionalProperties": false,
-								"required": [
-									"role",
-									"weight"
-								],
-								"properties": {
-									"role": {
-										"$ref": "#/$defs/role"
-									},
-									"weight": {
-										"type": "number",
-										"exclusiveMinimum": 0
-									}
-								}
-							}
-						},
-						"seed": {
-							"type": "integer"
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"edge",
-						"inner"
-					],
-					"properties": {
-						"type": {
-							"const": "border"
-						},
-						"edge": {
-							"$ref": "#/$defs/role"
-						},
-						"inner": {
-							"$ref": "#/$defs/role"
-						}
-					}
-				}
-			]
-		},
-		"transform": {
-			"anyOf": [
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"op",
-						"by"
-					],
-					"properties": {
-						"op": {
-							"const": "translate"
-						},
-						"by": {
-							"$ref": "#/$defs/vec3"
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"op",
-						"times"
-					],
-					"properties": {
-						"op": {
-							"const": "rotate90"
-						},
-						"times": {
-							"enum": [
-								1,
-								2,
-								3
-							]
-						},
-						"pivot": {
-							"anyOf": [
-								{
-									"const": "center"
-								},
-								{
-									"$ref": "#/$defs/vec3"
-								}
-							]
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"op",
-						"axis"
-					],
-					"properties": {
-						"op": {
-							"const": "mirror"
-						},
-						"axis": {
-							"$ref": "#/$defs/horizontalAxis"
-						},
-						"pivot": {
-							"anyOf": [
-								{
-									"const": "center"
-								},
-								{
-									"$ref": "#/$defs/vec3"
-								}
-							]
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"op",
-						"count",
-						"step"
-					],
-					"properties": {
-						"op": {
-							"const": "repeat"
-						},
-						"count": {
-							"type": "integer",
-							"minimum": 1,
-							"maximum": 256
-						},
-						"step": {
-							"$ref": "#/$defs/vec3"
-						},
-						"alternateMirror": {
-							"type": "boolean"
-						}
-					}
-				}
-			]
-		},
-		"detailOp": {
-			"anyOf": [
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"op",
-						"at",
-						"block"
-					],
-					"properties": {
-						"op": {
-							"const": "set"
-						},
-						"at": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"block": {
-							"$ref": "#/$defs/blockRef"
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"op",
-						"from",
-						"to",
-						"block"
-					],
-					"properties": {
-						"op": {
-							"const": "fill"
-						},
-						"from": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"to": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"block": {
-							"$ref": "#/$defs/blockRef"
-						}
-					}
-				},
-				{
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"op",
-						"from",
-						"to"
-					],
-					"properties": {
-						"op": {
-							"const": "clear"
-						},
-						"from": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"to": {
-							"$ref": "#/$defs/cvec3"
-						}
-					}
-				}
-			],
-			"description": "A raw voxel patch. Coordinates are full expressions, like components."
-		},
-		"component": {
-			"anyOf": [
-				{
-					"title": "box",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"pos",
-						"size",
-						"fill"
-					],
-					"properties": {
-						"type": {
-							"const": "box"
-						},
-						"pos": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"size": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"fill": {
-							"$ref": "#/$defs/fill"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "hollow_box",
-					"description": "Walls with an optional floor and ceiling. The usual way to make a room.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"pos",
-						"size",
-						"fill"
-					],
-					"properties": {
-						"type": {
-							"const": "hollow_box"
-						},
-						"pos": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"size": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"fill": {
-							"$ref": "#/$defs/fill"
-						},
-						"wallThickness": {
-							"$ref": "#/$defs/coord"
-						},
-						"floor": {
-							"type": "boolean"
-						},
-						"ceiling": {
-							"type": "boolean"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "cylinder",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"base",
-						"radius",
-						"height",
-						"fill"
-					],
-					"properties": {
-						"type": {
-							"const": "cylinder"
-						},
-						"base": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"radius": {
-							"$ref": "#/$defs/coord"
-						},
-						"height": {
-							"$ref": "#/$defs/coord"
-						},
-						"axis": {
-							"$ref": "#/$defs/axis"
-						},
-						"hollow": {
-							"type": "boolean"
-						},
-						"fill": {
-							"$ref": "#/$defs/fill"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "sphere",
-					"description": "Use cap: top_half for a dome.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"center",
-						"radius",
-						"fill"
-					],
-					"properties": {
-						"type": {
-							"const": "sphere"
-						},
-						"center": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"radius": {
-							"$ref": "#/$defs/coord"
-						},
-						"hollow": {
-							"type": "boolean"
-						},
-						"cap": {
-							"enum": [
-								"full",
-								"top_half",
-								"bottom_half"
-							]
-						},
-						"fill": {
-							"$ref": "#/$defs/fill"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "pyramid",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"pos",
-						"baseSize",
-						"fill"
-					],
-					"properties": {
-						"type": {
-							"const": "pyramid"
-						},
-						"pos": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"baseSize": {
-							"type": "array",
-							"minItems": 2,
-							"maxItems": 2,
-							"items": {
-								"$ref": "#/$defs/coord"
-							}
-						},
-						"step": {
-							"$ref": "#/$defs/coord"
-						},
-						"hollow": {
-							"type": "boolean"
-						},
-						"fill": {
-							"$ref": "#/$defs/fill"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "gable_roof",
-					"description": "Two slopes meeting at a ridge running along ridgeAxis. Stair orientation is computed for you. Place it so its base level sits on the top course of the walls.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"pos",
-						"size",
-						"ridgeAxis",
-						"roofRole"
-					],
-					"properties": {
-						"type": {
-							"const": "gable_roof"
-						},
-						"pos": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"size": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"ridgeAxis": {
-							"$ref": "#/$defs/horizontalAxis"
-						},
-						"overhang": {
-							"$ref": "#/$defs/coord"
-						},
-						"style": {
-							"enum": [
-								"stairs",
-								"slabs",
-								"full"
-							]
-						},
-						"roofRole": {
-							"$ref": "#/$defs/role"
-						},
-						"trimRole": {
-							"$ref": "#/$defs/role"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "hip_roof",
-					"description": "All four sides slope inward. Corners and the apex are capped automatically.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"pos",
-						"size",
-						"roofRole"
-					],
-					"properties": {
-						"type": {
-							"const": "hip_roof"
-						},
-						"pos": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"size": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"overhang": {
-							"$ref": "#/$defs/coord"
-						},
-						"style": {
-							"enum": [
-								"stairs",
-								"full"
-							]
-						},
-						"roofRole": {
-							"$ref": "#/$defs/role"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "arch",
-					"description": "An opening with a curved head. Set carve: true to cut it out of a wall drawn earlier.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"pos",
-						"width",
-						"height",
-						"depth",
-						"axis",
-						"fill"
-					],
-					"properties": {
-						"type": {
-							"const": "arch"
-						},
-						"pos": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"width": {
-							"$ref": "#/$defs/coord"
-						},
-						"height": {
-							"$ref": "#/$defs/coord"
-						},
-						"depth": {
-							"$ref": "#/$defs/coord"
-						},
-						"axis": {
-							"$ref": "#/$defs/horizontalAxis"
-						},
-						"style": {
-							"enum": [
-								"round",
-								"pointed"
-							]
-						},
-						"fill": {
-							"$ref": "#/$defs/fill"
-						},
-						"carve": {
-							"type": "boolean"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "window_grid",
-					"description": "Evenly spaced windows across a wall region. Spacing is derived, so windows stay evenly distributed after a resize. margin keeps them clear of the corners.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"face",
-						"region",
-						"rows",
-						"cols",
-						"windowSize",
-						"role"
-					],
-					"properties": {
-						"type": {
-							"const": "window_grid"
-						},
-						"face": {
-							"$ref": "#/$defs/face"
-						},
-						"region": {
-							"type": "object",
-							"additionalProperties": false,
-							"required": [
-								"pos",
-								"size"
-							],
-							"properties": {
-								"pos": {
-									"$ref": "#/$defs/cvec3"
-								},
-								"size": {
-									"$ref": "#/$defs/cvec3"
-								}
-							}
-						},
-						"rows": {
-							"$ref": "#/$defs/coord"
-						},
-						"cols": {
-							"$ref": "#/$defs/coord"
-						},
-						"windowSize": {
-							"type": "array",
-							"minItems": 2,
-							"maxItems": 2,
-							"items": {
-								"$ref": "#/$defs/coord"
-							}
-						},
-						"margin": {
-							"$ref": "#/$defs/coord"
-						},
-						"role": {
-							"$ref": "#/$defs/role"
-						},
-						"sill": {
-							"type": "boolean"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "door",
-					"description": "Carves an opening and hangs a door. half and hinge are computed for you.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"face",
-						"at",
-						"role"
-					],
-					"properties": {
-						"type": {
-							"const": "door"
-						},
-						"face": {
-							"$ref": "#/$defs/face"
-						},
-						"at": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"width": {
-							"enum": [
-								1,
-								2
-							]
-						},
-						"height": {
-							"enum": [
-								2,
-								3
-							]
-						},
-						"role": {
-							"$ref": "#/$defs/role"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "line",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"from",
-						"to",
-						"fill"
-					],
-					"properties": {
-						"type": {
-							"const": "line"
-						},
-						"from": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"to": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"thickness": {
-							"$ref": "#/$defs/coord"
-						},
-						"fill": {
-							"$ref": "#/$defs/fill"
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "stairs_run",
-					"description": "A staircase climbing one block per step. Stairs face the direction of travel.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"pos",
-						"direction",
-						"width",
-						"steps",
-						"role"
-					],
-					"properties": {
-						"type": {
-							"const": "stairs_run"
-						},
-						"pos": {
-							"$ref": "#/$defs/cvec3"
-						},
-						"direction": {
-							"$ref": "#/$defs/face"
-						},
-						"width": {
-							"$ref": "#/$defs/coord"
-						},
-						"steps": {
-							"$ref": "#/$defs/coord"
-						},
-						"role": {
-							"$ref": "#/$defs/role"
-						},
-						"style": {
-							"enum": [
-								"stairs",
-								"blocks"
-							]
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				},
-				{
-					"title": "group",
-					"description": "Applies transforms to its children. repeat draws them more than once; use it instead of copying a component many times.",
-					"type": "object",
-					"additionalProperties": false,
-					"required": [
-						"type",
-						"children"
-					],
-					"properties": {
-						"type": {
-							"const": "group"
-						},
-						"children": {
-							"type": "array",
-							"minItems": 1,
-							"maxItems": 100,
-							"items": {
-								"$ref": "#/$defs/component"
-							}
-						},
-						"transform": {
-							"type": "array",
-							"maxItems": 6,
-							"items": {
-								"$ref": "#/$defs/transform"
-							}
-						},
-						"id": {
-							"$ref": "#/$defs/componentId"
-						},
-						"label": {
-							"$ref": "#/$defs/componentLabel"
-						}
-					}
-				}
-			]
-		},
-		"componentId": {
-			"description": "Optional stable identity for this component, used to address edits to it. Preserve ids you were given; never invent duplicates.",
-			"type": "string",
-			"minLength": 1,
-			"maxLength": 40,
-			"pattern": "^[A-Za-z0-9_.:-]+$"
-		},
-		"componentLabel": {
-			"description": "Optional human-readable name shown in the editor outliner.",
-			"type": "string",
-			"minLength": 1,
-			"maxLength": 60
-		}
-	}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://craftmagic.dev/schema/build-program-v1.json",
+  "title": "BuildProgram",
+  "description": "A parametric description of a Minecraft structure. Coordinates are expressions rather than fixed numbers so the same program can be re-expanded at a different size.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "meta",
+    "size",
+    "palette",
+    "components"
+  ],
+  "properties": {
+    "version": {
+      "enum": [
+        1,
+        "1"
+      ],
+      "description": "Program format version. 1."
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "style": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "x": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 160
+        },
+        "z": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        }
+      }
+    },
+    "scale": {
+      "description": "Set by the editor's resize control, never by you. Percentage per axis of the size above; every coordinate in the program is multiplied by it. Omit it when writing a new build, and leave it untouched when editing one that already has it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "y": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "z": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      }
+    },
+    "params": {
+      "description": "Named numbers referenced from coordinate expressions as $name. Each becomes a slider, so the build must still make sense anywhere in the declared range.",
+      "type": "object",
+      "maxProperties": 8,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "value",
+          "min",
+          "max"
+        ],
+        "properties": {
+          "value": {
+            "type": "integer"
+          },
+          "min": {
+            "type": "integer"
+          },
+          "max": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 40
+          }
+        }
+      }
+    },
+    "palette": {
+      "description": "Maps a semantic role (wall_primary, roof_primary, ...) to a block. Components reference roles, never blocks, so the whole build can be re-skinned.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/blockRef"
+          },
+          {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/weightedBlockRef"
+            }
+          }
+        ]
+      }
+    },
+    "components": {
+      "description": "Drawn in order, painter's algorithm: later components overwrite earlier ones, and minecraft:air carves.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 400,
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    },
+    "details": {
+      "description": "Raw voxel patches applied after every component. For small accents only.",
+      "type": "array",
+      "maxItems": 5000,
+      "items": {
+        "$ref": "#/$defs/detailOp"
+      }
+    },
+    "prefabs": {
+      "type": "object",
+      "description": "Finished builds this program stamps, keyed by the name prefab components reference. Placing one four times costs four references, not four copies.",
+      "additionalProperties": {
+        "$ref": "#/$defs/prefab"
+      }
+    }
+  },
+  "$defs": {
+    "coord": {
+      "description": "An integer, or an arithmetic expression over: min, max, center, a number (decimals allowed), a percentage (50%), and params ($name). Supports + - * / and parentheses, with any number of terms. Examples: 4, \"max-1\", \"center+2\", \"50%\", \"$floors*4+1\", \"$height*30%\" (30% of $height), \"$height-2+$radius\", \"max*0.42\", \"max/2\". A percentage alone is a share of the axis; after * it is a plain fraction. Prefer anchors and params over literals so the build survives a resize.",
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\s*-?\\s*\\(?\\s*(min|max|center|\\$[A-Za-z_][A-Za-z0-9_]*|[0-9]+(\\.[0-9]+)?%?)\\s*\\)?(\\s*[-+*/]\\s*-?\\s*\\(?\\s*(min|max|center|\\$[A-Za-z_][A-Za-z0-9_]*|[0-9]+(\\.[0-9]+)?%?)\\s*\\)?)*\\s*$"
+        }
+      ]
+    },
+    "cvec3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/coord"
+      }
+    },
+    "vec3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "integer"
+      }
+    },
+    "face": {
+      "enum": [
+        "north",
+        "south",
+        "east",
+        "west"
+      ]
+    },
+    "axis": {
+      "enum": [
+        "x",
+        "y",
+        "z"
+      ]
+    },
+    "horizontalAxis": {
+      "enum": [
+        "x",
+        "z"
+      ]
+    },
+    "blockRef": {
+      "description": "A block id, optionally with states: \"minecraft:oak_stairs[facing=north,half=top]\". Orientation is normally computed by the expander, so states are rarely needed here.",
+      "type": "string",
+      "pattern": "^[a-z0-9_.-]+:[a-z0-9_/.-]+(\\[[a-z0-9_]+=[a-z0-9_]+(,[a-z0-9_]+=[a-z0-9_]+)*\\])?$"
+    },
+    "weightedBlockRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "block",
+        "weight"
+      ],
+      "properties": {
+        "block": {
+          "$ref": "#/$defs/blockRef"
+        },
+        "weight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "fill": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "role"
+          ],
+          "properties": {
+            "type": {
+              "const": "solid"
+            },
+            "role": {
+              "$ref": "#/$defs/role"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "a",
+            "b"
+          ],
+          "properties": {
+            "type": {
+              "const": "checker"
+            },
+            "a": {
+              "$ref": "#/$defs/role"
+            },
+            "b": {
+              "$ref": "#/$defs/role"
+            },
+            "plane": {
+              "enum": [
+                "xz",
+                "xy",
+                "yz"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "roles",
+            "axis"
+          ],
+          "properties": {
+            "type": {
+              "const": "stripes"
+            },
+            "roles": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "$ref": "#/$defs/role"
+              }
+            },
+            "axis": {
+              "$ref": "#/$defs/axis"
+            },
+            "period": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "roles"
+          ],
+          "properties": {
+            "type": {
+              "const": "noise"
+            },
+            "roles": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "role",
+                  "weight"
+                ],
+                "properties": {
+                  "role": {
+                    "$ref": "#/$defs/role"
+                  },
+                  "weight": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
+              }
+            },
+            "seed": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "edge",
+            "inner"
+          ],
+          "properties": {
+            "type": {
+              "const": "border"
+            },
+            "edge": {
+              "$ref": "#/$defs/role"
+            },
+            "inner": {
+              "$ref": "#/$defs/role"
+            }
+          }
+        }
+      ]
+    },
+    "transform": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "by"
+          ],
+          "properties": {
+            "op": {
+              "const": "translate"
+            },
+            "by": {
+              "$ref": "#/$defs/vec3"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "times"
+          ],
+          "properties": {
+            "op": {
+              "const": "rotate90"
+            },
+            "times": {
+              "enum": [
+                1,
+                2,
+                3
+              ]
+            },
+            "pivot": {
+              "anyOf": [
+                {
+                  "const": "center"
+                },
+                {
+                  "$ref": "#/$defs/vec3"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "axis"
+          ],
+          "properties": {
+            "op": {
+              "const": "mirror"
+            },
+            "axis": {
+              "$ref": "#/$defs/horizontalAxis"
+            },
+            "pivot": {
+              "anyOf": [
+                {
+                  "const": "center"
+                },
+                {
+                  "$ref": "#/$defs/vec3"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "count",
+            "step"
+          ],
+          "properties": {
+            "op": {
+              "const": "repeat"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 256
+            },
+            "step": {
+              "$ref": "#/$defs/vec3"
+            },
+            "alternateMirror": {
+              "type": "boolean"
+            }
+          }
+        }
+      ]
+    },
+    "detailOp": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "at",
+            "block"
+          ],
+          "properties": {
+            "op": {
+              "const": "set"
+            },
+            "at": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "block": {
+              "$ref": "#/$defs/blockRef"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "from",
+            "to",
+            "block"
+          ],
+          "properties": {
+            "op": {
+              "const": "fill"
+            },
+            "from": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "to": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "block": {
+              "$ref": "#/$defs/blockRef"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "from",
+            "to"
+          ],
+          "properties": {
+            "op": {
+              "const": "clear"
+            },
+            "from": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "to": {
+              "$ref": "#/$defs/cvec3"
+            }
+          }
+        }
+      ],
+      "description": "A raw voxel patch. Coordinates are full expressions, like components."
+    },
+    "component": {
+      "anyOf": [
+        {
+          "title": "box",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pos",
+            "size",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "box"
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "size": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "hollow_box",
+          "description": "Walls with an optional floor and ceiling. The usual way to make a room.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pos",
+            "size",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "hollow_box"
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "size": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "wallThickness": {
+              "$ref": "#/$defs/coord"
+            },
+            "floor": {
+              "type": "boolean"
+            },
+            "ceiling": {
+              "type": "boolean"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "cylinder",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "base",
+            "radius",
+            "height",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "cylinder"
+            },
+            "base": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "radius": {
+              "$ref": "#/$defs/coord"
+            },
+            "height": {
+              "$ref": "#/$defs/coord"
+            },
+            "axis": {
+              "$ref": "#/$defs/axis"
+            },
+            "hollow": {
+              "type": "boolean"
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "sphere",
+          "description": "Use cap: top_half for a dome.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "center",
+            "radius",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "sphere"
+            },
+            "center": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "radius": {
+              "$ref": "#/$defs/coord"
+            },
+            "hollow": {
+              "type": "boolean"
+            },
+            "cap": {
+              "enum": [
+                "full",
+                "top_half",
+                "bottom_half"
+              ]
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "pyramid",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pos",
+            "baseSize",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "pyramid"
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "baseSize": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "$ref": "#/$defs/coord"
+              }
+            },
+            "step": {
+              "$ref": "#/$defs/coord"
+            },
+            "hollow": {
+              "type": "boolean"
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "gable_roof",
+          "description": "Two slopes meeting at a ridge running along ridgeAxis. Stair orientation is computed for you. Place it so its base level sits on the top course of the walls.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pos",
+            "size",
+            "ridgeAxis",
+            "roofRole"
+          ],
+          "properties": {
+            "type": {
+              "const": "gable_roof"
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "size": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "ridgeAxis": {
+              "$ref": "#/$defs/horizontalAxis"
+            },
+            "overhang": {
+              "$ref": "#/$defs/coord"
+            },
+            "style": {
+              "enum": [
+                "stairs",
+                "slabs",
+                "full"
+              ]
+            },
+            "roofRole": {
+              "$ref": "#/$defs/role"
+            },
+            "trimRole": {
+              "$ref": "#/$defs/role"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "hip_roof",
+          "description": "All four sides slope inward. Corners and the apex are capped automatically.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pos",
+            "size",
+            "roofRole"
+          ],
+          "properties": {
+            "type": {
+              "const": "hip_roof"
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "size": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "overhang": {
+              "$ref": "#/$defs/coord"
+            },
+            "style": {
+              "enum": [
+                "stairs",
+                "full"
+              ]
+            },
+            "roofRole": {
+              "$ref": "#/$defs/role"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "arch",
+          "description": "An opening with a curved head. Set carve: true to cut it out of a wall drawn earlier.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pos",
+            "width",
+            "height",
+            "depth",
+            "axis",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "arch"
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "width": {
+              "$ref": "#/$defs/coord"
+            },
+            "height": {
+              "$ref": "#/$defs/coord"
+            },
+            "depth": {
+              "$ref": "#/$defs/coord"
+            },
+            "axis": {
+              "$ref": "#/$defs/horizontalAxis"
+            },
+            "style": {
+              "enum": [
+                "round",
+                "pointed"
+              ]
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "carve": {
+              "type": "boolean"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "window_grid",
+          "description": "Evenly spaced windows across a wall region. Spacing is derived, so windows stay evenly distributed after a resize. margin keeps them clear of the corners.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "face",
+            "region",
+            "rows",
+            "cols",
+            "windowSize",
+            "role"
+          ],
+          "properties": {
+            "type": {
+              "const": "window_grid"
+            },
+            "face": {
+              "$ref": "#/$defs/face"
+            },
+            "region": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "pos",
+                "size"
+              ],
+              "properties": {
+                "pos": {
+                  "$ref": "#/$defs/cvec3"
+                },
+                "size": {
+                  "$ref": "#/$defs/cvec3"
+                }
+              }
+            },
+            "rows": {
+              "$ref": "#/$defs/coord"
+            },
+            "cols": {
+              "$ref": "#/$defs/coord"
+            },
+            "windowSize": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "$ref": "#/$defs/coord"
+              }
+            },
+            "margin": {
+              "$ref": "#/$defs/coord"
+            },
+            "role": {
+              "$ref": "#/$defs/role"
+            },
+            "sill": {
+              "type": "boolean"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "door",
+          "description": "Carves an opening and hangs a door. half and hinge are computed for you.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "face",
+            "at",
+            "role"
+          ],
+          "properties": {
+            "type": {
+              "const": "door"
+            },
+            "face": {
+              "$ref": "#/$defs/face"
+            },
+            "at": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "width": {
+              "enum": [
+                1,
+                2
+              ]
+            },
+            "height": {
+              "enum": [
+                2,
+                3
+              ]
+            },
+            "role": {
+              "$ref": "#/$defs/role"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "line",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "from",
+            "to",
+            "fill"
+          ],
+          "properties": {
+            "type": {
+              "const": "line"
+            },
+            "from": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "to": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "thickness": {
+              "$ref": "#/$defs/coord"
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "stairs_run",
+          "description": "A staircase climbing one block per step. Stairs face the direction of travel.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pos",
+            "direction",
+            "width",
+            "steps",
+            "role"
+          ],
+          "properties": {
+            "type": {
+              "const": "stairs_run"
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "direction": {
+              "$ref": "#/$defs/face"
+            },
+            "width": {
+              "$ref": "#/$defs/coord"
+            },
+            "steps": {
+              "$ref": "#/$defs/coord"
+            },
+            "role": {
+              "$ref": "#/$defs/role"
+            },
+            "style": {
+              "enum": [
+                "stairs",
+                "blocks"
+              ]
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "title": "group",
+          "description": "Applies transforms to its children. repeat draws them more than once; use it instead of copying a component many times.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "children"
+          ],
+          "properties": {
+            "type": {
+              "const": "group"
+            },
+            "children": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "items": {
+                "$ref": "#/$defs/component"
+              }
+            },
+            "transform": {
+              "type": "array",
+              "maxItems": 6,
+              "items": {
+                "$ref": "#/$defs/transform"
+              }
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "Stamp a finished build from program.prefabs. Its own size never scales; only where it sits does.",
+          "properties": {
+            "type": {
+              "const": "prefab"
+            },
+            "id": {
+              "$ref": "#/$defs/componentId"
+            },
+            "label": {
+              "$ref": "#/$defs/componentLabel"
+            },
+            "ref": {
+              "type": "string",
+              "description": "Key into program.prefabs."
+            },
+            "pos": {
+              "$ref": "#/$defs/cvec3"
+            },
+            "turns": {
+              "enum": [
+                0,
+                1,
+                2,
+                3
+              ],
+              "description": "Quarter-turns clockwise. pos stays the min corner of the turned footprint."
+            }
+          },
+          "required": [
+            "type",
+            "ref",
+            "pos"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "componentId": {
+      "description": "Optional stable identity for this component, used to address edits to it. Preserve ids you were given; never invent duplicates.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[A-Za-z0-9_.:-]+$"
+    },
+    "componentLabel": {
+      "description": "Optional human-readable name shown in the editor outliner.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "prefab": {
+      "type": "object",
+      "description": "A saved build, encoded. Never written by the model — the layouter emits these when a saved build is placed.",
+      "properties": {
+        "size": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "z": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "z"
+          ],
+          "additionalProperties": false
+        },
+        "palette": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/blockRef"
+          }
+        },
+        "data": {
+          "type": "string",
+          "description": "Base64 of run-length-encoded palette indices, YZX order."
+        }
+      },
+      "required": [
+        "size",
+        "palette",
+        "data"
+      ],
+      "additionalProperties": false
+    }
+  }
 }

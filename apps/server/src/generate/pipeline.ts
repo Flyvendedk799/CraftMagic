@@ -192,6 +192,25 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
+/**
+ * Put back the prefab table the refine prompt withheld.
+ *
+ * A refine never shows the model `program.prefabs` — each entry is a saved building as base64,
+ * thousands of tokens it cannot act on. So whatever comes back carries no table, and every
+ * `prefab` component in it would fail to resolve.
+ *
+ * Restoring it *here*, before the first expansion, is the part that matters. Validate first
+ * and each placement reports `UNKNOWN_PREFAB`, which buys a paid repair round to fix a problem
+ * we created ourselves — the exact shape of bug the withholding was meant to avoid paying for.
+ * Merged rather than assigned, so a table a model invented is kept and the real entries win
+ * any collision.
+ */
+function carryPrefabs(program: BuildProgram, base: BuildProgram | undefined): BuildProgram {
+	const carried = base?.prefabs;
+	if (!carried || Object.keys(carried).length === 0) return program;
+	return { ...program, prefabs: { ...program.prefabs, ...carried } };
+}
+
 export async function generateBuild(
 	deps: PipelineDeps,
 	options: GenerateOptions,
@@ -320,7 +339,7 @@ export async function generateBuild(
 		return input as BuildProgram;
 	};
 
-	let program = interpret(first, refineBase);
+	let program = carryPrefabs(interpret(first, refineBase), options.refineOf);
 	options.onProgram?.(program, 'generate');
 	let structural = schemaIssues(program);
 	let expansion = expand(program);
@@ -354,7 +373,7 @@ export async function generateBuild(
 		if (second && second.input !== undefined) {
 			// A refine's repair may answer with another patch. It applies against the program
 			// as it now stands — replaceComponent keeps ids stable, so targets still resolve.
-			const candidate = interpret(second, refineBase ? program : null);
+			const candidate = carryPrefabs(interpret(second, refineBase ? program : null), options.refineOf);
 			options.onProgram?.(candidate, 'repair');
 			const candidateStructural = schemaIssues(candidate);
 			const candidateExpansion = expand(candidate);

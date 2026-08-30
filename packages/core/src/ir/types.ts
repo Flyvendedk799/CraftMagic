@@ -81,7 +81,7 @@ export interface WeightedRole {
  * Optional identity, carried by every component variant.
  *
  * `id` exists for the things that need to point at a component from outside the program: the
- * diff-refine tool addresses its edits to `id`s, and the layouter tags each component with the
+ * diff-refine tool addresses its edits to `id`s, and Architecture mode tags each component with the
  * plan item that produced it so a click in 3D can find its way back to the plan. `label` is a
  * human name for the outliner. Both are additive — the expander ignores them, `version` stays
  * 1, and a program without them is exactly as valid as it always was.

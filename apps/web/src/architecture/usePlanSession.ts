@@ -1,5 +1,5 @@
 /**
- * The layouter's session: the plan on screen, its history, and where it is kept.
+ * Architecture mode's session: the plan on screen, its history, and where it is kept.
  *
  * The split that matters here is `commit` versus `preview`. A pointer drag produces a new plan
  * on every mouse move, and pushing each of those onto the undo stack would make one dragged

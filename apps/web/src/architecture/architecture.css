@@ -1,4 +1,4 @@
-/* Layouter chrome.
+/* Architecture chrome.
  *
  * Unlike the editor — a full-viewport canvas with floating islands over it — this page is
  * three real columns: the controls, the plan you draw in, and the model you check in. A plan
@@ -10,7 +10,7 @@
  * change to a section header lands in both. The overrides below are only where a column
  * layout and an absolutely-positioned HUD genuinely disagree. */
 
-.layouter {
+.arch {
   position: fixed;
   inset: 0;
   display: grid;
@@ -27,18 +27,18 @@
 /* Full-bleed: the bar is chrome and belongs against the window edge, so it cancels the page
    padding rather than floating inside it with three-quarters of a rem of background either
    side. Same treatment as the editor, and for the same reason the columns keep the padding. */
-.layouter > .nav {
+.arch > .nav {
   grid-column: 1 / -1;
   margin: 0 -0.75rem;
 }
 
-.layouter > .nav .nav__inner {
+.arch > .nav .nav__inner {
   max-width: none;
 }
 
 /* The editor's HUD is absolutely positioned over its canvas; here it is a column, so the
    positioning is undone rather than a second panel style being invented. */
-.layouter__panel {
+.arch__panel {
   position: relative;
   inset: auto;
   width: auto;
@@ -46,8 +46,8 @@
   overflow-y: auto;
 }
 
-.layouter__plan,
-.layouter__model {
+.arch__plan,
+.arch__model {
   position: relative;
   min-width: 0;
   border: 1px solid var(--border);
@@ -56,7 +56,7 @@
   background: var(--sunken);
 }
 
-.layouter__model canvas {
+.arch__model canvas {
   display: block;
   touch-action: none;
 }
@@ -64,26 +64,26 @@
 /* Under about 1100px the third column stops being a view and starts being a stripe. The plan
    is the one that has to stay usable, so the model drops below it and the controls stay put. */
 @media (max-width: 1180px) {
-  .layouter {
+  .arch {
     grid-template-columns: 19rem minmax(0, 1fr);
     /* Bar, then the plan, then the model beneath it. */
     grid-template-rows: auto minmax(0, 1fr) 14rem;
   }
 
-  .layouter__panel {
+  .arch__panel {
     grid-row: 2 / span 2;
   }
 }
 
 @media (max-width: 820px) {
-  .layouter {
+  .arch {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(18rem, 1fr) 12rem;
     overflow-y: auto;
     position: static;
   }
 
-  .layouter__panel {
+  .arch__panel {
     grid-row: auto;
     max-height: 40vh;
   }
@@ -377,13 +377,13 @@
   pointer-events: none;
 }
 
-.layouter__readout {
+.arch__readout {
   bottom: 0.75rem;
 }
 
 /* --- the model column --------------------------------------------------- */
 
-.layouter__model-bar {
+.arch__model-bar {
   position: absolute;
   left: 0.5rem;
   right: 0.5rem;
@@ -600,7 +600,7 @@
   color: var(--fail);
 }
 
-.layouter__empty {
+.arch__empty {
   margin: 0;
   font-size: var(--text-xs);
   color: var(--muted);

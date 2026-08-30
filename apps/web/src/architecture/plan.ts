@@ -1,7 +1,7 @@
 /**
  * The layout document.
  *
- * The layouter is a floorplan tool, so its document is a plan rather than a grid: a stack of
+ * Architecture mode is a floorplan tool, so its document is a plan rather than a grid: a stack of
  * storeys, each holding rooms, partitions, apertures and vertical circulation, all in whole
  * blocks. Nothing here knows about voxels — `compile.ts` turns a plan into a `BuildProgram`
  * and the ordinary CraftMagic expander turns that into blocks. Keeping the plan as the source

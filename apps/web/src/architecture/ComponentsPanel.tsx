@@ -54,19 +54,19 @@ export function ComponentsPanel({
 
   if (status === 'signedOut') {
     return (
-      <p className="layouter__empty">
+      <p className="arch__empty">
         Components are your saved builds, so this needs an account.{' '}
         <Link to="/dashboard">Sign in</Link> and everything in your library shows up here.
       </p>
     );
   }
 
-  if (status === 'loading') return <p className="layouter__empty">Loading your library…</p>;
-  if (status === 'error') return <p className="layouter__empty">Could not load your library.</p>;
+  if (status === 'loading') return <p className="arch__empty">Loading your library…</p>;
+  if (status === 'error') return <p className="arch__empty">Could not load your library.</p>;
 
   if (shelf.length === 0) {
     return (
-      <p className="layouter__empty">
+      <p className="arch__empty">
         Nothing saved yet. Build something in Build mode, save it to your library, and it
         becomes a component you can place here — as many times as you like.
       </p>
@@ -122,7 +122,7 @@ export function ComponentsPanel({
             </li>
           );
         })}
-        {matches.length === 0 && <li className="layouter__empty">No component matches.</li>}
+        {matches.length === 0 && <li className="arch__empty">No component matches.</li>}
       </ul>
 
       <p className="shelf__hint">

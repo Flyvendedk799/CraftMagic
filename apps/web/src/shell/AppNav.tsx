@@ -38,7 +38,7 @@ export interface AppNavProps {
    * `editor` and `layouter` are still accepted: both pages live on as the studio's two modes
    * and keep passing their own names, which the bar maps onto the one Studio entry.
    */
-  current?: 'dashboard' | 'studio' | 'editor' | 'layouter' | 'library' | 'mod';
+  current?: 'dashboard' | 'studio' | 'editor' | 'layouter' | 'architecture' | 'world' | 'library' | 'mod';
 }
 
 interface Destination {
@@ -66,7 +66,12 @@ const DESTINATIONS: Destination[] = [
 
 /** The nav entry a page's `current` maps onto — the studio's modes both mean Studio. */
 function entryFor(current: AppNavProps['current']): Destination['key'] | undefined {
-  if (current === 'editor' || current === 'layouter') return 'studio';
+  // Every studio mode lights the one Studio entry. `layouter` is kept alongside the name that
+  // replaced it so a page that has not been renamed yet still highlights correctly rather than
+  // silently lighting nothing.
+  if (current === 'editor' || current === 'layouter' || current === 'architecture' || current === 'world') {
+    return 'studio';
+  }
   return current;
 }
 

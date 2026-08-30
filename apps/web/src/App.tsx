@@ -7,6 +7,7 @@ import { LibraryPage } from './library/LibraryPage.js';
 import { ModPage } from './mod/ModPage.js';
 import { StatusPage } from './StatusPage.js';
 import { StudioPage } from './studio/StudioPage.js';
+import { modeParam, type StudioMode } from './studio/mode.js';
 
 /**
  * Routes, all load-bearing. `/status` keeps the M0 API and WebSocket round-trips reachable —
@@ -30,11 +31,13 @@ import { StudioPage } from './studio/StudioPage.js';
  * `/mod` is where "Send to game" sends anyone who does not have the mod yet. Without it the
  * pairing instructions name a command that cannot exist on their machine.
  *
- * `/studio` hosts both ways of making a building — the voxel editor (Build mode) and the
- * layouter (Plan mode, `?mode=plan`) — behind one address with a mode switch and a Ctrl+K
- * command palette. `/editor` and `/layouter` live on as search-preserving redirects, because
- * every link shared before the studio existed has one of those shapes, and a link that
- * breaks silently is a visitor lost without a report.
+ * `/studio` hosts all three ways of making something — the voxel editor (Build), the floorplan
+ * tool (Architecture, `?mode=arch`) and the site assembler (World, `?mode=world`) — behind one
+ * address with a mode switch and a Ctrl+K command palette. `/editor`, `/layouter`,
+ * `/architecture` and `/world` live on as search-preserving redirects, because every link
+ * shared before the studio existed has one of those shapes, and a link that breaks silently is
+ * a visitor lost without a report. `?mode=plan` is still read as Architecture for the same
+ * reason — see `studio/mode.ts`.
  */
 export function App() {
   return (
@@ -44,7 +47,9 @@ export function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/studio" element={<StudioPage />} />
         <Route path="/editor" element={<ToStudio />} />
-        <Route path="/layouter" element={<ToStudio mode="plan" />} />
+        <Route path="/layouter" element={<ToStudio mode="arch" />} />
+        <Route path="/architecture" element={<ToStudio mode="arch" />} />
+        <Route path="/world" element={<ToStudio mode="world" />} />
         <Route path="/guide" element={<GuidePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/mod" element={<ModPage />} />
@@ -77,14 +82,18 @@ function Home() {
  *
  * The same pattern as `Home`: the search string is the payload — `?build=gen:3&p.floors=2`
  * is a specific building at a specific size — and a redirect that dropped it would land
- * every old link on the default cottage. The layouter's redirect adds `mode=plan`; the
+ * every old link on the default cottage. Architecture mode's redirect adds `mode=plan`; the
  * editor's strips it, since absent means Build.
  */
-function ToStudio({ mode }: { mode?: 'plan' }) {
+function ToStudio({ mode }: { mode?: StudioMode }) {
   const { search } = useLocation();
   const params = new URLSearchParams(search);
-  if (mode) params.set('mode', mode);
-  else params.delete('mode');
+  // Through `modeParam` rather than written literally: Build is the absent value, and a
+  // redirect that wrote `mode=build` would put a parameter meaning "the normal one" into every
+  // link anyone shares from here.
+  const value = mode ? modeParam(mode) : null;
+  if (value === null) params.delete('mode');
+  else params.set('mode', value);
   const next = params.toString();
   return <Navigate replace to={{ pathname: '/studio', search: next ? `?${next}` : '' }} />;
 }

@@ -4,7 +4,7 @@
  * A finished building is opaque. That is the point of a building and it is the problem with
  * previewing one: the moment a plan has more than one room, the thing you drew is behind a
  * wall, and the moment it has more than one storey, half of it is behind a floor. The
- * layouter had one control for this — a checkbox that cut everything above the storey you
+ * this mode had one control for this — a checkbox that cut everything above the storey you
  * were editing — which lets you look *down* onto a stack of floors and still leaves every
  * room enclosed by its own four walls.
  *

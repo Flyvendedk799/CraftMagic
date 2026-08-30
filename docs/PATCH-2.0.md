@@ -77,12 +77,12 @@ remainder of the approved roadmap for follow-up work.
   field; room labels ride as `label`). Clicking a wall in the 3D model resolves voxel →
   part → component id → plan item and selects it on the plan, jumping storeys if needed.
 - **Plans persist server-side**: migration 006 adds `plan jsonb` to builds; a library save
-  from the layouter carries the drawing beside program + voxels, the library card grows a
+  from Architecture mode carries the drawing beside program + voxels, the library card grows a
   "Plan" action, and `/layouter?plan=lib:<id>` reopens it — walls still walls.
 - An L-shape whose room overlap is exactly wall-deep no longer warns (locked by test).
 
 **Studio shell (S4):**
-- `/studio` hosts both tools as modes — Build (the voxel editor) and Plan (the layouter,
+- `/studio` hosts both tools as modes — Build (the voxel editor) and Plan (Architecture mode,
   `?mode=plan`) — behind one address, with a floating mode pill and per-mode undo intact.
 - **Ctrl+K command palette**: switch mode, open any sample or recent generated build,
   restyle with any pack, open the guide, jump to library/dashboard/mod. Every command is a

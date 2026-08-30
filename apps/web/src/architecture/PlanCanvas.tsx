@@ -1,7 +1,7 @@
 /**
  * The plan view: a top-down, block-ruled drawing surface.
  *
- * This is the layouter's equivalent of the level editor engine's orthographic viewport
+ * This is Architecture mode's equivalent of the level editor engine's orthographic viewport
  * (`initViewport`/`renderViewport`/`hitTest` in `src/customMaps/levelEditor.js`), rebuilt as
  * SVG rather than a Three.js ortho camera. The engine's *behaviour* is what was worth porting
  * — snap every gesture to the grid, hit-test small things before big ones, draw the ghost of

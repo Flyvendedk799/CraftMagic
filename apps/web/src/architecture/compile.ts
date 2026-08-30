@@ -1,10 +1,10 @@
 /**
  * Plan → `BuildProgram`.
  *
- * This is the layouter's counterpart to `customMapCompiler.js` in the level editor engine it
+ * This is Architecture mode's counterpart to `customMapCompiler.js` in the level editor engine it
  * is ported from: the authored document is a list of intentions, and the compiler turns it
  * into the thing the runtime actually consumes. There, that meant collision boxes and meshes;
- * here it means CraftMagic's IR — which is the whole reason the layouter gets every export
+ * here it means CraftMagic's IR — which is the whole reason Architecture mode gets every export
  * the editor has for free. A compiled plan is a program like any other, so `.schem` download,
  * program JSON, the printable guide, the library and "Send to game" all work unchanged, with
  * no export code written twice.
@@ -503,7 +503,7 @@ export function compilePlan(plan: LayoutPlan, catalogue: Catalogue = new Map()):
     version: 1,
     meta: {
       name: plan.name,
-      description: `${floors} storey${floors === 1 ? '' : 's'}, ${plan.wallThickness}-block walls, laid out in the layouter.`,
+      description: `${floors} storey${floors === 1 ? '' : 's'}, ${plan.wallThickness}-block walls, laid out in Architecture mode.`,
     },
     size: {
       x: Math.max(1, footprint.w),

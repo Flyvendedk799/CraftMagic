@@ -18,7 +18,7 @@
  * Needs an account and a library, so it seeds one over the API first. Free — no model is
  * called, and it removes the builds it created.
  *
- *   node tools/verify-layouter-place.mjs [origin]
+ *   node tools/verify-architecture-place.mjs [origin]
  */
 
 import { spawn } from 'node:child_process';
@@ -104,7 +104,7 @@ if (!placeName) {
 }
 console.log(`seeded ${seeded.length} components; placing "${placeName}"\n`);
 
-// --- drive the layouter ---------------------------------------------------------------------
+// --- drive Architecture mode ---------------------------------------------------------------------
 
 const port = 9600 + (process.pid % 300);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-place-'));
@@ -188,7 +188,7 @@ try {
 	await send('Runtime.enable');
 
 	await send('Page.navigate', { url: `${ORIGIN}/studio` });
-	await waitFor("!!document.querySelector('.editor, .layouter')", 'the studio');
+	await waitFor("!!document.querySelector('.editor, .arch')", 'the studio');
 	const signedIn = await evaluate(
 		`fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:${JSON.stringify(
 			JSON.stringify({ email: EMAIL, password: PASSWORD }),
@@ -198,7 +198,7 @@ try {
 
 	// A layout left behind by an earlier run must not be able to make this pass.
 	await evaluate("Object.keys(localStorage).filter(k=>k.includes('layout')||k.includes('plan')).forEach(k=>localStorage.removeItem(k)), 1");
-	await send('Page.navigate', { url: `${ORIGIN}/studio?mode=plan` });
+	await send('Page.navigate', { url: `${ORIGIN}/studio?mode=arch` });
 	await waitFor("!!document.querySelector('svg.plan')", 'the plan canvas');
 	await sleep(1200);
 
@@ -210,7 +210,7 @@ try {
 		if (head.getAttribute('aria-expanded') !== 'true') head.click();
 		return true;
 	})()`);
-	check('the layouter has a Components panel', opened === true);
+	check('Architecture mode has a Components panel', opened === true);
 	await sleep(700);
 
 	await waitFor("document.querySelectorAll('.shelf__item').length > 0", 'the shelf');
@@ -314,7 +314,7 @@ try {
 	// --- surviving a reload -------------------------------------------------------------------
 	// A plan stores a build's *id* and fetches its blocks, so restoring one takes a different
 	// path from placing one: driven by an effect rather than by a click.
-	await send('Page.navigate', { url: `${ORIGIN}/studio?mode=plan` });
+	await send('Page.navigate', { url: `${ORIGIN}/studio?mode=arch` });
 	await waitFor("!!document.querySelector('svg.plan')", 'the plan canvas again');
 	await sleep(1600);
 	check('the placement survives a reload', (await evaluate("document.querySelectorAll('.plan__place').length")) === 1);
@@ -325,7 +325,7 @@ try {
 
 	check('no uncaught errors', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 
-	const outFile = process.env.CM_PLACE_SHOT ?? 'out/verify-layouter-place.png';
+	const outFile = process.env.CM_PLACE_SHOT ?? 'out/verify-architecture-place.png';
 	const shot = await send('Page.captureScreenshot', { format: 'png' });
 	fs.mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });
 	fs.writeFileSync(outFile, Buffer.from(shot.result.data, 'base64'));

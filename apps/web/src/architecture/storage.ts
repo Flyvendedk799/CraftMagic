@@ -21,8 +21,13 @@
 
 import { normalizePlan, type LayoutPlan } from './plan.js';
 
-const AUTOSAVE_KEY = 'craftmagic.layouter.autosave';
-const SAVED_KEY = 'craftmagic.layouter.plans';
+const AUTOSAVE_KEY = 'craftmagic.architecture.autosave';
+const SAVED_KEY = 'craftmagic.architecture.plans';
+
+/** What these keys were called while the mode was called the layouter. */
+const LEGACY_AUTOSAVE_KEY = 'craftmagic.layouter.autosave';
+const LEGACY_SAVED_KEY = 'craftmagic.layouter.plans';
+const MIGRATED_FLAG = 'craftmagic.architecture.migrated';
 
 /** Enough for a real project's worth of buildings, small enough not to fill the quota. */
 export const MAX_SAVED = 24;
@@ -53,6 +58,45 @@ function write(key: string, value: unknown): boolean {
     return false;
   }
 }
+
+/**
+ * Carry plans across the rename, once.
+ *
+ * Renaming a storage key without this orphans every plan anyone has: an hour of floorplan that
+ * exists nowhere else — not on the server, not in the URL — sitting under a key nothing reads
+ * any more, while the tool opens on an empty canvas and looks like it lost them. Which it did.
+ *
+ * The legacy keys are **copied, not moved.** A tab still open on the previous deploy keeps
+ * writing to the old names, and deleting them here would throw away whatever that tab saves
+ * next. Two hundred kilobytes of duplicate is a cheap price for a one-way door; the legacy
+ * keys can be dropped a release later, once no such tab can still exist.
+ *
+ * Runs at most once per browser, guarded by a flag, and swallows everything — storage can be
+ * blocked entirely, and a throw here would white-screen the whole mode over a housekeeping
+ * task.
+ */
+function migrateLegacyKeys(): void {
+  try {
+    if (localStorage.getItem(MIGRATED_FLAG)) return;
+
+    for (const [legacy, current] of [
+      [LEGACY_AUTOSAVE_KEY, AUTOSAVE_KEY],
+      [LEGACY_SAVED_KEY, SAVED_KEY],
+    ] as const) {
+      // Only when there is nothing under the new name: a plan made since the rename must
+      // never be overwritten by an older one left behind under the old one.
+      if (localStorage.getItem(current) !== null) continue;
+      const carried = localStorage.getItem(legacy);
+      if (carried !== null) localStorage.setItem(current, carried);
+    }
+
+    localStorage.setItem(MIGRATED_FLAG, '1');
+  } catch {
+    // Blocked storage. Nothing to carry, and nothing that should stop the mode loading.
+  }
+}
+
+migrateLegacyKeys();
 
 export function loadAutosave(): LayoutPlan | null {
   const raw = read<unknown>(AUTOSAVE_KEY);

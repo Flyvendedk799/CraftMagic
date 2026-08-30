@@ -1176,7 +1176,7 @@
     },
     "prefab": {
       "type": "object",
-      "description": "A saved build, encoded. Never written by the model — the layouter emits these when a saved build is placed.",
+      "description": "A saved build, encoded. Never written by the model — Architecture mode emits these when a saved build is placed.",
       "properties": {
         "size": {
           "type": "object",

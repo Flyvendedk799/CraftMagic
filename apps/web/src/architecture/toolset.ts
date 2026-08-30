@@ -1,5 +1,5 @@
 /**
- * The layouter's tools, and the keys that select them.
+ * Architecture mode's tools, and the keys that select them.
  *
  * Same arrangement as the voxel editor's `toolset.ts`: one list, read by the tool rail, by the
  * page's digit handler and by the shortcut sheet, so a new tool is a row here rather than

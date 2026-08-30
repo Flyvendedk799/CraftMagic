@@ -58,7 +58,7 @@ export interface EditorCanvasProps {
    * Takes over from `layerClip`/`layerFloor` entirely when given, rather than intersecting
    * with them: two ways of saying where the top cut is would eventually disagree, and the
    * caller that wants a box is not also operating a layer slider. The editor passes layers,
-   * the layouter passes a box.
+   * Architecture mode passes a box.
    */
   clip?: ClipBox | null;
   onHover?: (hit: VoxelHit | null) => void;
@@ -347,7 +347,7 @@ function Framing({
   focus.current = view?.focus ?? null;
 
   // On the build changing *shape* — a new structure, a resize — and on nothing else. Keyed on
-  // the three numbers rather than on the size object, which the layouter rebuilds on every
+  // the three numbers rather than on the size object, which Architecture mode rebuilds on every
   // recompile: an object identity here meant the camera snapped back to the whole building
   // every time a wall moved, which is unusable once it is pointed at one room.
   useEffect(() => {
@@ -449,7 +449,7 @@ const FOCUS_MARGIN = 1.25;
  * Point the camera at a box, close enough that the box fills the frame.
  *
  * The distance is solved against the camera's own field of view rather than taken as a
- * multiple of the box, and specifically against the *narrower* of the two: the layouter's
+ * multiple of the box, and specifically against the *narrower* of the two: Architecture mode's
  * model sits in a tall, narrow column, where the horizontal field is barely half the vertical
  * one, and a distance chosen from the vertical field alone puts the near walls of a room off
  * both sides of the panel. Solving it means the framing is right in a column, in a wide panel

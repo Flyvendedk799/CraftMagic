@@ -296,8 +296,8 @@ function Launcher({
             to start and nobody looks for a second tool they have not been told exists. */}
         <div className="launcher__chips">
           <span className="launcher__chip-label">Or draw a floorplan</span>
-          <Link className="launcher__chip" to="/layouter">
-            Open the layouter
+          <Link className="launcher__chip" to="/architecture">
+            Open Architecture
           </Link>
         </div>
       </div>

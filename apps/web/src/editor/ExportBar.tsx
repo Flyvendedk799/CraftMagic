@@ -31,7 +31,7 @@ export interface ExportBarProps {
   blockCount: number;
   /** The hand-edit layer for the library save, fetched at click time. Optional: pages with no session pass nothing. */
   getEdits?: () => EditLayer | null;
-  /** The layouter's drawing, saved beside the compiled build so it can be reopened as a plan. */
+  /** Architecture mode's drawing, saved beside the compiled build so it can be reopened as a plan. */
   plan?: unknown;
 }
 

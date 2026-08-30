@@ -21,7 +21,7 @@ export interface SaveToLibraryProps {
   detached: boolean;
   /** The hand-edit layer, read at save time so renders never pay for serialising it. */
   getEdits?: () => EditLayer | null;
-  /** The layouter's drawing. Stored beside the build so it can be reopened as a plan. */
+  /** Architecture mode's drawing. Stored beside the build so it can be reopened as a plan. */
   plan?: unknown;
 }
 

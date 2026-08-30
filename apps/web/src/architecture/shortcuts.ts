@@ -1,7 +1,7 @@
 /**
- * What the layouter's keyboard does.
+ * What Architecture mode's keyboard does.
  *
- * The layouter is the more keyboard-driven of the two tools and was the one with nothing
+ * Architecture mode is the more keyboard-driven of the two tools and was the one with nothing
  * advertising it: nine tool digits printed on their buttons, and then a whole second layer —
  * the storey brackets, the arrow-key nudge, copy and paste, fit — that existed and was
  * invisible. Half of what makes a drawing tool feel quick is knowing you never have to reach
@@ -11,7 +11,7 @@
 import type { ShortcutGroup } from '../editor/ShortcutHelp.js';
 import { LAYOUT_TOOLS } from './toolset.js';
 
-export const LAYOUTER_SHORTCUTS: readonly ShortcutGroup[] = [
+export const ARCHITECTURE_SHORTCUTS: readonly ShortcutGroup[] = [
   {
     title: 'Tools',
     rows: LAYOUT_TOOLS.map((tool) => ({ keys: tool.key, what: tool.label })),
@@ -60,5 +60,5 @@ export const LAYOUTER_SHORTCUTS: readonly ShortcutGroup[] = [
   },
 ];
 
-export const LAYOUTER_SHORTCUT_FOOT =
+export const ARCHITECTURE_SHORTCUT_FOOT =
   'Shortcuts are ignored while you are typing, so a room name can contain a bracket.';

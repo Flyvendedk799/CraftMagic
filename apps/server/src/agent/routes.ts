@@ -169,7 +169,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				// Shape-checked no further than "an object": the layer is the client's format,
 				// the server only ferries it, and the client-side reader already survives junk.
 				edits: typeof body?.edits === 'object' ? body.edits : null,
-				// Same deal: the layouter's `normalizePlan` re-validates everything on read.
+				// Same deal: Architecture mode's `normalizePlan` re-validates everything on read.
 				plan: typeof body?.plan === 'object' ? body.plan : null,
 				// The transport row "send to game" writes stays out of the library; only an
 				// explicit save belongs in a list the user curates.

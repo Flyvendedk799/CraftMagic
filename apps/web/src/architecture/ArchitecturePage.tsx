@@ -1,5 +1,5 @@
 /**
- * The layouter.
+ * Architecture mode.
  *
  * A second way into the same engine. The editor is a voxel tool — you place blocks, and the
  * building is whatever the blocks add up to. This is the other half of the job: you lay out
@@ -76,9 +76,9 @@ import { usePlanSession } from './usePlanSession.js';
 import { validatePlan } from './validate.js';
 import { MODEL_MODES, modelView, type ModelMode } from './modelView.js';
 import { ShortcutHelp } from '../editor/ShortcutHelp.js';
-import { LAYOUTER_SHORTCUTS, LAYOUTER_SHORTCUT_FOOT } from './shortcuts.js';
+import { ARCHITECTURE_SHORTCUTS, ARCHITECTURE_SHORTCUT_FOOT } from './shortcuts.js';
 import '../editor/editor.css';
-import './layouter.css';
+import './architecture.css';
 
 const VIEWS: readonly { kind: ViewKind; label: string }[] = [
   { kind: 'iso', label: 'Iso' },
@@ -104,7 +104,7 @@ const EMPTY_GRID: VoxelGrid = {
   voxels: new Uint16Array(1),
 };
 
-export function LayouterPage() {
+export function ArchitecturePage() {
   const navigate = useNavigate();
   const session = usePlanSession(() => templateById('blank')!.build());
   const { plan } = session;
@@ -175,7 +175,7 @@ export function LayouterPage() {
     [session, frame],
   );
 
-  // Open a plan saved in the library: `/layouter?plan=lib:<row>`. One fetch, then the param
+  // Open a plan saved in the library: `/studio?mode=arch&plan=lib:<row>`. One fetch, then the param
   // is dropped from the URL so a reload afterwards keeps whatever the user has since drawn
   // rather than stamping the library copy back over it.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -637,16 +637,16 @@ export function LayouterPage() {
   }, [focusKey]);
 
   return (
-    <div className="layouter">
+    <div className="arch">
       {/* The same bar the editor wears, for the same reason: this is a full-viewport tool, and
           without it the only way back out is whatever links its own panel happens to carry.
           The bar already lists this page as a destination, so arriving here and losing it was
           the one place the chrome contradicted itself. */}
-      <AppNav current="layouter" />
+      <AppNav current="architecture" />
 
-      <section className="hud layouter__panel">
-        <h1 className="hud__title">Layouter</h1>
-        <p className="hud__sub">Floorplans, storey by storey</p>
+      <section className="hud arch__panel">
+        <h1 className="hud__title">Architecture</h1>
+        <p className="hud__sub">Rooms, storeys and what goes in them</p>
 
         <div className="hud__actions">
           {TEMPLATES.map((template) => (
@@ -661,6 +661,9 @@ export function LayouterPage() {
           ))}
         </div>
 
+        {/* The `layouter-` section ids are deliberately unchanged. `Section` persists each
+            one's open state under `craftmagic.section.<id>`, so renaming them would silently
+            reset every panel everyone had arranged, to buy nothing a user can see. */}
         <Section id="layouter-tools" title="Draw" summary={LAYOUT_TOOL_BY_ID[tool].label}>
           <div className="tool-rail">
             {LAYOUT_TOOLS.map((spec) => (
@@ -957,7 +960,7 @@ export function LayouterPage() {
             above now, and a link that repeats one already on screen is furniture. */}
       </section>
 
-      <div className="layouter__plan">
+      <div className="arch__plan">
         <PlanCanvas
           plan={plan}
           floorIndex={activeFloor}
@@ -977,7 +980,7 @@ export function LayouterPage() {
           onHover={setHover}
         />
 
-        <aside className="hover-readout layouter__readout">
+        <aside className="hover-readout arch__readout">
           {hover ? (
             <>
               <strong>
@@ -991,7 +994,7 @@ export function LayouterPage() {
         </aside>
       </div>
 
-      <div className="layouter__model">
+      <div className="arch__model">
         <EditorCanvas
           grid={built.grid}
           paletteColors={built.paletteColors}
@@ -1015,7 +1018,7 @@ export function LayouterPage() {
           )}
         </p>
 
-        <div className="layouter__model-bar">
+        <div className="arch__model-bar">
           {/* Three ways to look at the same building, not a checkbox: "cut at this storey"
               only ever answered one of the three questions people actually have, and the two
               it did not answer are the ones a plan with more than one room raises. */}
@@ -1049,8 +1052,8 @@ export function LayouterPage() {
 
       {help && (
         <ShortcutHelp
-          groups={LAYOUTER_SHORTCUTS}
-          foot={LAYOUTER_SHORTCUT_FOOT}
+          groups={ARCHITECTURE_SHORTCUTS}
+          foot={ARCHITECTURE_SHORTCUT_FOOT}
           onClose={() => setHelp(false)}
         />
       )}

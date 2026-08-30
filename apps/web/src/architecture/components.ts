@@ -1,8 +1,8 @@
 /**
- * The library, as a parts bin for the layouter.
+ * The library, as a parts bin for Architecture mode.
  *
  * A saved build stops being an archived thing you reopen one at a time and becomes a
- * *component*: place it, place it again, turn one of them. The layouter already draws rooms
+ * *component*: place it, place it again, turn one of them. Architecture mode already draws rooms
  * and drops furniture from a catalogue; this is the same idea with the catalogue coming from
  * the user's own work.
  *

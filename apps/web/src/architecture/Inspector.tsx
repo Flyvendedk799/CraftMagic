@@ -48,7 +48,7 @@ export function Inspector({
   const plan = { ...wholePlan, storeyHeight: floorHeight(wholePlan, floorIndex) };
   if (!item) {
     return (
-      <p className="layouter__empty">
+      <p className="arch__empty">
         Nothing selected. Click something on the plan, or pick a tool and draw.
       </p>
     );

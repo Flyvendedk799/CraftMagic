@@ -1,7 +1,7 @@
 /**
  * What you can do to several plan items at once.
  *
- * The layouter could always move one thing precisely. What it could not do is make two things
+ * Architecture mode could always move one thing precisely. What it could not do is make two things
  * agree — line four rooms up along a corridor, space three windows evenly across a wall — and
  * that is most of what drafting a floorplan actually consists of. Doing it by hand means
  * reading a coordinate off one item, typing it into another, and repeating until the numbers

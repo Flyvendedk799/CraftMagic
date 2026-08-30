@@ -34,7 +34,7 @@ export interface BuildRow {
 	detached: boolean;
 	/** The hand-edit layer, when the client saved one. Null on old rows and clean builds. */
 	edits: unknown;
-	/** The layouter plan the build was compiled from, when saved from the layouter. */
+	/** Architecture mode plan the build was compiled from, when saved from Architecture mode. */
 	plan: unknown;
 }
 
@@ -47,7 +47,7 @@ export interface BuildSummary {
 	sizeZ: number;
 	blockCount: number;
 	hasProgram: boolean;
-	/** True when the row carries a layouter plan — the client offers "open in the layouter". */
+	/** True when the row carries a layouter plan — the client offers "open in Architecture mode". */
 	hasPlan: boolean;
 	detached: boolean;
 	createdAt: Date;

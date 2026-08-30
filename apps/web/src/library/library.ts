@@ -19,7 +19,7 @@ export interface LibraryBuild {
   blockCount: number;
   /** False once a build has been hand-edited: only its voxels describe it. */
   hasProgram: boolean;
-  /** True when a layouter plan was saved beside the build — it can reopen in the layouter. */
+  /** True when a layouter plan was saved beside the build — it can reopen in Architecture mode. */
   hasPlan: boolean;
   detached: boolean;
   createdAt: string;
@@ -34,7 +34,7 @@ export interface LibraryBuildDetail {
   program: BuildProgram | null;
   /** The hand-edit layer, on builds saved since it existed. Null on older rows. */
   edits: EditLayer | null;
-  /** The layouter drawing this build was compiled from, when it was saved from the layouter. */
+  /** Architecture mode drawing this build was compiled from, when it was saved from Architecture mode. */
   plan: unknown;
   /**
    * The voxels, in whichever form the server sent.

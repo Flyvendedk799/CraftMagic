@@ -23,7 +23,7 @@ reliably get wrong.
 |---|---|
 | `packages/core` | Shared, isomorphic: IR + expander, block registry, picture-to-blocks, `.schem` writer, guide logic, agent protocol |
 | `apps/server` | Fastify — API, auth, Claude pipeline, agent WebSocket gateway; also serves the built frontend |
-| `apps/web` | React + Vite + three.js editor, floorplan layouter and site |
+| `apps/web` | React + Vite + three.js editor, floorplan tool and site |
 | `mod` | Fabric mod for Minecraft 26.2 (Gradle, outside the npm workspaces) |
 | `tools/registry-gen` | Dev-only. Generates the block registry from Mojang's data generator |
 
@@ -283,13 +283,13 @@ Ctrl+Z inside the generation prompt does *not* undo. On a 100k-cell fill the op 
 ~8 ms to build and ~2.5 ms to undo through `VoxelWorld`; a 1.25M-cell box op is 10 MB and
 applies in ~34 ms.
 
-**The layouter — done.** A second authoring tool at `/layouter`, for the job the voxel editor
+**Architecture mode — done.** A second authoring tool at `/layouter`, for the job the voxel editor
 is worst at: interiors. Placing a block at a time is fine for a facade and miserable for a
 floorplan, because the decisions that matter inside — where a wall runs, where a door goes
 through it, whether you can walk from the entrance to the back room — are invisible from
 outside and hard to nudge one block at a time.
 
-So the layouter's document is a **plan**, not voxels: a stack of storeys holding rooms, free
+So Architecture mode's document is a **plan**, not voxels: a stack of storeys holding rooms, free
 partitions, doors, windows, staircases, floor voids, platforms and columns, drawn top-down on
 a block-ruled SVG surface. `compile.ts` turns that plan into an ordinary `BuildProgram` on
 every change, which is the whole point — the export controls on the page are literally the
@@ -690,9 +690,9 @@ cd mod && JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew verifySchematic -Psch
 ```
 
 **Saved builds are components.** Every build in your library can be placed in a layout. Pick
-one in the layouter's Components panel, click the plan, and it lands on that storey's floor;
+one in Architecture mode's Components panel, click the plan, and it lands on that storey's floor;
 place it again and it is two of them; `R` turns one a quarter. It compiles like everything
-else the layouter draws, so `.schem` download, the printable guide, the library and "Send to
+else Architecture mode draws, so `.schem` download, the printable guide, the library and "Send to
 game" all carry it with no export code written twice.
 
 The IR gained a `prefab` component and a `program.prefabs` table for it. Everything else in
@@ -732,7 +732,7 @@ lets a restored plan draw something the instant it opens instead of a second lat
 wrong place.
 
 ```bash
-node tools/verify-layouter-place.mjs    # shelf → click → compile → blocks → turn → reload
+node tools/verify-architecture-place.mjs    # shelf → click → compile → blocks → turn → reload
 ```
 
 That driver deliberately places a **non-square** build: a 19×19 pavilion is unchanged by a

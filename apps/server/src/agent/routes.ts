@@ -32,7 +32,7 @@ import { decodeVoxels, schematicFilename, toBase64, writeSchematic, type VoxelGr
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import type { AgentHub } from './hub.js';
-import type { AgentStore } from './store.js';
+import type { AgentStore, BuildKind } from './store.js';
 
 export interface AgentRoutesOptions {
 	store: AgentStore | null;
@@ -42,6 +42,16 @@ export interface AgentRoutesOptions {
 }
 
 const MAX_BUILD_NAME = 80;
+
+/**
+ * The tiers a saved build can be filed under, and the only two accepted on the wire.
+ *
+ * There is no `world` here and there is not going to be one. A world places saved builds; it
+ * has no voxels of its own, and `builds.voxels` is NOT NULL, so a world is not a build with a
+ * different label on it — it is a different table, which is the plan. Reaching for a third
+ * value here is the symptom, not the fix.
+ */
+const BUILD_KINDS = ['structure', 'interior'] as const;
 
 export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 	return async (app) => {
@@ -61,6 +71,26 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 
 		function readName(value: unknown): string {
 			return typeof value === 'string' ? value.trim().slice(0, MAX_BUILD_NAME) : '';
+		}
+
+		/**
+		 * The build's tier: a valid one, `'structure'` when the field is absent, or `null` for
+		 * anything else — which the caller turns into a 400.
+		 *
+		 * Absent and wrong are not the same thing, and that distinction is the whole point of
+		 * this function. Absent is an older client that predates the field, and defaulting it
+		 * to `'structure'` is right. Wrong is a typo, a stale enum, or a client sending a tier
+		 * this server has never heard of, and coercing *that* to `'structure'` files the build
+		 * in the wrong drawer permanently: the save answers 201, the row looks healthy, and the
+		 * only symptom is an interior that turns up in the component shelf months later with
+		 * nothing left to say where it came from. A 400 costs one failed request and is fixed
+		 * before it ships.
+		 *
+		 * `null` rather than a thrown error so the check reads like the `readName` above it.
+		 */
+		function readKind(value: unknown): BuildKind | null {
+			if (value === undefined || value === null) return 'structure';
+			return BUILD_KINDS.includes(value as BuildKind) ? (value as BuildKind) : null;
 		}
 
 		// --- builds — all session-authenticated ------------------------------
@@ -99,6 +129,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				detached?: unknown;
 				edits?: unknown;
 				plan?: unknown;
+				kind?: unknown;
 				library?: unknown;
 				grid?: {
 					size?: { x: number; y: number; z: number };
@@ -112,6 +143,15 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 
 			const name = readName(body?.name);
 			if (!name) return reply.code(400).send({ error: 'bad_name' });
+
+			// Checked here, before the voxels are decoded: a rejection should not first cost
+			// the server a 16 MB gunzip it is going to throw away.
+			const kind = readKind(body?.kind);
+			if (!kind) {
+				return reply
+					.code(400)
+					.send({ error: 'bad_kind', message: `kind must be one of ${BUILD_KINDS.join(', ')}` });
+			}
 
 			const grid = body?.grid;
 			if (!grid?.size) return reply.code(400).send({ error: 'bad_grid' });
@@ -171,6 +211,10 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				edits: typeof body?.edits === 'object' ? body.edits : null,
 				// Same deal: the layouter's `normalizePlan` re-validates everything on read.
 				plan: typeof body?.plan === 'object' ? body.plan : null,
+				// Unlike `edits` and `plan`, this one is validated rather than ferried: it is
+				// the server's own vocabulary, and the column has a CHECK that would turn a
+				// junk value into a 500 at the very end of a multi-megabyte upload.
+				kind,
 				// The transport row "send to game" writes stays out of the library; only an
 				// explicit save belongs in a list the user curates.
 				inLibrary: body?.library === true,
@@ -222,6 +266,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				name: build.name,
 				size: grid.size,
 				blockCount: build.blockCount,
+				kind: build.kind,
 				detached: build.detached,
 				program: build.program,
 				edits: build.edits,

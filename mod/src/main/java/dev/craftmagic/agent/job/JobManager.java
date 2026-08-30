@@ -37,6 +37,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>A job never places blocks on arrival. It waits for a player to choose where, because a
  * website deciding to overwrite part of someone's world unprompted is the one behaviour that
  * would make this feature unshippable.
+ *
+ * <p>A world is the one exception, and only halfway. A world is too big to be one build, so it
+ * arrives as a run of ordinary builds, one per region. Region 0 is offered like anything else
+ * and waits for a player, who chooses the corner and the facing of the entire map; it reports
+ * that choice back as the job's anchor, and every region after it is offered with that anchor
+ * attached and goes down without asking again. The consent is still the player's — they gave
+ * it once, for the map, instead of sixteen times for sixteen squares of it.
  */
 public final class JobManager {
 	private static final Logger LOGGER = LoggerFactory.getLogger("craftmagic-jobs");
@@ -58,7 +65,9 @@ public final class JobManager {
 	private ActiveBuild active;
 	private int ticksSinceReport;
 
-	private record PendingJob(String jobId, String name, Schematic schematic, int blockCount) {}
+	/** {@code region} is null for a lone build, which is what almost every job is. */
+	private record PendingJob(
+			String jobId, String name, Schematic schematic, int blockCount, Protocol.Region region) {}
 
 	private static final class ActiveBuild {
 		final String jobId;
@@ -92,6 +101,7 @@ public final class JobManager {
 		String jobId = message.get("jobId").getAsString();
 		String name = message.has("name") ? message.get("name").getAsString() : "Build";
 		String dataUrl = message.get("dataUrl").getAsString();
+		Protocol.Region region = Protocol.region(message);
 
 		// The server re-offers anything still pending whenever an agent connects, so a
 		// reconnect mid-job would otherwise download the same build again and overwrite the
@@ -131,7 +141,7 @@ public final class JobManager {
 
 					try {
 						Schematic schematic = Schematic.read(response.body());
-						ready.set(new PendingJob(jobId, name, schematic, schematic.solidCount()));
+						ready.set(new PendingJob(jobId, name, schematic, schematic.solidCount(), region));
 					} catch (Exception e) {
 						LOGGER.warn("could not parse the schematic for job {}", jobId, e);
 						socket.send(Protocol.jobState(jobId, "failed", 0, 0));
@@ -159,17 +169,23 @@ public final class JobManager {
 		PendingJob arrived = ready.getAndSet(null);
 		if (arrived != null) {
 			awaitingPlacement = arrived;
-			socket.send(Protocol.jobState(arrived.jobId(), "previewing", 0, arrived.blockCount()));
-			broadcast(
-					Component.literal("CraftMagic: \"" + arrived.name() + "\" is ready — ")
-							.withStyle(ChatFormatting.GREEN)
-							.append(Component.literal(arrived.schematic().width() + "×" + arrived.schematic().height()
-									+ "×" + arrived.schematic().length() + ", " + arrived.blockCount() + " blocks. ")
-									.withStyle(ChatFormatting.GRAY))
-							.append(Component.literal(
-											"Right-click it into place with the wand, then punch the air. "
-													+ "(/craftmagic wand for one, or /craftmagic build to drop it where you stand.)")
-									.withStyle(ChatFormatting.YELLOW)));
+			// A continuation region already knows where it goes, so it never reaches the
+			// preview: asking a player to aim square nine of a map they aimed once would be
+			// asking them to reproduce a decision they cannot see any more.
+			if (!placeContinuation(arrived)) {
+				socket.send(Protocol.jobState(arrived.jobId(), "previewing", 0, arrived.blockCount()));
+				broadcast(
+						Component.literal("CraftMagic: \"" + arrived.name() + "\" is ready — ")
+								.withStyle(ChatFormatting.GREEN)
+								.append(Component.literal(arrived.schematic().width() + "×" + arrived.schematic().height()
+										+ "×" + arrived.schematic().length() + ", " + arrived.blockCount() + " blocks. "
+										+ worldNote(arrived.region()))
+										.withStyle(ChatFormatting.GRAY))
+								.append(Component.literal(
+												"Right-click it into place with the wand, then punch the air. "
+														+ "(/craftmagic wand for one, or /craftmagic build to drop it where you stand.)")
+										.withStyle(ChatFormatting.YELLOW)));
+			}
 		}
 
 		if (active == null) return;
@@ -201,6 +217,100 @@ public final class JobManager {
 		BlockPos at = finished.task.origin();
 		broadcast(Component.literal("CraftMagic: done — " + finished.task.placed() + " blocks placed at "
 				+ at.getX() + ", " + at.getY() + ", " + at.getZ()).withStyle(ChatFormatting.GREEN));
+	}
+
+	// --- placement of a world, one region at a time ----------------------
+
+	/**
+	 * Where a region of a world belongs, or null when the job is not one.
+	 *
+	 * <p>This is the fix the whole feature turns on. {@link Footprint#origin} centres a build on
+	 * the player, which is exactly right for "put this house here" and exactly wrong for square
+	 * nine of a map: centred, every region lands on top of the last and the world is delivered
+	 * sixteen times into the same hole.
+	 *
+	 * <p>The rotation is the anchor's, not the player's current facing, and the offset is turned
+	 * by it before it is added. Region 0's quarter turn turned the map, so a region two tiles
+	 * east of the world's corner is two tiles <em>south</em> of the anchor once the map has been
+	 * turned a quarter clockwise. Adding the offset unturned would place each region correctly
+	 * rotated in the wrong square — a map mirrored about its diagonal and scattered, which looks
+	 * like a bug in the world document rather than in this line.
+	 */
+	private BlockPos regionOrigin(PendingJob job) {
+		Protocol.Region region = job.region();
+		if (region == null || !region.isContinuation()) return null;
+
+		Rotation rotation = Footprint.rotation(region.anchorRotation());
+		BlockPos turned = Footprint.turn(region.offsetX(), region.offsetY(), region.offsetZ(), rotation);
+		return new BlockPos(region.anchorX(), region.anchorY(), region.anchorZ())
+				.offset(turned.getX(), turned.getY(), turned.getZ());
+	}
+
+	/**
+	 * Put a continuation region down without asking anyone. Returns whether it handled the job.
+	 *
+	 * <p>True is returned even when the placement fails, because a region that cannot be placed
+	 * is finished either way: what it must not do is fall through to the preview and wait for a
+	 * player to aim a square of a map at somewhere it does not go.
+	 */
+	private boolean placeContinuation(PendingJob job) {
+		BlockPos origin = regionOrigin(job);
+		if (origin == null) return false;
+
+		Protocol.Region region = job.region();
+		ServerLevel level = levelFor(region.anchorDimension());
+		if (level == null) {
+			failPending(job, "the rest of this world is in " + region.anchorDimension()
+					+ ", which this server does not have.");
+			return true;
+		}
+
+		String problem = startBuildAt(level, origin, Footprint.rotation(region.anchorRotation()));
+		if (problem != null) {
+			failPending(job, problem);
+			return true;
+		}
+
+		broadcast(Component.literal("CraftMagic: region " + (region.index() + 1) + " of " + region.total()
+				+ " at " + origin.getX() + ", " + origin.getY() + ", " + origin.getZ() + ".")
+				.withStyle(ChatFormatting.GRAY));
+		return true;
+	}
+
+	/**
+	 * The level a dimension key names, or null when this server has no such dimension.
+	 *
+	 * <p>Matched by key rather than looked up through the dimension registry, which needs a
+	 * {@code ResourceKey} assembled out of two more imports for a search over at most a handful
+	 * of levels. A null key is an older server that does not echo the dimension back, and the
+	 * overworld is the only defensible guess there — it is where all but a rounding error of
+	 * builds go.
+	 */
+	private ServerLevel levelFor(String dimension) {
+		if (dimension == null) return server.overworld();
+		for (ServerLevel level : server.getAllLevels()) {
+			if (level.dimension().identifier().toString().equals(dimension)) return level;
+		}
+		return null;
+	}
+
+	/** Give up on a job that has arrived but cannot be placed, and say why in chat. */
+	private void failPending(PendingJob job, String reason) {
+		if (awaitingPlacement == job) awaitingPlacement = null;
+		socket.send(Protocol.jobState(job.jobId(), "failed", 0, job.blockCount()));
+		broadcast(Component.literal("CraftMagic: " + reason).withStyle(ChatFormatting.RED));
+	}
+
+	/**
+	 * The sentence that tells a player the thing they are about to aim is a whole map.
+	 *
+	 * <p>Only for region 0. A later region reaching the preview at all means its anchor went
+	 * missing somewhere, and calling it "the first of sixteen" would be telling the player the
+	 * one thing that is definitely not true about it.
+	 */
+	private static String worldNote(Protocol.Region region) {
+		if (region == null || region.index() != 0 || region.total() <= 1) return "";
+		return "The first of " + region.total() + " regions — where you put it sets the whole map. ";
 	}
 
 	// --- placement, triggered by the player ------------------------------
@@ -236,6 +346,17 @@ public final class JobManager {
 	public String startBuild(ServerPlayer player, Rotation rotation) {
 		if (awaitingPlacement == null) return "no build is waiting — send one from the website first";
 
+		// A region of a world is not "here" — it is where the map says, whatever the player
+		// typing this happens to be standing on. Reached when someone runs /craftmagic build
+		// while a continuation region is in flight; honouring the request literally would tear
+		// one square out of the map and drop it at their feet.
+		BlockPos placed = regionOrigin(awaitingPlacement);
+		if (placed != null) {
+			Rotation turned = Footprint.rotation(awaitingPlacement.region().anchorRotation());
+			ServerLevel level = levelFor(awaitingPlacement.region().anchorDimension());
+			return startBuildAt(level == null ? player.level() : level, placed, turned);
+		}
+
 		// Centred on the player and rising from the block they stand on, which is what
 		// "put it here" means to someone looking at the ground. Centring is rotation-aware:
 		// a quarter turn swaps the footprint's width and length, and centring on the
@@ -266,7 +387,17 @@ public final class JobManager {
 		active = new ActiveBuild(job.jobId(), task, bot);
 		ticksSinceReport = 0;
 
-		socket.send(Protocol.jobState(job.jobId(), "building", 0, task.total()));
+		// The anchor goes up with the first progress report and nowhere else. For a lone build
+		// it is a record of where the thing ended up; for region 0 of a world it is the origin
+		// the server measures every remaining region from, and the server will not offer one
+		// until this frame has landed.
+		Protocol.Anchor anchor = new Protocol.Anchor(
+				origin.getX(),
+				origin.getY(),
+				origin.getZ(),
+				Footprint.quarterTurns(rotation),
+				level.dimension().identifier().toString());
+		socket.send(Protocol.jobState(job.jobId(), "building", 0, task.total(), anchor));
 		broadcast(Component.literal("CraftMagic: building \"" + job.name() + "\" — " + task.total() + " blocks.")
 				.withStyle(ChatFormatting.GREEN));
 		return null;

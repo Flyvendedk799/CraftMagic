@@ -1,5 +1,7 @@
 import {
+	AGENT_LIMITS,
 	AGENT_PROTOCOL_VERSION,
+	isBuildAnchor,
 	parseAgentMessage,
 	type ServerToAgent,
 } from '@craftmagic/core';
@@ -39,6 +41,9 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 					return agentId ?? '';
 				},
 				agentName: '',
+				// The same object the handshake announces, so the ceiling the hub enforces and
+				// the ceiling this socket was told about cannot drift apart.
+				limits: AGENT_LIMITS,
 				send,
 				close: () => socket.close(),
 			};
@@ -123,7 +128,7 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 							{ agentId, mcVersion: message.mcVersion, envType: message.envType },
 							'agent connected',
 						);
-						send({ t: 'hello.ok', agentName: agent.name, limits: { maxVolume: 500_000 } });
+						send({ t: 'hello.ok', agentName: agent.name, limits: connection.limits });
 
 						await options.hub.attach(connection);
 						return;
@@ -148,11 +153,18 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 							return;
 						}
 
+						// Where a build landed is the one fact a later region of the same world has
+						// no other way to learn, so it is handed to the hub before anything else
+						// happens to this frame — and only when it survives validation, since an
+						// anchor is now arithmetic the server does rather than a string it shows.
+						const anchor = isBuildAnchor(message.anchor) ? message.anchor : undefined;
+						options.hub.noteJobState(message.jobId, message.state, anchor);
+
 						const updated = await options.store.updateJob(message.jobId, {
 							status: message.state,
 							placed: message.progress?.placed,
 							total: message.progress?.total,
-							anchor: message.anchor,
+							anchor,
 							error: message.error ?? null,
 						});
 
@@ -161,7 +173,7 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 							status: message.state,
 							placed: message.progress?.placed,
 							total: message.progress?.total,
-							anchor: message.anchor,
+							anchor,
 							error: message.error ?? null,
 						});
 

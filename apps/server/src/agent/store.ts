@@ -22,6 +22,20 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import type { Db } from '../db/pool.js';
 import type { OwnerScope } from '../auth/session.js';
 
+/**
+ * Which tier a saved build belongs to.
+ *
+ * A `structure` is a building; an `interior` is what the layouter draws inside one. Two
+ * values and no more — in particular no `world`. A world has no voxels and `builds.voxels`
+ * is NOT NULL, so a world is not a row this table can hold; it gets its own table when that
+ * mode lands. Widening this union is the signal that the wrong table is being reached for.
+ *
+ * Mirrors the CHECK constraint in `007_build_kind.sql`. Both exist deliberately: the union
+ * makes a typo a compile error at the call site, the constraint makes it impossible for a
+ * row to hold a third value however it got written.
+ */
+export type BuildKind = 'structure' | 'interior';
+
 export interface BuildRow {
 	id: string;
 	name: string;
@@ -36,6 +50,8 @@ export interface BuildRow {
 	edits: unknown;
 	/** Architecture mode plan the build was compiled from, when saved from Architecture mode. */
 	plan: unknown;
+	/** Structure or interior. Never null: the column has a default and old rows are backfilled. */
+	kind: BuildKind;
 }
 
 /** A library listing entry: everything but the voxels, which are megabytes. */
@@ -49,6 +65,13 @@ export interface BuildSummary {
 	hasProgram: boolean;
 	/** True when the row carries a layouter plan — the client offers "open in Architecture mode". */
 	hasPlan: boolean;
+	/**
+	 * The tier this row belongs to, in the listing rather than only on the full read.
+	 *
+	 * A component shelf filters the list; if it had to fetch each build to learn what each one
+	 * is, filtering a library would mean downloading every set of voxels in it.
+	 */
+	kind: BuildKind;
 	detached: boolean;
 	createdAt: Date;
 	updatedAt: Date;
@@ -114,12 +137,21 @@ export class AgentStore {
 		detached?: boolean;
 		edits?: unknown;
 		plan?: unknown;
+		/**
+		 * Structure unless the caller says otherwise.
+		 *
+		 * Typed as the union rather than `string`, so the value is settled before it reaches
+		 * SQL. A wrong kind that gets past here is not a failed write to retry — the row saves
+		 * fine and is simply filed in the wrong drawer for good, and nothing downstream ever
+		 * looks at it again to notice.
+		 */
+		kind?: BuildKind;
 		/** False for the row "send to game" writes as transport; true for saved work. */
 		inLibrary?: boolean;
 	}): Promise<string> {
 		const { rows } = await this.db.query<{ id: string }>(
-			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, edits, plan, in_library)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, edits, plan, kind, in_library)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			 RETURNING id`,
 			[
 				input.userId ?? null,
@@ -134,6 +166,7 @@ export class AgentStore {
 				input.detached ?? false,
 				input.edits === undefined || input.edits === null ? null : JSON.stringify(input.edits),
 				input.plan === undefined || input.plan === null ? null : JSON.stringify(input.plan),
+				input.kind ?? 'structure',
 				input.inLibrary ?? false,
 			],
 		);
@@ -150,7 +183,12 @@ export class AgentStore {
 	 */
 	async getBuildForAgent(id: string): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan
+			// `kind` is selected here too, even though the mod does not care what tier a build
+			// belongs to. Both readers share `toBuild`, and a column missing from one of two
+			// selects behind one mapper is a `BuildRow` whose `kind` is `undefined` while the
+			// type swears it is not — which surfaces far from here, as a filter that silently
+			// matches nothing.
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan, kind
 			 FROM builds WHERE id = $1`,
 			[id],
 		);
@@ -159,7 +197,7 @@ export class AgentStore {
 
 	async getBuild(id: string, scope: OwnerScope): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan, kind
 			 FROM builds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
 			[id, scope],
 		);
@@ -189,7 +227,7 @@ export class AgentStore {
 		const { rows } = await this.db.query(
 			`SELECT id, name, size_x, size_y, size_z, block_count,
 			        program IS NOT NULL AS has_program, plan IS NOT NULL AS has_plan,
-			        detached, created_at, updated_at
+			        kind, detached, created_at, updated_at
 			 FROM builds
 			 WHERE user_id IS NOT DISTINCT FROM $1::uuid AND in_library
 			 ORDER BY created_at DESC LIMIT $2`,
@@ -204,6 +242,7 @@ export class AgentStore {
 			blockCount: row.block_count,
 			hasProgram: row.has_program,
 			hasPlan: row.has_plan,
+			kind: row.kind,
 			detached: row.detached,
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
@@ -512,6 +551,7 @@ function toBuild(row: Record<string, unknown>): BuildRow {
 		detached: row.detached as boolean,
 		edits: row.edits ?? null,
 		plan: row.plan ?? null,
+		kind: row.kind as BuildKind,
 	};
 }
 

@@ -106,7 +106,20 @@ function normalizeProfile(raw: unknown, index: number): SurfaceProfile {
 export function normalizeSettings(raw: unknown): WorldSettings {
 	const settings = (raw ?? {}) as Partial<WorldSettings>;
 
-	const minY = clampInt(settings.minY, WORLD_LIMITS.floorY, WORLD_LIMITS.ceilingY - 1, -64);
+	/**
+	 * The default floor is a shell under the surface, not the game's own bedrock.
+	 *
+	 * `floorY` is -64 and any world may go there — cliffs, ravines and a cave system all want
+	 * the room. But a *default* of -64 means a fresh 512² world materialises 126 blocks of
+	 * solid stone under every column: 33 million blocks, over an hour of the builder bot at
+	 * 8,000 a second, and a first look at the 3D view that is a grey wall rather than ground.
+	 *
+	 * It is also the wrong thing to send. A hub is placed into a Minecraft world that already
+	 * has ground under it; what you want delivered is the terrain you sculpted and enough
+	 * beneath it to hold a cliff face, not a replacement crust down to bedrock. Lowering the
+	 * floor is one field away for anyone who wants the depth.
+	 */
+	const minY = clampInt(settings.minY, WORLD_LIMITS.floorY, WORLD_LIMITS.ceilingY - 1, 32);
 	const maxY = clampInt(settings.maxY, minY + 1, WORLD_LIMITS.ceilingY, Math.max(minY + 1, 192));
 
 	const strata = (Array.isArray(settings.strata) ? settings.strata : [])

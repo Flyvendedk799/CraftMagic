@@ -35,7 +35,9 @@ describe('normalizeSettings', () => {
 	it('fills in a whole settings object from nothing', () => {
 		const settings = normalizeSettings(undefined);
 		expect(settings.size).toEqual({ x: 512, z: 512 });
-		expect(settings.minY).toBe(-64);
+		// A shell under the surface rather than the game's bedrock — see `normalizeSettings`.
+		// The full range is still reachable; it is the default that is a working depth.
+		expect(settings.minY).toBe(32);
 		expect(settings.maxY).toBe(192);
 		expect(settings.seaLevel).toBe(62);
 		expect(settings.regionSize).toBe(128);

@@ -335,10 +335,18 @@ live in **IndexedDB**, not localStorage: one 1024² world is 3 MB against a ~5 M
 budget already shared with the Architecture plans, and localStorage returns `false` rather than
 throwing, so the failure mode would be a silent non-save discovered at the end of a session.
 
+The renderer streams now, so a world is not bounded by meshes: `VoxelWorld` keeps a
+camera-driven working set (mesh within 192 blocks, evict past 288, and the band between is
+what stops a camera parked on the boundary thrashing) over a chunked store in the worker
+that scales with content rather than volume. It engages only above 4,096 chunks, and the
+engine caps a single build at 2,560 — so no build can reach the threshold, and the viewport
+behaves for a building exactly as it did before.
+
 `tools/verify-world.mjs` drives the real page over CDP with real mouse events — it raises
 ground and reads the height back, undoes and checks it landed exactly where it started, paints
 a material and reads it back, carves and watches the region's block count fall, then reloads
-and checks it all survived. 21 checks.
+and checks it all survived — then signs in, arms a saved build from the shelf, drops it on
+the map and checks the materialised region actually contains it. 24 checks.
 
 The compiler works in painting passes rather than in booleans — structure, then carves (floor
 voids, stairwells), then apertures, then the stairs themselves — because the IR paints

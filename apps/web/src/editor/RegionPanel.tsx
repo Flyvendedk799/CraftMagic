@@ -91,7 +91,7 @@ export function RegionPanel({
             </button>
           </>
         ) : (
-          'Click two opposite corners. The box stays put afterwards, so you can act on it more than once.'
+          'Drag across the build to select a box. The box stays put afterwards, so you can act on it more than once — and drag inside it to move what it holds.'
         )}
       </p>
     );

@@ -77,7 +77,17 @@ export interface EditorCanvasProps {
   /** A second highlight, e.g. the first corner of a box in progress. */
   marker?: { x: number; y: number; z: number } | null;
   /** A standing box selection, drawn until it is dismissed rather than until the pointer moves. */
-  region?: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } } | null;
+  region?: Box | null;
+  /**
+   * True while a tool that owns rectangular selections is active.
+   *
+   * The canvas claims a plain primary drag only then, and only when the press lands on the
+   * build — pressing the sky still orbits. That is what makes "drag out a box" possible
+   * without a modifier key, on a surface whose default gesture is spinning the camera.
+   */
+  regionDrag?: boolean;
+  /** A selection being drawn or moved. See `RegionDrag`. */
+  onRegionDrag?: (drag: RegionDrag) => void;
   /** Outline of what the next click would change. */
   preview?: Preview | null;
   /** Chunks still queued or in flight, for a loading indicator. Fires only on change. */
@@ -161,6 +171,8 @@ function Scene({
   onPick,
   marker,
   region,
+  regionDrag,
+  onRegionDrag,
   preview,
   onProgress,
   onWorld,
@@ -238,16 +250,43 @@ function Scene({
         grid={grid}
         layerClip={layerClip}
         layerFloor={layerFloor}
+        region={region}
+        regionDrag={regionDrag}
         onHover={onHover}
         onClick={onClick}
         onStroke={onStroke}
         onPick={onPick}
+        onRegionDrag={onRegionDrag}
       />
       {marker && <Highlight at={marker} color={PREVIEW_COLOR} />}
       {region && <RegionOutline min={region.min} max={region.max} />}
       {preview && <PreviewOutline preview={preview} />}
     </>
   );
+}
+
+/** An inclusive cell box: a selection, in grid coordinates. */
+export interface Box {
+  min: { x: number; y: number; z: number };
+  max: { x: number; y: number; z: number };
+}
+
+/**
+ * A primary drag on the build while a selection tool is active.
+ *
+ * The canvas decides *which* of the two gestures it is, because only the canvas knows where
+ * the press landed: inside the current selection means "move this", anywhere else means
+ * "draw a new one". The page is told which and acts on it — it never has to hit-test a
+ * pointer position against a box it drew.
+ */
+export interface RegionDrag {
+  mode: 'draw' | 'move';
+  /** For `draw`, the fixed corner. For `move`, the cell the pointer grabbed. */
+  from: { x: number; y: number; z: number };
+  /** For `draw`, the moving corner. For `move`, where that grabbed cell has got to. */
+  to: { x: number; y: number; z: number };
+  /** `move` frames are previews; `end` is the one that should be committed. */
+  phase: 'move' | 'end';
 }
 
 interface OrbitLike {
@@ -656,18 +695,25 @@ function Picker({
   grid,
   layerClip,
   layerFloor,
+  region,
+  regionDrag = false,
   onHover,
   onClick,
   onStroke,
   onPick,
+  onRegionDrag,
 }: {
   grid: VoxelGrid;
   layerClip: number | null;
   layerFloor: number;
+  region?: Box | null;
+  /** True while a tool that owns rectangular selections is active. */
+  regionDrag?: boolean;
   onHover?: (hit: VoxelHit | null) => void;
   onClick?: (hit: VoxelHit) => void;
   onStroke?: (hits: VoxelHit[]) => void;
   onPick?: (hit: VoxelHit) => void;
+  onRegionDrag?: (drag: RegionDrag) => void;
 }) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
@@ -684,6 +730,12 @@ function Picker({
   notifyStroke.current = onStroke;
   const notifyPick = useRef(onPick);
   notifyPick.current = onPick;
+  const notifyRegion = useRef(onRegionDrag);
+  notifyRegion.current = onRegionDrag;
+  // Read inside the pointer handlers, which are bound once — a re-bind on every selection
+  // change would drop the gesture halfway through the drag that caused it.
+  const live = useRef({ region, regionDrag });
+  live.current = { region, regionDrag };
 
   useEffect(() => {
     const canvas = gl.domElement;
@@ -729,6 +781,56 @@ function Picker({
     /** Cells crossed by a Shift-drag, oldest first. Null when no stroke is in progress. */
     let stroke: VoxelHit[] | null = null;
 
+    /**
+     * A selection being drawn or moved.
+     *
+     * `plane` is only used by a move: dragging a box across uneven geometry by whatever cell
+     * the ray happens to hit makes it jump a storey every time the pointer crosses a roof.
+     * Projecting onto the horizontal plane the grab started on keeps the motion equal to the
+     * pointer's, which is what "dragging" is supposed to mean.
+     */
+    let boxDrag: { mode: 'draw' | 'move'; from: VoxelHit; plane: THREE.Plane | null } | null = null;
+    const planePoint = new THREE.Vector3();
+
+    const onPlane = (event: PointerEvent, plane: THREE.Plane): { x: number; z: number } | null => {
+      const rect = canvas.getBoundingClientRect();
+      ndc.set(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const point = raycaster.ray.intersectPlane(plane, planePoint);
+      return point ? { x: point.x, z: point.z } : null;
+    };
+
+    const inside = (box: Box, at: VoxelHit) =>
+      at.x >= box.min.x && at.x <= box.max.x &&
+      at.y >= box.min.y && at.y <= box.max.y &&
+      at.z >= box.min.z && at.z <= box.max.z;
+
+    const endBoxDrag = (event: PointerEvent, deliver: boolean) => {
+      const drag = boxDrag;
+      boxDrag = null;
+      if (controls) controls.enabled = true;
+      if (!drag || !deliver) return;
+      const to = boxTarget(event, drag);
+      if (to) notifyRegion.current?.({ mode: drag.mode, from: drag.from, to, phase: 'end' });
+    };
+
+    /** Where the drag has got to, in the space the drag runs in. */
+    const boxTarget = (
+      event: PointerEvent,
+      drag: { mode: 'draw' | 'move'; from: VoxelHit; plane: THREE.Plane | null },
+    ): { x: number; y: number; z: number } | null => {
+      if (drag.mode === 'draw') return cast(event);
+      if (!drag.plane) return null;
+      const at = onPlane(event, drag.plane);
+      if (!at) return null;
+      // Floor, not round: the plane point is a position on a face and the cell it belongs to
+      // is the one it sits inside. Rounding puts a half-block bias into every drag.
+      return { x: Math.floor(at.x), y: drag.from.y, z: Math.floor(at.z) };
+    };
+
     const endStroke = (deliver: boolean) => {
       const cells = stroke;
       stroke = null;
@@ -738,6 +840,34 @@ function Picker({
 
     const down = (event: PointerEvent) => {
       downAt = { x: event.clientX, y: event.clientY, button: event.button };
+
+      // A selection drag, when a selection tool is active and the press landed on something.
+      // Pressing empty space still orbits, which is what keeps the camera usable without a
+      // modifier: the build is the thing you draw boxes on, the sky is the thing you spin.
+      if (event.button === 0 && !event.shiftKey && live.current.regionDrag && notifyRegion.current) {
+        const first = cast(event);
+        if (first) {
+          const current = live.current.region;
+          const mode = current && inside(current, first) ? 'move' : 'draw';
+          boxDrag = {
+            mode,
+            from: first,
+            plane:
+              mode === 'move'
+                // The horizontal plane through the top of the grabbed cell, so the box slides
+                // along the surface it was picked up from.
+                ? new THREE.Plane(new THREE.Vector3(0, 1, 0), -(first.y + 0.5))
+                : null,
+          };
+          if (controls) controls.enabled = false;
+          canvas.setPointerCapture(event.pointerId);
+          event.preventDefault();
+          // Report the press itself, so a click that never moves still starts a 1x1x1 box
+          // rather than doing nothing at all.
+          notifyRegion.current({ mode, from: first, to: first, phase: 'move' });
+          return;
+        }
+      }
 
       // A stroke takes the camera's drag away for its duration, so it starts only on the
       // exact gesture that asked for it: primary button, Shift held, and a tool that wants
@@ -753,6 +883,12 @@ function Picker({
     };
 
     const move = (event: PointerEvent) => {
+      if (boxDrag) {
+        const to = boxTarget(event, boxDrag);
+        if (to) notifyRegion.current?.({ mode: boxDrag.mode, from: boxDrag.from, to, phase: 'move' });
+        return;
+      }
+
       const next = cast(event);
       show(next);
       if (!stroke || !next) return;
@@ -762,6 +898,12 @@ function Picker({
     };
 
     const up = (event: PointerEvent) => {
+      if (boxDrag) {
+        endBoxDrag(event, true);
+        downAt = null;
+        return;
+      }
+
       if (stroke) {
         endStroke(true);
         downAt = null;
@@ -786,7 +928,8 @@ function Picker({
       if (!stroke) show(null);
     };
 
-    const cancel = () => {
+    const cancel = (event: PointerEvent) => {
+      endBoxDrag(event, false);
       endStroke(false);
       downAt = null;
     };

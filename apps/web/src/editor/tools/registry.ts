@@ -186,25 +186,28 @@ const line: EditorTool = {
   },
 };
 
+/**
+ * The Box tool has no click handler, and that is the change.
+ *
+ * Selecting used to be two separate clicks with nothing on screen between them — click a
+ * corner, hunt for the opposite one, hope. It is a drag now, handled in the canvas, because
+ * dragging out a rectangle is what everyone tries first and because seeing the box while you
+ * aim it is most of the value. Moving one used to be six buttons labelled −X/+X/−Y; that is
+ * a drag too, from inside the box.
+ *
+ * Both live in `EditorCanvas`, which is the only place that knows where a press landed
+ * relative to the current selection — the thing that decides whether a drag draws a new box
+ * or moves the one already there. The preview stays here so a hover still says what a drag
+ * would do.
+ */
 const select: EditorTool = {
-  onClick(ctx, hit) {
-    if (!ctx.anchor) {
-      return {
-        anchor: { x: hit.x, y: hit.y, z: hit.z },
-        region: null,
-        notice: 'Now click the opposite corner.',
-      };
-    }
-    // The second corner selects and stops. It used to edit — which meant aiming the box
-    // and committing to a verb were the same act, and a box you wanted to hollow after
-    // filling had to be aimed a second time.
-    const bounds = boxBounds(ctx.grid, ctx.anchor, hit);
-    return { anchor: null, region: { min: bounds.min, max: bounds.max }, notice: null };
-  },
-  preview(ctx, hover) {
-    if (!ctx.anchor) return null;
-    const { min, max, cells } = boxBounds(ctx.grid, ctx.anchor, hover);
-    return { kind: 'box', min, max, label: boxLabel(min, max, cells) };
+  /**
+   * Nothing. A press that starts on the build is claimed by the canvas before a click can be
+   * synthesised from it, so this only runs for a press the canvas declined — one that landed
+   * on nothing. Saying so is more use than silence.
+   */
+  onClick() {
+    return { notice: 'Drag across the build to select a box. Drag inside one to move it.' };
   },
 };
 
@@ -277,21 +280,41 @@ const swap: EditorTool = {
   },
 };
 
+/**
+ * Grab: click a thing, get it selected.
+ *
+ * It used to *cut*. One click deleted the whole connected mass you hit, put it in the
+ * clipboard and switched you to Stamp — so a misjudged click on a wall made a chunk of the
+ * build disappear, and the way back was an undo you had to realise you needed. A tool whose
+ * name is "grab" should hand you the thing, not take it away.
+ *
+ * It selects the structure's box now and leaves every block where it is. Everything that was
+ * possible before is still one press away and now visible while you decide: Cut lifts it,
+ * Copy takes a duplicate, dragging moves it, and the box shows exactly what any of those
+ * would affect — including the neighbours a bounding box inevitably catches, which the old
+ * version deleted without ever showing you.
+ */
 const grab: EditorTool = {
-  groundRefusal: 'Nothing to grab there — click any block of the structure you want to lift.',
+  groundRefusal: 'Nothing to grab there — click any block of the structure you want to select.',
   onClick(ctx, hit) {
     const result = grabStructure(ctx.grid, hit);
     if (result.capped) {
       return {
-        notice: `That structure is over ${result.cells.toLocaleString()} blocks — too much to grab. Use the Box tool for something that size.`,
+        notice: `That structure is over ${result.cells.toLocaleString()} blocks — too much to trace. Use the Box tool for something that size.`,
       };
     }
-    if (!result.clip) return { notice: 'Nothing to grab there.' };
+    if (!result.bounds) return { notice: 'Nothing to grab there.' };
+
+    const { min, max } = result.bounds;
     return {
-      op: result.op,
-      clip: result.clip,
-      switchTool: 'stamp',
-      notice: `Grabbed ${result.cells.toLocaleString()} blocks — click to stamp it down. Undo puts it back.`,
+      region: { min, max },
+      // Straight to the tool that owns selections, so the verbs for what you just picked out
+      // are under the cursor rather than one more click away.
+      switchTool: 'select',
+      notice:
+        `Selected ${result.cells.toLocaleString()} connected blocks in a ` +
+        `${max.x - min.x + 1}×${max.y - min.y + 1}×${max.z - min.z + 1} box. ` +
+        `Drag to move it, or Cut to lift it.`,
     };
   },
 };

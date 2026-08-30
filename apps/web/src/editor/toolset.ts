@@ -58,9 +58,9 @@ export const TOOLS: readonly ToolSpec[] = [
   },
   {
     id: 'select',
-    verb: 'set a box corner',
+    verb: 'drag out a selection',
     label: 'Box',
-    hint: 'Click two opposite corners. The box stays, so you can fill it, hollow it, move it or copy it — as many times as you like.',
+    hint: 'Drag across the build to select a box. Drag inside one to move it. The box stays, so you can fill it, hollow it, rotate it or copy it — as many times as you like.',
     needsBlock: true,
     usesBrush: false,
     key: '4',
@@ -103,9 +103,9 @@ export const TOOLS: readonly ToolSpec[] = [
   },
   {
     id: 'grab',
-    verb: 'grab a structure',
+    verb: 'select a structure',
     label: 'Grab',
-    hint: 'Click any block to lift the whole connected structure into the clipboard — then stamp it back down wherever you like. Undo puts it back.',
+    hint: 'Click any block to select the whole connected structure — a tree, a statue, a chimney. Nothing moves until you drag it or press Cut.',
     needsBlock: false,
     usesBrush: false,
     key: '9',

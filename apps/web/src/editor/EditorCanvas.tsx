@@ -181,6 +181,9 @@ function Scene({
   enhanced = false,
 }: EditorCanvasProps) {
   const scene = useThree((state) => state.scene);
+  const gl = useThree((state) => state.gl);
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
   const worldRef = useRef<VoxelWorld | null>(null);
   // Resolved once, here, so the mount effect and the update effect cannot disagree about
   // which of the two ways of expressing a cut is in force.
@@ -231,12 +234,27 @@ function Scene({
   useFrame(() => {
     const world = worldRef.current;
     if (!world) return;
-    world.update();
+    // The orbit target, not the camera: it is the point on the build the viewer is looking
+    // at, and it is what the flight keys carry along with them. The camera position would
+    // put the working set behind the viewer whenever they pulled back to look at anything.
+    world.update(controls?.target ?? camera.position);
     // Reporting every frame would re-render the HUD at 60Hz for no reason.
     if (world.remaining !== lastRemaining.current) {
       lastRemaining.current = world.remaining;
       progressRef.current?.(world.remaining);
     }
+
+    // Published on the canvas rather than through React, because these change on almost
+    // every frame of a flight and nothing on screen reads them — they exist so a headless
+    // driver can see the working set breathe, the way `data-remaining` lets one see the
+    // mesh queue drain. Writing an unchanged value would still dirty the attribute.
+    const canvas = gl.domElement;
+    const resident = String(world.resident);
+    if (canvas.dataset.chunks !== resident) canvas.dataset.chunks = resident;
+    const evicted = String(world.evicted);
+    if (canvas.dataset.evicted !== evicted) canvas.dataset.evicted = evicted;
+    const streaming = world.streamed ? '1' : '0';
+    if (canvas.dataset.streaming !== streaming) canvas.dataset.streaming = streaming;
   });
 
   return (

@@ -17,7 +17,8 @@ export type LayoutToolId =
   | 'opening'
   | 'platform'
   | 'column'
-  | 'furnish';
+  | 'furnish'
+  | 'place';
 
 export interface LayoutToolSpec {
   id: LayoutToolId;
@@ -103,6 +104,14 @@ export const LAYOUT_TOOLS: readonly LayoutToolSpec[] = [
     gesture: 'click',
     verb: 'place a column',
     key: '9',
+  },
+  {
+    id: 'place',
+    label: 'Place',
+    hint: 'Drop a saved build from your library. Pick one in the Components panel, then click where it goes. R turns it.',
+    gesture: 'click',
+    verb: 'place a saved build',
+    key: 'p',
   },
   {
     id: 'furnish',

@@ -36,6 +36,7 @@ export const LAYOUTER_SHORTCUTS: readonly ShortcutGroup[] = [
       { keys: 'Ctrl + C', what: 'Copy the selection' },
       { keys: 'Ctrl + V', what: 'Paste onto the storey you are on' },
       { keys: 'Ctrl + D', what: 'Duplicate in place, offset by two blocks' },
+      { keys: 'R', what: 'Turn a placed build a quarter — the one item with a facing' },
       { keys: 'Delete', what: 'Remove the selection' },
     ],
   },

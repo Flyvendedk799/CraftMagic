@@ -48,10 +48,12 @@ import { AppNav } from '../shell/AppNav.js';
 import { alignOffsets, distributeOffsets, type Offsets } from './arrange.js';
 import { ArrangePanel } from './ArrangePanel.js';
 import { compilePlan } from './compile.js';
+import { ComponentsPanel } from './ComponentsPanel.js';
+import { useComponentLibrary, type Catalogue } from './components.js';
 import { FloorStack } from './FloorStack.js';
 import { Inspector } from './Inspector.js';
 import { IssuesPanel, issueSummary } from './IssuesPanel.js';
-import { PlanCanvas } from './PlanCanvas.js';
+import { PlanCanvas, type PlaceChoice } from './PlanCanvas.js';
 import { RoomSchedule, scheduleSummary } from './RoomSchedule.js';
 import { SitePanel } from './SitePanel.js';
 import { getBuild } from '../library/library.js';
@@ -135,6 +137,8 @@ export function LayouterPage() {
   const [hover, setHover] = useState<{ x: number; z: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
+  /** The saved build the Place tool will drop. Armed from the Components panel. */
+  const [placeChoice, setPlaceChoice] = useState<PlaceChoice | null>(null);
   /** Bumped to ask the plan to re-frame; see `PlanCanvas`'s `fitNonce`. */
   const [fitNonce, setFitNonce] = useState(0);
   /**
@@ -217,10 +221,44 @@ export function LayouterPage() {
     if (activeFloor !== floorIndex) setFloorIndex(activeFloor);
   }, [activeFloor, floorIndex]);
 
+  // The library, as a parts bin: the shelf eagerly, each placed build's blocks on demand.
+  const library = useComponentLibrary(plan);
+
+  /**
+   * True footprints for every placement whose blocks have arrived, by item id.
+   *
+   * Built here rather than in the canvas because the inspector wants the same answer, and two
+   * panels disagreeing about how big a placed building is would be a slow, confusing bug.
+   */
+  const placeSizes = useMemo(() => {
+    const sizes = new Map<string, { w: number; d: number; h: number }>();
+    for (const floor of plan.floors) {
+      for (const item of floor.items) {
+        if (item.kind !== 'place') continue;
+        const component = library.catalogue.get(item.buildId);
+        if (component) {
+          sizes.set(item.id, { w: component.size.x, d: component.size.z, h: component.size.y });
+        }
+      }
+    }
+    return sizes;
+  }, [plan, library.catalogue]);
+
+  /** How many times each saved build is placed, for the shelf's counts. */
+  const placeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const floor of plan.floors) {
+      for (const item of floor.items) {
+        if (item.kind === 'place') counts.set(item.buildId, (counts.get(item.buildId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [plan]);
+
   const validation = useMemo(() => validatePlan(plan), [plan]);
 
   const deferred = useDeferred(plan, PREVIEW_DELAY);
-  const built = useMemo(() => buildFrom(deferred), [deferred]);
+  const built = useMemo(() => buildFrom(deferred, library.catalogue), [deferred, library.catalogue]);
 
   const selectedId = selectedIds.length === 1 ? selectedIds[0]! : null;
   const selected = useMemo(() => findItem(plan, selectedId ?? ''), [plan, selectedId]);
@@ -310,6 +348,29 @@ export function LayouterPage() {
     },
     [selectedItems, session],
   );
+
+  /**
+   * Turn every selected placed build a quarter clockwise.
+   *
+   * Only placements: nothing else on a plan has a rotation. A room is a rectangle and turning
+   * one would mean resizing it, which is what the resize handles are for; a door already says
+   * which way it faces. So this is not a general "rotate the selection" — it is the one
+   * transform the one item kind that has an orientation actually has.
+   */
+  const turn = useCallback(() => {
+    const placements = selectedItems.filter((item) => item.kind === 'place');
+    if (placements.length === 0) return;
+    session.commit((current) =>
+      placements.reduce(
+        (plan, item) =>
+          replaceItem(plan, item.id, {
+            ...item,
+            turns: (((item.turns + 1) % 4) as 0 | 1 | 2 | 3),
+          }),
+        current,
+      ),
+    );
+  }, [selectedItems, session]);
 
   const copy = useCallback(() => {
     if (selectedItems.length === 0) return;
@@ -419,6 +480,13 @@ export function LayouterPage() {
             remove();
           }
           break;
+        case 'r':
+        case 'R':
+          if (selectedItems.some((item) => item.kind === 'place')) {
+            event.preventDefault();
+            turn();
+          }
+          break;
         case '[':
           event.preventDefault();
           setFloorIndex((index) => Math.max(0, index - 1));
@@ -463,6 +531,8 @@ export function LayouterPage() {
     selectedIds,
     remove,
     nudge,
+    turn,
+    selectedItems,
     copy,
     paste,
     duplicate,
@@ -675,6 +745,10 @@ export function LayouterPage() {
             />
           ) : (
             <Inspector
+              shelf={library.shelf}
+              placeSize={
+                selected?.item.kind === 'place' ? (placeSizes.get(selected.item.id) ?? null) : null
+              }
               plan={plan}
               item={selected?.item ?? null}
               floorIndex={selected?.floorIndex ?? activeFloor}
@@ -700,6 +774,34 @@ export function LayouterPage() {
             floorIndex={activeFloor}
             selectedId={selectedId}
             onSelect={setSelectedId}
+          />
+        </Section>
+
+        {/* Between the rooms you drew and the building-wide settings: a placed build is a
+            thing on the plan, not a property of the project. */}
+        <Section
+          id="layouter-components"
+          title="Components"
+          summary={library.shelf.length > 0 ? `${library.shelf.length}` : undefined}
+          defaultOpen={false}
+        >
+          <ComponentsPanel
+            shelf={library.shelf}
+            status={library.status}
+            chosen={placeChoice?.id ?? null}
+            counts={placeCounts}
+            loading={library.loading}
+            failed={library.failed}
+            onChoose={(entry) => {
+              setPlaceChoice({ id: entry.id, name: entry.name, w: entry.w, d: entry.d, h: entry.h });
+              // Arming the tool as well: picking a component and then having to find the Place
+              // button is a step that exists only because the two live in different panels.
+              setTool('place');
+              // Fetched now rather than at compile time, so the ghost under the cursor is the
+              // building's real footprint before the click rather than after it.
+              void library.load(entry.id);
+              setNotice(`"${entry.name}" ready — click the plan to place it.`);
+            }}
           />
         </Section>
 
@@ -860,6 +962,8 @@ export function LayouterPage() {
           plan={plan}
           floorIndex={activeFloor}
           tool={tool}
+          placeChoice={placeChoice}
+          placeSizes={placeSizes}
           selectedIds={selectedIds}
           unreachable={validation.unreachable}
           showBelow={showBelow}
@@ -983,8 +1087,8 @@ interface Built {
  * feel broken at exactly the moment the user is mid-thought, so problems come back as messages
  * beside a build that is still on screen.
  */
-function buildFrom(plan: LayoutPlan): Built {
-  const compiled = compilePlan(plan);
+function buildFrom(plan: LayoutPlan, catalogue: Catalogue): Built {
+  const compiled = compilePlan(plan, catalogue);
   try {
     // Provenance costs one extra array per compile, and compiles are already deferred behind
     // the drag — it is what lets a click on the model land back on the plan item that drew it.

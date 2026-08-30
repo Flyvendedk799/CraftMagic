@@ -34,7 +34,14 @@
  *     y = deckY                 the top ceiling — the roof deck
  */
 
-import { LIMITS as IR_LIMITS, type BuildProgram, type Component, type DetailOp } from '@craftmagic/core';
+import {
+  LIMITS as IR_LIMITS,
+  type BuildProgram,
+  type Component,
+  type DetailOp,
+  type Prefab,
+} from '@craftmagic/core';
+import type { Catalogue } from './components.js';
 import { furnishingById, furnishingCells } from './furniture.js';
 import { paletteFor } from './kits.js';
 import { deckY as roofDeckY, floorHeight, slabY as slabYOf, type LayoutPlan, type PlanItem, type Rect, type RoomItem } from './plan.js';
@@ -60,7 +67,16 @@ const PITCH_RISE: Record<string, number> = { low: 0.5, classic: 1, steep: 2 };
  */
 const MAX_COMPONENTS = IR_LIMITS.maxComponents - 8;
 
-export function compilePlan(plan: LayoutPlan): CompileResult {
+/**
+ * Compile a plan.
+ *
+ * `catalogue` carries the blocks of any saved builds the plan places. It is a parameter rather
+ * than something fetched here because compiling has to stay pure and synchronous — it runs on
+ * every keystroke that changes the plan — while the builds arrive over the network. A plan
+ * whose components have not landed yet compiles without them and says so, which is the right
+ * behaviour: the alternative is a blank page for as long as the request takes.
+ */
+export function compilePlan(plan: LayoutPlan, catalogue: Catalogue = new Map()): CompileResult {
   const warnings: string[] = [];
   const floors = plan.floors.length;
 
@@ -79,7 +95,21 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
   const roofHeight = roofRise(plan, footprint);
   // Nothing drawn means nothing to be tall: a plan with no rooms compiles to a single empty
   // cell rather than to a storey-high sliver of air, which is what the preview would frame.
-  const height = drawn ? Math.max(1, deckY + (plan.roof === 'none' ? 0 : 1) + roofHeight) : 1;
+  // A placed building is not bound by the storey it sits on — a spire dropped on the top
+  // floor is taller than the roof over it. Measured before the volume is fixed, or the top of
+  // it is silently clipped away by an expander that was told the building is shorter.
+  let placedTop = 0;
+  for (let index = 0; index < floors; index++) {
+    for (const item of plan.floors[index]!.items) {
+      if (item.kind !== 'place') continue;
+      const component = catalogue.get(item.buildId);
+      placedTop = Math.max(placedTop, slabYOf(plan, index) + 1 + (component?.size.y ?? item.h));
+    }
+  }
+
+  const height = drawn
+    ? Math.max(1, deckY + (plan.roof === 'none' ? 0 : 1) + roofHeight, placedTop)
+    : Math.max(1, placedTop);
 
   if (height > IR_LIMITS.maxSizeY) {
     warnings.push(
@@ -402,6 +432,66 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
     }
   }
 
+  // --- pass 6: placed builds ----------------------------------------------
+  //
+  // Last, so a saved building lands on top of the architecture rather than under it. That is
+  // the same reason furnishings come after the structure, and it is what makes placing a
+  // finished shed inside a room do the obvious thing.
+  //
+  // Each distinct build becomes one entry in `program.prefabs` however many times it is
+  // placed, which is the whole reason the table exists: four corner towers cost one copy of
+  // the blocks and four references.
+
+  const prefabs: Record<string, Prefab> = {};
+  const missing = new Set<string>();
+  /**
+   * A short name per distinct build, assigned in the order they are met.
+   *
+   * Not derived from the build id. A truncated uuid reads no better in the program and can
+   * collide — two builds sharing twelve hex digits would silently become one, and the second
+   * would come out as the first with nothing to indicate it. `b1`, `b2` cannot.
+   */
+  const refOf = new Map<string, string>();
+
+  for (let index = 0; index < floors; index++) {
+    const surfaceY = slabYOf(plan, index) + 1;
+    for (const item of plan.floors[index]!.items) {
+      if (item.kind !== 'place') continue;
+
+      const component = catalogue.get(item.buildId);
+      if (!component) {
+        // Not an error: the fetch may simply be in flight. The message is only raised once
+        // the item names a build the library refused, and either way the rest still builds.
+        missing.add(item.name || item.buildId);
+        continue;
+      }
+
+      let ref = refOf.get(item.buildId);
+      if (!ref) {
+        ref = `b${refOf.size + 1}`;
+        refOf.set(item.buildId, ref);
+        prefabs[ref] = component.prefab;
+      }
+
+      push(
+        {
+          type: 'prefab',
+          ref,
+          pos: [item.x - origin.x, surfaceY, item.z - origin.z],
+          ...(item.turns ? { turns: item.turns } : {}),
+        },
+        item.id,
+        component.name,
+      );
+    }
+  }
+
+  if (missing.size > 0) {
+    warnings.push(
+      `Waiting for ${[...missing].join(', ')} — a placed build's blocks come from your library.`,
+    );
+  }
+
   if (dropped > 0) {
     warnings.push(
       `${dropped} item${dropped === 1 ? '' : 's'} were left out — a plan can compile to at most ` +
@@ -421,6 +511,7 @@ export function compilePlan(plan: LayoutPlan): CompileResult {
       z: Math.max(1, footprint.d),
     },
     palette: paletteFor(plan.kitId),
+    ...(Object.keys(prefabs).length > 0 ? { prefabs } : {}),
     components,
     ...(details.length > 0 ? { details } : {}),
   };

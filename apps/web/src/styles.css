@@ -12,6 +12,10 @@
   --brand-grass: #4ade80;
   --brand-amber: #fbbf24;
   --brand-coral: #f87171;
+  /* Placed builds. A saved building dropped into a layout is a genuinely different kind of
+     thing from anything drawn — it is somebody's finished work, not a rectangle — and reusing
+     amber or mint would make it read as a column or as the selection. */
+  --brand-violet: #a78bfa;
   /* The two darker faces of the mark, so anything built around the logo can reach for them. */
   --brand-teal: #2f8f6f;
   --brand-pine: #227a5c;

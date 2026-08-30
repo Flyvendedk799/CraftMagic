@@ -19,6 +19,10 @@ import { floorHeight, type LayoutPlan, type PlanItem, type PlanAxis } from './pl
 const FACES: Face[] = ['north', 'east', 'south', 'west'];
 
 export interface InspectorProps {
+  /** Saved builds, so a placement can be swapped for another without leaving the panel. */
+  shelf?: readonly { id: string; name: string; w: number; d: number; h: number }[];
+  /** The selected placement's true size, once its blocks have arrived. */
+  placeSize?: { w: number; d: number; h: number } | null;
   plan: LayoutPlan;
   item: PlanItem | null;
   onChange: (next: PlanItem) => void;
@@ -37,6 +41,8 @@ export function Inspector({
   onDuplicate,
   onSendToFloor,
   floorIndex,
+  shelf = [],
+  placeSize = null,
 }: InspectorProps) {
   // Slider ceilings answer to the storey the item is on, not the building default.
   const plan = { ...wholePlan, storeyHeight: floorHeight(wholePlan, floorIndex) };
@@ -223,6 +229,48 @@ export function Inspector({
             onChange={(facing) => onChange({ ...item, facing: facing as Face })}
           />
           <PositionFields plan={plan} x={item.x} z={item.z} onChange={(x, z) => onChange({ ...item, x, z })} />
+        </>
+      )}
+
+      {item.kind === 'place' && (
+        <>
+          <ChoiceField
+            label="Build"
+            value={item.buildId}
+            options={
+              // The build it currently names is always an option, even when the shelf no
+              // longer lists it — a deleted build must not silently become a different one
+              // just because the select had to show something.
+              shelf.some((entry) => entry.id === item.buildId)
+                ? shelf.map((entry) => ({ value: entry.id, label: entry.name }))
+                : [{ value: item.buildId, label: `${item.name} (missing)` }, ...shelf.map((entry) => ({ value: entry.id, label: entry.name }))]
+            }
+            onChange={(buildId) => {
+              const entry = shelf.find((candidate) => candidate.id === buildId);
+              if (!entry) return;
+              // The remembered footprint travels with the reference. Leaving the old one
+              // behind would draw the new building at the old one's size until its blocks
+              // arrived, which looks exactly like a bug.
+              onChange({ ...item, buildId, name: entry.name, w: entry.w, d: entry.d, h: entry.h });
+            }}
+          />
+          <ChoiceField
+            label="Turned"
+            value={String(item.turns)}
+            options={[
+              { value: '0', label: 'As saved' },
+              { value: '1', label: 'Quarter' },
+              { value: '2', label: 'Half' },
+              { value: '3', label: 'Three quarters' },
+            ]}
+            onChange={(turns) => onChange({ ...item, turns: Number(turns) as 0 | 1 | 2 | 3 })}
+          />
+          <PositionFields plan={plan} x={item.x} z={item.z} onChange={(x, z) => onChange({ ...item, x, z })} />
+          <p className="inspector__note">
+            {placeSize
+              ? `${placeSize.w}×${placeSize.h}×${placeSize.d} blocks, built on this storey's floor.`
+              : 'Loading its blocks from your library…'}
+          </p>
         </>
       )}
 

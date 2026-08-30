@@ -991,3 +991,152 @@
   pointer-events: none;
   user-select: none;
 }
+
+/* --- placed builds ---------------------------------------------------------
+   A saved building on the plan. Drawn as an outlined footprint with its name and a corner
+   mark, not as a preview of its blocks: a floorplan is a drawing and the 3D model beside it
+   is the render, and a thumbnail would be illegible at the size a four-block shed occupies. */
+
+.plan__place {
+  fill: color-mix(in srgb, var(--brand-violet) 16%, transparent);
+  stroke: color-mix(in srgb, var(--brand-violet) 85%, transparent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Dashed until its blocks arrive, because until then the footprint is the plan's remembered
+   copy rather than the library's — and a build edited since it was placed will move. */
+.plan__place[data-loaded='false'] {
+  stroke-dasharray: 4 3;
+  opacity: 0.75;
+}
+
+.plan__item.is-selected .plan__place {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: var(--accent);
+}
+
+/* Which corner the build's own origin ended up in, so a square-ish footprint still shows
+   which way it has been turned. */
+.plan__place-mark {
+  fill: color-mix(in srgb, var(--brand-violet) 90%, transparent);
+  pointer-events: none;
+}
+
+.plan__item.is-selected .plan__place-mark {
+  fill: var(--accent);
+}
+
+.plan__place-label {
+  fill: rgba(233, 226, 255, 0.92);
+  font-family: inherit;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* --- the components shelf --------------------------------------------------- */
+
+.shelf {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.shelf__search {
+  width: 100%;
+}
+
+.shelf__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.25rem;
+  /* Its own scroll region inside an already-scrolling panel: a library of forty builds must
+     not push the hint under it off the bottom. */
+  max-height: 18rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.shelf__item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'name used'
+    'meta used';
+  align-items: center;
+  gap: 0 0.5rem;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.shelf__item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.shelf__item[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+}
+
+.shelf__item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.shelf__name {
+  grid-area: name;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shelf__meta {
+  grid-area: meta;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+}
+
+.shelf__used {
+  grid-area: used;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.shelf__spinner {
+  position: absolute;
+  right: 0.4rem;
+  bottom: 0.4rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  opacity: 0.6;
+  animation: shelf-spin 0.7s linear infinite;
+}
+
+@keyframes shelf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.shelf__hint {
+  margin: 0;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  opacity: 0.6;
+}

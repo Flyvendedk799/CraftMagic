@@ -1,7 +1,7 @@
 /**
  * What the voxel editor's keyboard does, as the sheet reads it.
  *
- * Split out of `ShortcutHelp` when the layouter grew a sheet of its own: the dialog is shared
+ * Split out of `ShortcutHelp` when Architecture mode grew a sheet of its own: the dialog is shared
  * and the content is not, and a list of what *this* tool's keys do belongs beside this tool.
  * The tool digits are derived from `toolset.ts` — those genuinely cannot drift — and
  * everything else is written by hand, because the description is the part with the value in

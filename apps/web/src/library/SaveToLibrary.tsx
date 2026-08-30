@@ -11,7 +11,7 @@ import { useCallback, useState } from 'react';
 import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 import { Link } from 'react-router-dom';
 import { useAuth } from './auth.js';
-import { LibraryError, saveToLibrary } from './library.js';
+import { LibraryError, saveToLibrary, type BuildKind } from './library.js';
 import './library.css';
 
 export interface SaveToLibraryProps {
@@ -21,8 +21,15 @@ export interface SaveToLibraryProps {
   detached: boolean;
   /** The hand-edit layer, read at save time so renders never pay for serialising it. */
   getEdits?: () => EditLayer | null;
-  /** The layouter's drawing. Stored beside the build so it can be reopened as a plan. */
+  /** Architecture mode's drawing. Stored beside the build so it can be reopened as a plan. */
   plan?: unknown;
+  /**
+   * Which tier made this. Defaults to a structure, which is what the editor makes.
+   *
+   * It decides which shelf the build turns up on later: a component shelf offering interiors
+   * as things to drop on a hillside is offering the inside of a house with no house.
+   */
+  kind?: BuildKind;
 }
 
 type State =
@@ -31,7 +38,7 @@ type State =
   | { kind: 'saved'; id: string }
   | { kind: 'error'; message: string };
 
-export function SaveToLibrary({ name, grid, program, detached, getEdits, plan }: SaveToLibraryProps) {
+export function SaveToLibrary({ name, grid, program, detached, getEdits, plan, kind }: SaveToLibraryProps) {
   const auth = useAuth();
   const [state, setState] = useState<State>({ kind: 'idle' });
 
@@ -45,6 +52,7 @@ export function SaveToLibrary({ name, grid, program, detached, getEdits, plan }:
         detached,
         edits: getEdits?.() ?? null,
         plan: plan ?? null,
+        kind,
       });
       setState({ kind: 'saved', id: saved.id });
     } catch (err) {

@@ -93,7 +93,7 @@ interface SessionState {
   canRedo: boolean;
 }
 
-/** How long after the last edit the overlay is persisted. Same rhythm as the layouter. */
+/** How long after the last edit the overlay is persisted. Same rhythm as Architecture mode. */
 const PERSIST_DELAY = 500;
 
 export function useEditSession(build: LoadedBuild): EditSession {

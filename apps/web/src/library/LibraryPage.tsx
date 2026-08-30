@@ -317,13 +317,13 @@ export function LibraryPage() {
                           >
                             Guide
                           </Link>
-                          {/* Only for builds the layouter saved: the drawing rode up with
+                          {/* Only for builds Architecture mode saved: the drawing rode up with
                               them, so they reopen as a plan — walls still walls. */}
                           {build.hasPlan && (
                             <Link
                               className="card__action"
-                              to={`/layouter?plan=lib:${encodeURIComponent(build.id)}`}
-                              aria-label={`Open ${build.name} as a plan in the layouter`}
+                              to={`/architecture?plan=lib:${encodeURIComponent(build.id)}`}
+                              aria-label={`Open ${build.name} as a plan in Architecture`}
                             >
                               Plan
                             </Link>

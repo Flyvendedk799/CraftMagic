@@ -7,7 +7,17 @@
  * case for it.
  */
 
+import { decodeVoxels, encodeVoxels, fromBase64, toBase64 } from '@craftmagic/core';
 import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
+
+/**
+ * Which tier of the studio made a build, and therefore what it is good for.
+ *
+ * `structure` is a thing you place; `interior` is what goes inside one. The component shelves
+ * filter on it, so that a world is not offered back to you as something to put inside a world.
+ * Mirrors the server's union and the CHECK in `007_build_kind.sql`.
+ */
+export type BuildKind = 'structure' | 'interior';
 
 export interface LibraryBuild {
   id: string;
@@ -17,8 +27,9 @@ export interface LibraryBuild {
   sizeZ: number;
   blockCount: number;
   /** False once a build has been hand-edited: only its voxels describe it. */
+  kind: BuildKind;
   hasProgram: boolean;
-  /** True when a layouter plan was saved beside the build — it can reopen in the layouter. */
+  /** True when a layouter plan was saved beside the build — it can reopen in Architecture mode. */
   hasPlan: boolean;
   detached: boolean;
   createdAt: string;
@@ -28,14 +39,42 @@ export interface LibraryBuild {
 export interface LibraryBuildDetail {
   id: string;
   name: string;
+  kind: BuildKind;
   blockCount: number;
   detached: boolean;
   program: BuildProgram | null;
   /** The hand-edit layer, on builds saved since it existed. Null on older rows. */
   edits: EditLayer | null;
-  /** The layouter drawing this build was compiled from, when it was saved from the layouter. */
+  /** Architecture mode drawing this build was compiled from, when it was saved from Architecture mode. */
   plan: unknown;
-  grid: { size: { x: number; y: number; z: number }; palette: string[]; voxels: number[] };
+  /**
+   * The voxels, in whichever form the server sent.
+   *
+   * `data` is base64 of the gzipped ICVX blob and is what a current server always sends;
+   * `voxels` is the old integer array, still sent for small builds so a tab from the previous
+   * deploy keeps working. `gridOf` below is the one place that has to know.
+   */
+  grid: {
+    size: { x: number; y: number; z: number };
+    palette: string[];
+    data?: string;
+    voxels?: number[];
+  };
+}
+
+/**
+ * The detail response's grid, as a real `VoxelGrid`.
+ *
+ * Prefers the compact blob, which is self-describing and carries its own palette — so it is
+ * trusted over the loose `size`/`palette` fields beside it rather than merged with them.
+ */
+export function gridOf(detail: LibraryBuildDetail): VoxelGrid {
+  if (typeof detail.grid.data === 'string') return decodeVoxels(fromBase64(detail.grid.data));
+  return {
+    size: detail.grid.size,
+    palette: detail.grid.palette,
+    voxels: Uint16Array.from(detail.grid.voxels ?? []),
+  };
 }
 
 export class LibraryError extends Error {
@@ -93,12 +132,15 @@ export function saveToLibrary(input: {
   detached: boolean;
   edits?: EditLayer | null;
   plan?: unknown;
+  /** Defaults to a structure — the thing you place, and what the editor makes. */
+  kind?: BuildKind;
 }): Promise<{ id: string; blockCount: number }> {
   return request(
     '/api/builds',
     json('POST', {
       name: input.name,
       library: true,
+      kind: input.kind ?? 'structure',
       detached: input.detached,
       program: input.program ?? undefined,
       edits: input.edits ?? undefined,
@@ -106,7 +148,11 @@ export function saveToLibrary(input: {
       grid: {
         size: input.grid.size,
         palette: input.grid.palette,
-        voxels: Array.from(input.grid.voxels),
+        // Base64 of the gzipped ICVX blob rather than one JSON number per cell. A build at the
+        // engine's own 256x160x256 size cap is ~280 KB this way and 20 MB as an integer array,
+        // which is 20x Fastify's body limit — so until this changed, a build that big, and the
+        // "Stress test" sample shipped in the editor, could not be saved at all. Both 413'd.
+        data: toBase64(encodeVoxels(input.grid)),
       },
     }),
   );

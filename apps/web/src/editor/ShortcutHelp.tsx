@@ -8,7 +8,7 @@
  * ones nobody would ever find.
  *
  * The dialog is here; the lists are not. There are two keyboard-heavy tools in this product
- * and they share nothing but the dialog — the layouter has no brush and the editor has no
+ * and they share nothing but the dialog — Architecture mode has no brush and the editor has no
  * storeys. One sheet with a `tool` flag would be a switch statement wearing a component, and
  * two sheets would be two dialogs to keep in step. So each tool brings its own list, from
  * `editor/shortcuts.ts` and `layouter/shortcuts.ts`.

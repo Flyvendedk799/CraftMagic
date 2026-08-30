@@ -123,15 +123,17 @@ tasks.register('verifySchematic', JavaExec) {
 }
 
 /**
- * Check that a build lands under the block the wand marked. Rotation is the trap: a quarter
- * turn swaps a schematic's width and length, so centring on the unrotated size slides the
- * build sideways — silently, since nothing errors and the build still appears.
+ * Check that a build lands under the block the wand marked, and that the regions of a world
+ * land next to each other. Rotation is the trap in both: a quarter turn swaps a schematic's
+ * width and length, so centring on the unrotated size slides the build sideways, and a region
+ * offset that is added to the anchor unturned lays the map out mirrored about its diagonal.
+ * Neither errors, and both still build.
  *
  *   gradlew verifyPlacement
  */
 tasks.register('verifyPlacement', JavaExec) {
 	group = 'verification'
-	description = 'Assert a build lands under the block the wand marked, at every rotation.'
+	description = 'Assert builds land under the marker and world regions form one map, at every rotation.'
 	dependsOn tasks.named('classes')
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'dev.craftmagic.agent.tools.PlacementCheck'

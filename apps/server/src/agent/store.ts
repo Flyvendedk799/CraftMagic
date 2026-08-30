@@ -1,5 +1,5 @@
 /**
- * Database access for builds, agents, pairing codes and jobs.
+ * Database access for builds, worlds, agents, pairing codes and jobs.
  *
  * Three properties are enforced here rather than left to callers:
  *   * Agent tokens and session tokens are only ever stored as SHA-256 digests. Lookup is by
@@ -22,6 +22,21 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import type { Db } from '../db/pool.js';
 import type { OwnerScope } from '../auth/session.js';
 
+/**
+ * Which tier a saved build belongs to.
+ *
+ * A `structure` is a building; an `interior` is what the layouter draws inside one. Two
+ * values and no more — in particular no `world`. A world has no voxels and `builds.voxels`
+ * is NOT NULL, so a world is not a row this table can hold; it has `worlds` instead, and the
+ * methods for it are further down. Widening this union is the signal that the wrong table is
+ * being reached for.
+ *
+ * Mirrors the CHECK constraint in `007_build_kind.sql`. Both exist deliberately: the union
+ * makes a typo a compile error at the call site, the constraint makes it impossible for a
+ * row to hold a third value however it got written.
+ */
+export type BuildKind = 'structure' | 'interior';
+
 export interface BuildRow {
 	id: string;
 	name: string;
@@ -34,8 +49,10 @@ export interface BuildRow {
 	detached: boolean;
 	/** The hand-edit layer, when the client saved one. Null on old rows and clean builds. */
 	edits: unknown;
-	/** The layouter plan the build was compiled from, when saved from the layouter. */
+	/** Architecture mode plan the build was compiled from, when saved from Architecture mode. */
 	plan: unknown;
+	/** Structure or interior. Never null: the column has a default and old rows are backfilled. */
+	kind: BuildKind;
 }
 
 /** A library listing entry: everything but the voxels, which are megabytes. */
@@ -47,9 +64,77 @@ export interface BuildSummary {
 	sizeZ: number;
 	blockCount: number;
 	hasProgram: boolean;
-	/** True when the row carries a layouter plan — the client offers "open in the layouter". */
+	/** True when the row carries a layouter plan — the client offers "open in Architecture mode". */
 	hasPlan: boolean;
+	/**
+	 * The tier this row belongs to, in the listing rather than only on the full read.
+	 *
+	 * A component shelf filters the list; if it had to fetch each build to learn what each one
+	 * is, filtering a library would mean downloading every set of voxels in it.
+	 */
+	kind: BuildKind;
 	detached: boolean;
+	createdAt: Date;
+	updatedAt: Date;
+}
+
+/**
+ * The part of a world that is not a column: the strata palette, the sparse overlay and the
+ * placements, exactly as the client's `normalizeWorld` will read them back.
+ *
+ * Ferried, not interpreted — the same deal `builds.plan` and `builds.edits` have. The server
+ * bounds its size and nothing else, because the client re-validates every field on read and a
+ * second, subtly different opinion here is how a world becomes unopenable in one deploy and
+ * fine in the next.
+ *
+ * `strata` here is the *palette* — the surface profiles. `WorldRow.strata` is the per-column
+ * byte array that indexes into it. The two share a name because the world document does, and
+ * renaming one of them at this boundary only moves the confusion somewhere it is not written
+ * down.
+ */
+export interface WorldDocument {
+	strata: unknown;
+	overlay: unknown;
+	placements: unknown;
+}
+
+export interface WorldRow {
+	id: string;
+	name: string;
+	sizeX: number;
+	sizeZ: number;
+	minY: number;
+	maxY: number;
+	seaLevel: number;
+	regionSize: number;
+	/** Int16 little-endian, `sizeX * sizeZ * 2` bytes. */
+	heights: Buffer;
+	/** One stratum index per column, `sizeX * sizeZ` bytes. */
+	strata: Buffer;
+	doc: WorldDocument;
+	createdAt: Date;
+	updatedAt: Date;
+}
+
+/**
+ * A world listing entry: everything but the heightfield, which is megabytes.
+ *
+ * The same rule `BuildSummary` follows, and it bites harder here. A build's voxels are big
+ * because a build is big; a world's heightfield is big *even when the world is empty*, since
+ * every column carries three bytes whether or not anybody has touched it. A listing that
+ * carried it would send 3 MB per row to draw a name and a size.
+ */
+export interface WorldSummary {
+	id: string;
+	name: string;
+	sizeX: number;
+	sizeZ: number;
+	minY: number;
+	maxY: number;
+	seaLevel: number;
+	regionSize: number;
+	/** Counted in SQL, so the picker can say "40 builds placed" without reading the document. */
+	placements: number;
 	createdAt: Date;
 	updatedAt: Date;
 }
@@ -114,12 +199,21 @@ export class AgentStore {
 		detached?: boolean;
 		edits?: unknown;
 		plan?: unknown;
+		/**
+		 * Structure unless the caller says otherwise.
+		 *
+		 * Typed as the union rather than `string`, so the value is settled before it reaches
+		 * SQL. A wrong kind that gets past here is not a failed write to retry — the row saves
+		 * fine and is simply filed in the wrong drawer for good, and nothing downstream ever
+		 * looks at it again to notice.
+		 */
+		kind?: BuildKind;
 		/** False for the row "send to game" writes as transport; true for saved work. */
 		inLibrary?: boolean;
 	}): Promise<string> {
 		const { rows } = await this.db.query<{ id: string }>(
-			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, edits, plan, in_library)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			`INSERT INTO builds (user_id, name, description, size_x, size_y, size_z, block_count, program, voxels, detached, edits, plan, kind, in_library)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			 RETURNING id`,
 			[
 				input.userId ?? null,
@@ -134,6 +228,7 @@ export class AgentStore {
 				input.detached ?? false,
 				input.edits === undefined || input.edits === null ? null : JSON.stringify(input.edits),
 				input.plan === undefined || input.plan === null ? null : JSON.stringify(input.plan),
+				input.kind ?? 'structure',
 				input.inLibrary ?? false,
 			],
 		);
@@ -150,7 +245,12 @@ export class AgentStore {
 	 */
 	async getBuildForAgent(id: string): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan
+			// `kind` is selected here too, even though the mod does not care what tier a build
+			// belongs to. Both readers share `toBuild`, and a column missing from one of two
+			// selects behind one mapper is a `BuildRow` whose `kind` is `undefined` while the
+			// type swears it is not — which surfaces far from here, as a filter that silently
+			// matches nothing.
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan, kind
 			 FROM builds WHERE id = $1`,
 			[id],
 		);
@@ -159,7 +259,7 @@ export class AgentStore {
 
 	async getBuild(id: string, scope: OwnerScope): Promise<BuildRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan
+			`SELECT id, name, size_x, size_y, size_z, block_count, voxels, program, detached, edits, plan, kind
 			 FROM builds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
 			[id, scope],
 		);
@@ -189,7 +289,7 @@ export class AgentStore {
 		const { rows } = await this.db.query(
 			`SELECT id, name, size_x, size_y, size_z, block_count,
 			        program IS NOT NULL AS has_program, plan IS NOT NULL AS has_plan,
-			        detached, created_at, updated_at
+			        kind, detached, created_at, updated_at
 			 FROM builds
 			 WHERE user_id IS NOT DISTINCT FROM $1::uuid AND in_library
 			 ORDER BY created_at DESC LIMIT $2`,
@@ -204,6 +304,7 @@ export class AgentStore {
 			blockCount: row.block_count,
 			hasProgram: row.has_program,
 			hasPlan: row.has_plan,
+			kind: row.kind,
 			detached: row.detached,
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
@@ -222,6 +323,159 @@ export class AgentStore {
 	async deleteBuild(id: string, scope: OwnerScope): Promise<boolean> {
 		const { rowCount } = await this.db.query(
 			`DELETE FROM builds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
+			[id, scope],
+		);
+		return (rowCount ?? 0) > 0;
+	}
+
+	// --- worlds ----------------------------------------------------------
+
+	async createWorld(input: {
+		name: string;
+		sizeX: number;
+		sizeZ: number;
+		minY: number;
+		maxY: number;
+		seaLevel: number;
+		regionSize: number;
+		heights: Uint8Array;
+		strata: Uint8Array;
+		doc: WorldDocument;
+		userId?: string | null;
+	}): Promise<string> {
+		const { rows } = await this.db.query<{ id: string }>(
+			`INSERT INTO worlds (user_id, name, size_x, size_z, min_y, max_y, sea_level, region_size, heights, strata, doc)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			 RETURNING id`,
+			[
+				input.userId ?? null,
+				input.name,
+				input.sizeX,
+				input.sizeZ,
+				input.minY,
+				input.maxY,
+				input.seaLevel,
+				input.regionSize,
+				Buffer.from(input.heights),
+				Buffer.from(input.strata),
+				JSON.stringify(input.doc),
+			],
+		);
+		return rows[0]!.id;
+	}
+
+	async getWorld(id: string, scope: OwnerScope): Promise<WorldRow | null> {
+		const { rows } = await this.db.query(
+			`SELECT id, name, size_x, size_z, min_y, max_y, sea_level, region_size,
+			        heights, strata, doc, created_at, updated_at
+			 FROM worlds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
+			[id, scope],
+		);
+		return rows[0] ? toWorld(rows[0]) : null;
+	}
+
+	/**
+	 * The world listing, newest first.
+	 *
+	 * `heights` and `strata` are deliberately absent from the SELECT rather than dropped from
+	 * the mapper afterwards. Selecting them and throwing them away still reads and detoasts
+	 * every blob, so the query would cost the same megabytes it exists to avoid.
+	 */
+	async listWorlds(scope: OwnerScope, limit = 200): Promise<WorldSummary[]> {
+		const { rows } = await this.db.query(
+			`SELECT id, name, size_x, size_z, min_y, max_y, sea_level, region_size,
+			        CASE WHEN jsonb_typeof(doc -> 'placements') = 'array'
+			             THEN jsonb_array_length(doc -> 'placements') ELSE 0 END AS placements,
+			        created_at, updated_at
+			 FROM worlds
+			 WHERE user_id IS NOT DISTINCT FROM $1::uuid
+			 ORDER BY created_at DESC LIMIT $2`,
+			[scope, limit],
+		);
+		return rows.map((row) => ({
+			id: row.id,
+			name: row.name,
+			sizeX: row.size_x,
+			sizeZ: row.size_z,
+			minY: row.min_y,
+			maxY: row.max_y,
+			seaLevel: row.sea_level,
+			regionSize: row.region_size,
+			placements: row.placements,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+		}));
+	}
+
+	/**
+	 * Rename, or save over, in one statement.
+	 *
+	 * Both edits go through here because both are the same UPDATE with a different set of
+	 * `COALESCE`d nulls, and because a world is not saved the way a build is: a build is
+	 * written once and renamed afterwards, while a world is a document somebody keeps editing,
+	 * so "save" has to overwrite the row rather than mint a second one. Splitting this into
+	 * `renameWorld` and `saveWorld` would be two methods with one WHERE clause between them —
+	 * and the WHERE clause is the part that carries the ownership rule.
+	 *
+	 * `world` is all-or-nothing on purpose, which is why it is one optional object rather than
+	 * nine optional fields. `heights` and `strata` are indexed by the extent stored beside
+	 * them, so writing either without the size it was measured at produces a row that decodes
+	 * into a sheared map — terrain that still looks like terrain.
+	 */
+	async updateWorld(
+		id: string,
+		scope: OwnerScope,
+		patch: {
+			name?: string;
+			world?: {
+				sizeX: number;
+				sizeZ: number;
+				minY: number;
+				maxY: number;
+				seaLevel: number;
+				regionSize: number;
+				heights: Uint8Array;
+				strata: Uint8Array;
+				doc: WorldDocument;
+			};
+		},
+	): Promise<boolean> {
+		const w = patch.world;
+		const { rowCount } = await this.db.query(
+			`UPDATE worlds
+			 SET name        = COALESCE($3, name),
+			     size_x      = COALESCE($4, size_x),
+			     size_z      = COALESCE($5, size_z),
+			     min_y       = COALESCE($6, min_y),
+			     max_y       = COALESCE($7, max_y),
+			     sea_level   = COALESCE($8, sea_level),
+			     region_size = COALESCE($9, region_size),
+			     heights     = COALESCE($10, heights),
+			     strata      = COALESCE($11, strata),
+			     doc         = COALESCE($12, doc),
+			     updated_at  = now()
+			 WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
+			[
+				id,
+				scope,
+				patch.name ?? null,
+				w?.sizeX ?? null,
+				w?.sizeZ ?? null,
+				w?.minY ?? null,
+				w?.maxY ?? null,
+				w?.seaLevel ?? null,
+				w?.regionSize ?? null,
+				w ? Buffer.from(w.heights) : null,
+				w ? Buffer.from(w.strata) : null,
+				w ? JSON.stringify(w.doc) : null,
+			],
+		);
+		return (rowCount ?? 0) > 0;
+	}
+
+	async deleteWorld(id: string, scope: OwnerScope): Promise<boolean> {
+		const { rowCount } = await this.db.query(
+			`DELETE FROM worlds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
 			[id, scope],
 		);
 		return (rowCount ?? 0) > 0;
@@ -512,6 +766,26 @@ function toBuild(row: Record<string, unknown>): BuildRow {
 		detached: row.detached as boolean,
 		edits: row.edits ?? null,
 		plan: row.plan ?? null,
+		kind: row.kind as BuildKind,
+	};
+}
+
+function toWorld(row: Record<string, unknown>): WorldRow {
+	const doc = (row.doc ?? {}) as Partial<WorldDocument>;
+	return {
+		id: row.id as string,
+		name: row.name as string,
+		sizeX: row.size_x as number,
+		sizeZ: row.size_z as number,
+		minY: row.min_y as number,
+		maxY: row.max_y as number,
+		seaLevel: row.sea_level as number,
+		regionSize: row.region_size as number,
+		heights: row.heights as Buffer,
+		strata: row.strata as Buffer,
+		doc: { strata: doc.strata, overlay: doc.overlay, placements: doc.placements },
+		createdAt: row.created_at as Date,
+		updatedAt: row.updated_at as Date,
 	};
 }
 

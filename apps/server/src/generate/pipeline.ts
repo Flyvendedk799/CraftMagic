@@ -229,7 +229,7 @@ export async function generateBuild(
 	// reference image is exactly the request a refine is for, and the brief's framing —
 	// build the subject, not the photograph — reads the same either way.
 	// A refine gets its components tagged with ids first: the diff tool addresses its ops to
-	// them, and ids the program already carried (the layouter writes plan-item ids) survive
+	// them, and ids the program already carried (Architecture mode writes plan-item ids) survive
 	// untouched. This tagged copy — not the caller's original — is the base every patch
 	// applies against, so op targets and program contents can never disagree.
 	const refineBase = options.refineOf ? assignComponentIds(options.refineOf) : null;

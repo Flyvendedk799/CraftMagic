@@ -2,13 +2,13 @@
  * The studio: one address for both ways of making a building.
  *
  * Two modes, not two products. **Build** is the voxel editor — you place blocks, the building
- * is what the blocks add up to. **Plan** is the layouter — you draw rooms, the blocks are a
+ * is what the blocks add up to. **Plan** is Architecture mode — you draw rooms, the blocks are a
  * consequence. Both compile to the same `BuildProgram` and reach the same exports, and the
  * fact that they were two routes with two nav entries made them read as two tools when they
  * are two hands of one.
  *
  * The shell owns exactly three things: which mode is mounted, the switcher pill that flips
- * it, and the Ctrl+K command palette. `EditorPage` and `LayouterPage` render here *intact* —
+ * it, and the Ctrl+K command palette. `EditorPage` and `ArchitecturePage` render here *intact* —
  * their HUDs, shortcuts, autosave and undo are untouched, and each keeps its own history
  * (undo in Plan never unwinds a Build edit). Everything the palette does is a navigation, so
  * the pages react to a command exactly as they would to a typed URL.
@@ -23,16 +23,31 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { STYLE_PACKS } from '@craftmagic/core';
 import { BUILD_IDS, generatedBuilds } from '../editor/builds.js';
 import { EditorPage } from '../editor/EditorPage.js';
-import { LayouterPage } from '../layouter/LayouterPage.js';
+import { ArchitecturePage } from '../architecture/ArchitecturePage.js';
+import { WorldPage } from '../world/WorldPage.js';
 import { CommandPalette, type Command } from './CommandPalette.js';
+import { MODE_SPECS, STUDIO_MODES, modeParam, parseMode, type StudioMode } from './mode.js';
 import './studio.css';
 
-export type StudioMode = 'build' | 'plan';
+export type { StudioMode } from './mode.js';
+
+/**
+ * Which page each mode mounts.
+ *
+ * A record rather than a chain of ternaries. Two modes fit in a ternary; three is where one
+ * gets forgotten in the mount but not the switch, and the symptom is a pill that lights up
+ * over the wrong page.
+ */
+const MODE_PAGES: Readonly<Record<StudioMode, () => JSX.Element>> = {
+  build: EditorPage,
+  arch: ArchitecturePage,
+  world: WorldPage,
+};
 
 export function StudioPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const mode: StudioMode = searchParams.get('mode') === 'plan' ? 'plan' : 'build';
+  const mode = parseMode(searchParams.get('mode'));
   const [palette, setPalette] = useState(false);
 
   const setMode = useCallback(
@@ -40,8 +55,9 @@ export function StudioPage() {
       setSearchParams(
         (params) => {
           // Absent means build — the default every redirected `/editor?…` link relies on.
-          if (next === 'plan') params.set('mode', 'plan');
-          else params.delete('mode');
+          const value = modeParam(next);
+          if (value === null) params.delete('mode');
+          else params.set('mode', value);
           return params;
         },
         { replace: true },
@@ -79,27 +95,21 @@ export function StudioPage() {
       navigate({ pathname: '/studio', search: search ? `?${search}` : '' });
     };
 
-    const list: Command[] = [
-      mode === 'plan'
-        ? {
-            id: 'mode-build',
-            label: 'Switch to Build mode',
-            hint: 'Blocks, brushes and the voxel editor',
-            run: () => setMode('build'),
-          }
-        : {
-            id: 'mode-plan',
-            label: 'Switch to Plan mode',
-            hint: 'Rooms, storeys and the floorplan tool',
-            run: () => setMode('plan'),
-          },
-    ];
+    // Every mode except the one you are in. This was a ternary offering the single other
+    // mode, which with three of them would silently hide one.
+    const list: Command[] = STUDIO_MODES.filter((id) => id !== mode).map((id) => ({
+      id: `mode-${id}`,
+      label: `Switch to ${MODE_SPECS[id].label} mode`,
+      hint: MODE_SPECS[id].hint,
+      run: () => setMode(id),
+    }));
 
     for (const id of BUILD_IDS) {
       list.push({
         id: `build-${id}`,
         label: `Open build: ${id[0]!.toUpperCase()}${id.slice(1)}`,
         hint: 'Sample',
+        // Deleting the mode is what makes this land in Build, which is where a build opens.
         run: () => withSearch((params) => {
           params.delete('mode');
           params.set('build', id);
@@ -155,27 +165,26 @@ export function StudioPage() {
     return list;
   }, [palette, mode, searchParams, navigate, setMode]);
 
+  // Resolved once per render rather than inside the JSX: mounting through a variable is what
+  // keeps "which page" and "which pill is lit" reading from the same table.
+  const Mounted = MODE_PAGES[mode];
+
   return (
     <div className="studio">
-      {mode === 'plan' ? <LayouterPage /> : <EditorPage />}
+      <Mounted />
 
       <div className="studio__switch" role="group" aria-label="Studio mode">
-        <button
-          type="button"
-          aria-pressed={mode === 'build'}
-          title="The voxel editor — place blocks"
-          onClick={() => setMode('build')}
-        >
-          Build
-        </button>
-        <button
-          type="button"
-          aria-pressed={mode === 'plan'}
-          title="The layouter — draw rooms"
-          onClick={() => setMode('plan')}
-        >
-          Plan
-        </button>
+        {STUDIO_MODES.map((id) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={mode === id}
+            title={MODE_SPECS[id].hint}
+            onClick={() => setMode(id)}
+          >
+            {MODE_SPECS[id].label}
+          </button>
+        ))}
         <button
           type="button"
           className="studio__palette-key"

@@ -6,7 +6,7 @@
  * same design system the printed guide uses, so the words on screen and the words on paper
  * agree. Clicking a row points the camera at the part; the eye toggles it out of the
  * expansion entirely (a re-expand without the component, not a render trick, so exports and
- * block counts follow); Solo isolates one part the way the layouter isolates one room.
+ * block counts follow); Solo isolates one part the way Architecture mode isolates one room.
  *
  * Hiding is deliberately non-destructive view state: the program is never modified, so
  * nothing here can corrupt a build — the worst a bug can do is show the wrong subset.

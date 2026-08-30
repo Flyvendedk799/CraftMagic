@@ -23,7 +23,7 @@ reliably get wrong.
 |---|---|
 | `packages/core` | Shared, isomorphic: IR + expander, block registry, picture-to-blocks, `.schem` writer, guide logic, agent protocol |
 | `apps/server` | Fastify — API, auth, Claude pipeline, agent WebSocket gateway; also serves the built frontend |
-| `apps/web` | React + Vite + three.js editor, floorplan layouter and site |
+| `apps/web` | React + Vite + three.js editor, floorplan tool and site |
 | `mod` | Fabric mod for Minecraft 26.2 (Gradle, outside the npm workspaces) |
 | `tools/registry-gen` | Dev-only. Generates the block registry from Mojang's data generator |
 
@@ -283,13 +283,14 @@ Ctrl+Z inside the generation prompt does *not* undo. On a 100k-cell fill the op 
 ~8 ms to build and ~2.5 ms to undo through `VoxelWorld`; a 1.25M-cell box op is 10 MB and
 applies in ~34 ms.
 
-**The layouter — done.** A second authoring tool at `/layouter`, for the job the voxel editor
+**Architecture mode — done.** A second authoring tool at `/studio?mode=arch` (and still at
+`/layouter`, which redirects with its query intact), for the job the voxel editor
 is worst at: interiors. Placing a block at a time is fine for a facade and miserable for a
 floorplan, because the decisions that matter inside — where a wall runs, where a door goes
 through it, whether you can walk from the entrance to the back room — are invisible from
 outside and hard to nudge one block at a time.
 
-So the layouter's document is a **plan**, not voxels: a stack of storeys holding rooms, free
+So Architecture mode's document is a **plan**, not voxels: a stack of storeys holding rooms, free
 partitions, doors, windows, staircases, floor voids, platforms and columns, drawn top-down on
 a block-ruled SVG surface. `compile.ts` turns that plan into an ordinary `BuildProgram` on
 every change, which is the whole point — the export controls on the page are literally the
@@ -297,6 +298,55 @@ editor's `ExportBar`, so the schematic, the program JSON, the library, "Send to 
 printable guide all work with no export code written twice. There is **no prompt box**: the
 premise of the tool is that you already know what you want, and everything on it is direct
 manipulation.
+
+**World mode — done.** The third tier, at `/studio?mode=world`. Build makes a structure and
+Architecture makes what is inside one; World is where both come back as *components* and stand
+on ground you sculpt — a spawn hub, a map, an environment.
+
+A world can never be one `VoxelGrid`. At 1024×160×1024 that is 320 MB and 40,960 mesh chunks
+against a mesher with no LOD and no eviction, so the moment a world is a grid it is a world
+nobody can open. The document is therefore a **description**: a heightfield of one `Int16`
+height and one stratum byte per column (3 MB at 1024², standing for 320 MB of voxels — that
+ratio is the whole design), a sparse set of 16³ overlay chunks for the caves, tunnels and
+overhangs a heightfield cannot express, and a list of placements referencing library builds by
+id. `materializeRegion` turns any region of it into an ordinary grid on demand, which is both
+what the 3D view renders and what the mod will be sent.
+
+The page is a split, and the split is the argument. Terrain is sculpted **from above**, because
+a brush in perspective paints an ellipse that changes size with distance and hides whatever is
+behind the hill you are raising; from above it is the circle it claims to be. The result is
+checked in **3D**, in the editor's own renderer, one region at a time — which is the only
+reason that viewport survives contact with a world. The 3D view follows where you are working
+rather than sitting on region 0,0.
+
+Seven tools, all column operations over a falloff disc: **Raise** and **Lower** (the Leveler),
+**Flatten** towards a target height, **Smooth**, **Terrainer** to paint ground material along a
+drag, **Carve** to cut air into the overlay, and **Place**. Smooth and Flatten are not
+niceties — raise and lower alone produce spiky garbage that reads as a broken tool, and a hub
+needs buildable pads.
+
+Three things cost more than they look. The terrain arrays are **mutated in place** and React is
+told by a revision counter, because copying a 3 MB `Int16Array` on every pointer move makes the
+Leveler unusable; undo stays exact because the stroke recorder keeps each column's value from
+its *first* touch, and a brush dragged in a circle crosses its own path constantly. Strokes
+**interpolate between pointer samples**, since a pointer at 60 Hz moving quickly reports
+positions tens of blocks apart and a brush stamped only there paints a dotted line. And drafts
+live in **IndexedDB**, not localStorage: one 1024² world is 3 MB against a ~5 MB per-origin
+budget already shared with the Architecture plans, and localStorage returns `false` rather than
+throwing, so the failure mode would be a silent non-save discovered at the end of a session.
+
+The renderer streams now, so a world is not bounded by meshes: `VoxelWorld` keeps a
+camera-driven working set (mesh within 192 blocks, evict past 288, and the band between is
+what stops a camera parked on the boundary thrashing) over a chunked store in the worker
+that scales with content rather than volume. It engages only above 4,096 chunks, and the
+engine caps a single build at 2,560 — so no build can reach the threshold, and the viewport
+behaves for a building exactly as it did before.
+
+`tools/verify-world.mjs` drives the real page over CDP with real mouse events — it raises
+ground and reads the height back, undoes and checks it landed exactly where it started, paints
+a material and reads it back, carves and watches the region's block count fall, then reloads
+and checks it all survived — then signs in, arms a saved build from the shelf, drops it on
+the map and checks the materialised region actually contains it. 24 checks.
 
 The compiler works in painting passes rather than in booleans — structure, then carves (floor
 voids, stairwells), then apertures, then the stairs themselves — because the IR paints
@@ -690,9 +740,9 @@ cd mod && JAVA_HOME="C:/Users/tobia/tools/jdk25" ./gradlew verifySchematic -Psch
 ```
 
 **Saved builds are components.** Every build in your library can be placed in a layout. Pick
-one in the layouter's Components panel, click the plan, and it lands on that storey's floor;
+one in Architecture mode's Components panel, click the plan, and it lands on that storey's floor;
 place it again and it is two of them; `R` turns one a quarter. It compiles like everything
-else the layouter draws, so `.schem` download, the printable guide, the library and "Send to
+else Architecture mode draws, so `.schem` download, the printable guide, the library and "Send to
 game" all carry it with no export code written twice.
 
 The IR gained a `prefab` component and a `program.prefabs` table for it. Everything else in
@@ -732,7 +782,7 @@ lets a restored plan draw something the instant it opens instead of a second lat
 wrong place.
 
 ```bash
-node tools/verify-layouter-place.mjs    # shelf → click → compile → blocks → turn → reload
+node tools/verify-architecture-place.mjs    # shelf → click → compile → blocks → turn → reload
 ```
 
 That driver deliberately places a **non-square** build: a 19×19 pavilion is unchanged by a

@@ -118,10 +118,20 @@ try {
 		return result.value;
 	};
 
+	/**
+	 * Poll for a condition, forcing a frame each time round.
+	 *
+	 * Headless Chrome stops compositing once the page is visually static, and the editor
+	 * reports its meshing progress from a `requestAnimationFrame` callback — so a wait on a
+	 * build that finished seconds ago can run out its whole timeout having never been told.
+	 * Capturing a throwaway frame forces a BeginFrame. It is timing-dependent, which is worse
+	 * than a hard failure: this driver passed and failed on alternate runs before the fix.
+	 */
 	const waitFor = async (expression, label, timeoutMs = 30_000) => {
 		const deadline = Date.now() + timeoutMs;
 		while (Date.now() < deadline) {
 			if (await evaluate(expression)) return true;
+			await send('Page.captureScreenshot', { format: 'jpeg', quality: 1 });
 			await sleep(120);
 		}
 		throw new Error(`timed out waiting for ${label}`);
@@ -333,7 +343,14 @@ try {
 } finally {
 	child.kill();
 	await sleep(300);
-	fs.rmSync(profile, { recursive: true, force: true });
+	try {
+		fs.rmSync(profile, { recursive: true, force: true });
+	} catch {
+		// Windows holds the browser profile open for a moment after the process exits, and the
+		// rm throws EPERM rather than waiting. A temp directory outliving the run by a few
+		// hundred milliseconds is not a test result, and letting it escape turns a green run
+		// into a non-zero exit with a stack trace where the summary should be.
+	}
 }
 
 process.exit(exitCode);

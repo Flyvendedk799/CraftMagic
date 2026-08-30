@@ -58,7 +58,7 @@ export interface EditorCanvasProps {
    * Takes over from `layerClip`/`layerFloor` entirely when given, rather than intersecting
    * with them: two ways of saying where the top cut is would eventually disagree, and the
    * caller that wants a box is not also operating a layer slider. The editor passes layers,
-   * the layouter passes a box.
+   * Architecture mode passes a box.
    */
   clip?: ClipBox | null;
   onHover?: (hit: VoxelHit | null) => void;
@@ -181,6 +181,9 @@ function Scene({
   enhanced = false,
 }: EditorCanvasProps) {
   const scene = useThree((state) => state.scene);
+  const gl = useThree((state) => state.gl);
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
   const worldRef = useRef<VoxelWorld | null>(null);
   // Resolved once, here, so the mount effect and the update effect cannot disagree about
   // which of the two ways of expressing a cut is in force.
@@ -231,12 +234,27 @@ function Scene({
   useFrame(() => {
     const world = worldRef.current;
     if (!world) return;
-    world.update();
+    // The orbit target, not the camera: it is the point on the build the viewer is looking
+    // at, and it is what the flight keys carry along with them. The camera position would
+    // put the working set behind the viewer whenever they pulled back to look at anything.
+    world.update(controls?.target ?? camera.position);
     // Reporting every frame would re-render the HUD at 60Hz for no reason.
     if (world.remaining !== lastRemaining.current) {
       lastRemaining.current = world.remaining;
       progressRef.current?.(world.remaining);
     }
+
+    // Published on the canvas rather than through React, because these change on almost
+    // every frame of a flight and nothing on screen reads them — they exist so a headless
+    // driver can see the working set breathe, the way `data-remaining` lets one see the
+    // mesh queue drain. Writing an unchanged value would still dirty the attribute.
+    const canvas = gl.domElement;
+    const resident = String(world.resident);
+    if (canvas.dataset.chunks !== resident) canvas.dataset.chunks = resident;
+    const evicted = String(world.evicted);
+    if (canvas.dataset.evicted !== evicted) canvas.dataset.evicted = evicted;
+    const streaming = world.streamed ? '1' : '0';
+    if (canvas.dataset.streaming !== streaming) canvas.dataset.streaming = streaming;
   });
 
   return (
@@ -347,7 +365,7 @@ function Framing({
   focus.current = view?.focus ?? null;
 
   // On the build changing *shape* — a new structure, a resize — and on nothing else. Keyed on
-  // the three numbers rather than on the size object, which the layouter rebuilds on every
+  // the three numbers rather than on the size object, which Architecture mode rebuilds on every
   // recompile: an object identity here meant the camera snapped back to the whole building
   // every time a wall moved, which is unusable once it is pointed at one room.
   useEffect(() => {
@@ -449,7 +467,7 @@ const FOCUS_MARGIN = 1.25;
  * Point the camera at a box, close enough that the box fills the frame.
  *
  * The distance is solved against the camera's own field of view rather than taken as a
- * multiple of the box, and specifically against the *narrower* of the two: the layouter's
+ * multiple of the box, and specifically against the *narrower* of the two: Architecture mode's
  * model sits in a tall, narrow column, where the horizontal field is barely half the vertical
  * one, and a distance chosen from the vertical field alone puts the near walls of a room off
  * both sides of the panel. Solving it means the framing is right in a column, in a wide panel

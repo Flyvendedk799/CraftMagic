@@ -45,7 +45,7 @@ function centres(buffers: { positions: Float32Array } | null): Set<string> {
 describe('meshCuts', () => {
   it('caps the shared wall a storey cutaway would otherwise look straight through', () => {
     // Two rooms sharing the wall column at x=3, with a ceiling over both at y=4 — the
-    // geometry the layouter compiles for two rooms drawn edge to edge.
+    // geometry Architecture mode compiles for two rooms drawn edge to edge.
     const src = world(7, 6, 7);
     src.fill([0, 0, 0], [6, 0, 6], 1); // floor
     src.fill([0, 1, 0], [6, 3, 6], 1); // solid mass, carved below

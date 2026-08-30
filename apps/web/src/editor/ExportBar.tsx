@@ -15,6 +15,7 @@ import { useCallback, useState } from 'react';
 import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 import { SendToGame } from '../agent/SendToGame.js';
 import { SaveToLibrary } from '../library/SaveToLibrary.js';
+import type { BuildKind } from '../library/library.js';
 import { downloadProgram, downloadSchematic, formatBytes } from './download.js';
 import { Section } from './Section.js';
 
@@ -31,11 +32,13 @@ export interface ExportBarProps {
   blockCount: number;
   /** The hand-edit layer for the library save, fetched at click time. Optional: pages with no session pass nothing. */
   getEdits?: () => EditLayer | null;
-  /** The layouter's drawing, saved beside the compiled build so it can be reopened as a plan. */
+  /** Architecture mode's drawing, saved beside the compiled build so it can be reopened as a plan. */
   plan?: unknown;
+  /** Which tier made this build. Passed straight through to the save. */
+  kind?: BuildKind;
 }
 
-export function ExportBar({ grid, program, name, detached, guideHref, blockCount, getEdits, plan }: ExportBarProps) {
+export function ExportBar({ grid, program, name, detached, guideHref, blockCount, getEdits, plan, kind }: ExportBarProps) {
   const [written, setWritten] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -113,7 +116,7 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
       {!empty && (
         <>
           <Section id="save" title="Save" defaultOpen={false}>
-            <SaveToLibrary name={name} grid={grid} program={program} detached={detached} getEdits={getEdits} plan={plan} />
+            <SaveToLibrary name={name} grid={grid} program={program} detached={detached} getEdits={getEdits} plan={plan} kind={kind} />
           </Section>
           {/* Open by default: this is the headline feature and it used to sit below the fold,
               where nobody found it. */}

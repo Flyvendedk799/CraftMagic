@@ -1306,7 +1306,7 @@ export function EditorPage() {
           <AccountPanel />
         </div>
 
-        {/* Dashboard, the layouter and the mod page were all listed here. All three are one
+        {/* Dashboard, Architecture mode and the mod page were all listed here. All three are one
             click away in the bar above now, and a link that repeats one already on screen is
             furniture. `/status` stays because nothing else in the product points at it. */}
         <p className="hud__sub" style={{ marginTop: '0.875rem' }}>

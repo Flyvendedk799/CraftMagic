@@ -28,3 +28,6 @@ tools/registry-gen/work/
 .vscode/
 .idea/
 *.log
+
+# Agent worktrees, created by the harness inside the repo.
+.claude/

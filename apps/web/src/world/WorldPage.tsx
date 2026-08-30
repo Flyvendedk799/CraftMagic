@@ -39,6 +39,8 @@ import { AppNav } from '../shell/AppNav.js';
 import { useAuth } from '../library/auth.js';
 import { useComponents, type ShelfEntry } from '../library/components.js';
 import { localStore, remoteStore } from './api.js';
+import { useAgents } from '../agent/useAgents.js';
+import { runOf, sendRegion } from './send.js';
 import { WorldMap } from './WorldMap.js';
 import { WorldPreview } from './WorldPreview.js';
 import { TerrainPanel } from './TerrainPanel.js';
@@ -79,6 +81,8 @@ export function WorldPage() {
   const [showRegions, setShowRegions] = useState(true);
   const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const agents = useAgents();
 
   /**
    * Which builds the map needs blocks for.
@@ -245,6 +249,53 @@ export function WorldPage() {
       session.commitCarve(before, after, [...touched]);
     },
     [doc, session],
+  );
+
+  /**
+   * Materialise one region and hand it to the mod.
+   *
+   * The run has an order that only the server can enforce: region 0 is placed by the player
+   * and reports where it landed, and every region after it is measured from that report — so
+   * a send that is not the first will be refused until the first has finished. That refusal
+   * is surfaced as the server words it rather than flattened into "could not send", because
+   * "place the first region and I will line the rest up behind it" is a thing the user can
+   * act on.
+   */
+  const send = useCallback(
+    async (rx: number, rz: number) => {
+      const online = agents.agents.find((agent) => agent.online);
+      if (!online) {
+        setNotice(
+          agents.needsAccount
+            ? 'Sign in and pair a Minecraft world to send regions to it.'
+            : 'No paired Minecraft world is online. Open the Minecraft mod page to pair one.',
+        );
+        return;
+      }
+
+      const run = runOf(doc);
+      const step = run.find((entry) => entry.rx === rx && entry.rz === rz);
+      if (!step) return;
+
+      setSending(true);
+      setNotice(`Materialising region ${rx},${rz}…`);
+      try {
+        const { blocks } = await sendRegion(
+          doc, rx, rz, step.index, step.total, online.id, library.catalogue,
+        );
+        setNotice(
+          step.index === 0
+            ? `Region ${rx},${rz} is on its way — ${blocks.toLocaleString()} blocks. Place it in game; ` +
+              'where it lands is where the rest of the map is measured from.'
+            : `Region ${rx},${rz} queued — ${blocks.toLocaleString()} blocks.`,
+        );
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : String(error));
+      } finally {
+        setSending(false);
+      }
+    },
+    [doc, agents, library.catalogue],
   );
 
   const resize = useCallback(
@@ -427,12 +478,11 @@ export function WorldPage() {
               setRegion({ rx, rz });
             }}
             onSendRegion={(rx, rz) => {
+              setPinned(true);
               setRegion({ rx, rz });
-              setNotice(
-                `Region ${rx},${rz} is previewed on the right. Sending a region to Minecraft ` +
-                  'needs the multi-region job protocol, which is not built yet.',
-              );
+              void send(rx, rz);
             }}
+            sending={sending}
           />
         </aside>
       </div>

@@ -89,8 +89,18 @@ export function useWorldSession(
 
   const bump = useCallback(() => setRevision((n) => n + 1), []);
 
-  // The draft is read once, at mount. Re-reading it later would let another tab's world
-  // replace the one being edited here mid-gesture.
+  /**
+   * The draft is read once, at mount, and this effect must never gain a dependency.
+   *
+   * It briefly had `store`, so that listing and loading could share one effect, and the bug
+   * that bought was subtle and intermittent: `store` changes identity exactly once, when auth
+   * resolves from loading to signed-in-or-not, which lands a few hundred milliseconds into the
+   * session. Re-running the effect then re-read the draft — the draft as it was *before*
+   * anything done in those few hundred milliseconds, because the autosave is debounced — and
+   * assigned it over the live document. Sculpt quickly enough after opening the page and your
+   * first strokes vanished, then autosaved themselves away. Two runs in three of the world
+   * driver caught it; a person would have called it flaky and moved on.
+   */
   useEffect(() => {
     let live = true;
     void loadDraft().then((draft) => {
@@ -99,13 +109,22 @@ export function useWorldSession(
       setLoading(false);
       bump();
     });
+    return () => {
+      live = false;
+    };
+  }, [bump]);
+
+  // The saved list, on the other hand, *should* follow the store: signing in has to replace
+  // this browser's worlds with the account's.
+  useEffect(() => {
+    let live = true;
     void store.list().then((rows) => {
       if (live) setSaved(rows);
     });
     return () => {
       live = false;
     };
-  }, [bump, store]);
+  }, [store]);
 
   // Debounced draft autosave. `revision` is the trigger rather than the document, because the
   // document's identity deliberately does not change when terrain does.

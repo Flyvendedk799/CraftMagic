@@ -42,6 +42,8 @@ export interface WorldPanelProps {
   /** Jump the map to a region. */
   onFrameRegion: (rx: number, rz: number) => void;
   onSendRegion: (rx: number, rz: number) => void;
+  /** One region at a time: the run is ordered, and a second send would be refused anyway. */
+  sending?: boolean;
 }
 
 /** Blocks a second the builder bot places — 400 per tick, twenty ticks. Fixed by the mod. */
@@ -206,6 +208,7 @@ export function WorldPanel(props: WorldPanelProps) {
               <button
                 type="button"
                 className="world__mini"
+                disabled={props.sending}
                 onClick={() => props.onSendRegion(region.rx, region.rz)}
               >
                 Send

@@ -42,6 +42,7 @@ import {
 	WORLD_LIMITS,
 	WORLD_VERSION,
 	type VoxelGrid,
+	type JobRegion,
 } from '@craftmagic/core';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
@@ -66,6 +67,35 @@ const MAX_BUILD_NAME = 80;
  * Reaching for a third value here is the symptom, not the fix.
  */
 const BUILD_KINDS = ['structure', 'interior'] as const;
+
+/**
+ * The region metadata on a job, or `null` for a lone build.
+ *
+ * `'bad'` rather than `null` for a malformed one, because the two mean opposite things: no
+ * region is an ordinary send and has to keep working, while a region that arrived mangled
+ * would place a piece of somebody's map at the wrong coordinates and look deliberate.
+ */
+export function readRegion(raw: unknown): JobRegion | null | 'bad' {
+	if (raw === undefined || raw === null) return null;
+	if (typeof raw !== 'object') return 'bad';
+	const r = raw as Record<string, unknown>;
+	const offset = r.offset as Record<string, unknown> | undefined;
+	const int = (value: unknown) => (typeof value === 'number' && Number.isInteger(value) ? value : null);
+
+	const worldId = typeof r.worldId === 'string' && r.worldId.length > 0 ? r.worldId : null;
+	const index = int(r.index);
+	const total = int(r.total);
+	const rx = int(r.rx);
+	const rz = int(r.rz);
+	const x = int(offset?.x);
+	const y = int(offset?.y);
+	const z = int(offset?.z);
+	if (worldId === null || index === null || total === null || rx === null || rz === null) return 'bad';
+	if (x === null || y === null || z === null) return 'bad';
+	if (index < 0 || total < 1 || index >= total) return 'bad';
+
+	return { worldId, index, total, rx, rz, offset: { x, y, z } };
+}
 
 export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 	return async (app) => {
@@ -723,10 +753,23 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 			const user = await auth.requireUser(request, reply);
 			if (!user) return;
 
-			const body = request.body as { agentId?: unknown; buildId?: unknown } | null;
+			const body = request.body as {
+				agentId?: unknown;
+				buildId?: unknown;
+				region?: unknown;
+			} | null;
 			const agentId = typeof body?.agentId === 'string' ? body.agentId : '';
 			const buildId = typeof body?.buildId === 'string' ? body.buildId : '';
 			if (!agentId || !buildId) return reply.code(400).send({ error: 'bad_request' });
+
+			// A region is an ordinary build as far as this route and the database are concerned —
+			// it is materialised, saved and queued like any other. What the extra field carries is
+			// where in the map it belongs, which nothing downstream of the hub can work out for
+			// itself: the mod would otherwise centre every region of a world on whichever player
+			// happened to be standing nearby, and a sixteen-region map would land as sixteen
+			// buildings in a heap.
+			const region = readRegion(body?.region);
+			if (region === 'bad') return reply.code(400).send({ error: 'bad_region' });
 
 			// Both sides are checked. Owning the build is not enough — that would let anyone
 			// build their own creation in a stranger's world — and owning the world is not
@@ -747,7 +790,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 			}
 
 			const job = await store!.getJob(created.id, user.id);
-			const delivered = job ? await hub!.offer(job) : false;
+			const delivered = job ? await hub!.offer(job, region ?? undefined) : false;
 
 			return reply.code(202).send({
 				id: created.id,

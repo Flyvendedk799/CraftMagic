@@ -1,4 +1,4 @@
-# Patch 2.0 — the editor, layouter and generation engine, taken up a level
+# Patch 2.0 — the editor, Architecture mode and generation engine, taken up a level
 
 This document is the working record of the 2.0 upgrade: what shipped on this branch, and the
 remainder of the approved roadmap for follow-up work.
@@ -29,7 +29,7 @@ remainder of the approved roadmap for follow-up work.
 - Selection verbs: Cut, rotate 90° in place, mirror X/Z in place; clipboard mirror on both
   axes; `.schem` import (full Sponge v2 reader) and program-JSON import.
 
-**Layouter control:**
+**Architecture control:**
 - **Refine with AI**: the drawn plan, compiled, goes through the server's refine pipeline —
   "add window boxes and a chimney" on top of what you drew. The plan stays untouched.
 - **Per-storey heights** (a double-height hall under bedrooms), roof **pitch** and
@@ -72,7 +72,7 @@ remainder of the approved roadmap for follow-up work.
   validated with a live eval run — this box has no API key; run `tools/eval/run.mjs --live`
   before shipping the prompt to production.*
 
-**Layouter round-trip (S3):**
+**Architecture round-trip (S3):**
 - The compiler tags every component with the plan item that drew it (the additive `id`
   field; room labels ride as `label`). Clicking a wall in the 3D model resolves voxel →
   part → component id → plan item and selects it on the plan, jumping storeys if needed.
@@ -90,10 +90,34 @@ remainder of the approved roadmap for follow-up work.
 - `/editor` and `/layouter` live on as search-preserving redirects (old shared links keep
   working, `?build=…&p.*` intact); AppNav collapses Editor+Layouter into one Studio entry.
 
+**Three tiers (S5):**
+- The Layouter is now **Architecture**, and the studio has a third mode: **World**. Build makes
+  a structure, Architecture makes what is inside one, and both save as *components* — a saved
+  build carries a `kind` (migration 007) so a shelf can offer structures and interiors
+  separately instead of offering you every row in your library.
+- `packages/core/src/world/` holds the world document and `materializeRegion`. A world is a
+  description — a 3-byte-per-column heightfield, a sparse 16³ overlay for caves and overhangs,
+  and placements by build id — that materialises into an ordinary `VoxelGrid` one region at a
+  time. That is also exactly the shape region-by-region delivery needs, so the two constraints
+  agree with each other rather than fighting.
+- World mode: a top-down raster map to sculpt in, the editor's own renderer for the 3D check,
+  and seven column tools (Raise, Lower, Flatten, Smooth, Terrainer, Carve, Place). Drafts in
+  IndexedDB, per-stroke delta undo, `tools/verify-world.mjs` with 21 checks.
+- Binary voxel transport (S0) landed first and had to: `POST /api/builds` sent voxels as a JSON
+  number array with no `bodyLimit`, so a build at the engine's own 256×160×256 cap was a 20 MB
+  body against Fastify's 1 MiB default — 20× too large to save. It is now 0.15 MB.
+
 ## Remaining roadmap (approved, not yet built)
 
 1. **N-variation generation** with a thumbnail picker, and complexity-based effort/model
    routing — both gated on live eval numbers.
+2. **The renderer ceiling.** `VoxelWorld` still meshes every chunk at load and keeps every mesh,
+   so the honest limit is about 384×160×384 — fine for a region, not for a whole world in one
+   view. Camera-driven working set with eviction is the fix.
+3. **Region-by-region delivery.** `job.offer` carries exactly one build, and `JobManager`
+   centres every build on the player — so without a region offset every region of a world would
+   land on top of the last. The anchor round-trip the fix needs already exists.
+4. **Worlds server-side.** Drafts are local. A `worlds` table is what makes them portable.
 
 Explicitly rejected (with reasons recorded in the plan): a Mojang texture atlas (asset
 redistribution), a program→plan decompiler (lossy inverse), a wall-graph rework, smart

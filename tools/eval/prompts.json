@@ -1,0 +1,17 @@
+{
+  "comment": "Golden prompt set for the generation eval. Each entry is one live generation; `expect` fields are scored, not enforced — a miss lowers the score and prints, nothing throws. Run with tools/eval/run.mjs.",
+  "prompts": [
+    { "id": "cottage", "prompt": "a small stone cottage with a chimney and a garden path", "size": "medium", "expect": { "minBlocks": 300, "roles": ["roof_primary", "window", "door"], "interior": true, "params": 1 } },
+    { "id": "watchtower", "prompt": "a tall round watchtower with a conical roof and arrow slits", "size": "medium", "expect": { "minBlocks": 400, "roles": ["wall_primary", "roof_primary"], "interior": true, "params": 1 } },
+    { "id": "barn", "prompt": "a big red barn with white trim and a hayloft", "size": "large", "expect": { "minBlocks": 800, "roles": ["wall_primary", "trim", "door"], "interior": true } },
+    { "id": "bridge", "prompt": "a stone arch bridge over a river, with lanterns on the parapets", "size": "medium", "expect": { "minBlocks": 300, "roles": ["light"] } },
+    { "id": "lighthouse", "prompt": "a striped lighthouse on a rocky base", "size": "medium", "expect": { "minBlocks": 400, "interior": true, "params": 1 } },
+    { "id": "temple", "prompt": "a small japanese temple with a curved tiered roof", "size": "medium", "expect": { "minBlocks": 500, "roles": ["roof_primary", "frame"] } },
+    { "id": "windmill", "prompt": "a dutch windmill with four sails", "size": "medium", "expect": { "minBlocks": 400, "interior": true } },
+    { "id": "castle-gate", "prompt": "a castle gatehouse with two towers, a portcullis arch and battlements", "size": "large", "expect": { "minBlocks": 1200, "roles": ["wall_primary", "wall_accent"], "interior": true } },
+    { "id": "treehouse", "prompt": "a treehouse in a big oak, with a ladder and a rope bridge stub", "size": "medium", "expect": { "roles": ["foliage"], "interior": true } },
+    { "id": "ship", "prompt": "a small wooden sailing ship with one mast", "size": "medium", "expect": { "minBlocks": 300 } },
+    { "id": "modern-house", "prompt": "a flat-roofed modern house with floor-to-ceiling windows and two storeys", "size": "medium", "expect": { "roles": ["window"], "interior": true, "params": 1 } },
+    { "id": "ruin", "prompt": "the mossy ruin of a small chapel, one wall collapsed", "size": "small", "expect": { "roles": ["wall_accent"] } }
+  ]
+}

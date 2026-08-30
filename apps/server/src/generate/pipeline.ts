@@ -13,10 +13,13 @@
  */
 
 import {
+	applyProgramPatch,
+	assignComponentIds,
 	blockBudget,
 	expand,
 	fitToBudget,
 	isScaled,
+	looksLikePatch,
 	partialProgram,
 	type BuildProgram,
 	type ExpandIssue,
@@ -25,14 +28,15 @@ import {
 } from '@craftmagic/core';
 import schema from '@craftmagic/core/schema' with { type: 'json' };
 import { providerErrorFacts } from '@flyvendedk799/ai-auth';
+import { programPatchSchema } from './patchSchema.js';
 import { pictureBrief, refinePrompt, repairPrompt, sizeBrief, systemPrompt } from './prompt.js';
 import { schemaIssues } from './validate.js';
 import type { ModelId } from './pricing.js';
 import type { Provider, ProviderImage, ProviderReply, ProviderSession } from './providers.js';
-import { TOOL_NAME } from './providers.js';
+import { PATCH_TOOL_NAME, TOOL_NAME } from './providers.js';
 import { BudgetExceededError, type SpendLedger } from './spend.js';
 
-export { TOOL_NAME } from './providers.js';
+export { PATCH_TOOL_NAME, TOOL_NAME } from './providers.js';
 
 export interface GenerateOptions {
 	prompt: string;
@@ -205,8 +209,14 @@ export async function generateBuild(
 	// The picture brief rides on a refine too, now: "make the tower look like this" with a
 	// reference image is exactly the request a refine is for, and the brief's framing —
 	// build the subject, not the photograph — reads the same either way.
+	// A refine gets its components tagged with ids first: the diff tool addresses its ops to
+	// them, and ids the program already carried (the layouter writes plan-item ids) survive
+	// untouched. This tagged copy — not the caller's original — is the base every patch
+	// applies against, so op targets and program contents can never disagree.
+	const refineBase = options.refineOf ? assignComponentIds(options.refineOf) : null;
+
 	const briefs = [
-		options.refineOf ? refinePrompt(options.refineOf, options.prompt) : options.prompt,
+		refineBase ? refinePrompt(refineBase, options.prompt, true) : options.prompt,
 		options.image ? pictureBrief() : null,
 		sizeBrief(options.size),
 	].filter((part): part is string => part !== null && part !== '');
@@ -241,6 +251,9 @@ export async function generateBuild(
 			model,
 			system,
 			schema,
+			// Refines get the diff tool and a cache breakpoint on the user turn: the turn
+			// carries the whole program, and the repair round resends it.
+			...(refineBase ? { patchSchema: programPatchSchema(), cacheUserContent: true } : {}),
 			maxTokens,
 			...(options.effort ? { effort: options.effort } : {}),
 			...(options.signal ? { signal: options.signal } : {}),
@@ -291,27 +304,46 @@ export async function generateBuild(
 	}
 
 	options.onProgress?.({ stage: 'validating' });
-	let program = unwrapProgram(first.input) as BuildProgram;
+
+	// A reply is either a whole program or — on a refine — a patch against the base program.
+	// The tool name is the primary signal; `looksLikePatch` covers a model that emitted ops
+	// through the emit tool anyway, which costs nothing to honour and saves a repair round.
+	let patchProblems: ExpandIssue[] = [];
+	const interpret = (reply: ProviderReply, base: BuildProgram | null): BuildProgram => {
+		const input = unwrapProgram(reply.input);
+		if (base && (reply.tool === PATCH_TOOL_NAME || looksLikePatch(input))) {
+			const patched = applyProgramPatch(base, input);
+			patchProblems = patched.issues;
+			return patched.program;
+		}
+		patchProblems = [];
+		return input as BuildProgram;
+	};
+
+	let program = interpret(first, refineBase);
 	options.onProgram?.(program, 'generate');
 	let structural = schemaIssues(program);
 	let expansion = expand(program);
 	let repaired = false;
-	let problems = [...structural, ...expansion.errors];
+	let problems = [...patchProblems, ...structural, ...expansion.errors];
 
-	// Exactly one repair round. The system prompt is cached by now, so this costs little,
-	// but a loop here is how a small balance disappears.
-	if (problems.length > 0) {
+	// A repair that cannot run is a repair skipped, not a generation failed. The first
+	// program was paid for and may well build with omissions; throwing it away because
+	// the *second* call hit the budget ceiling or a transient provider failure would
+	// discard the very thing `onProgram` exists to protect.
+	const attemptRepair = async (budgetMultiplier: number): Promise<void> => {
 		options.onProgress?.({ stage: 'repairing', issues: problems.length });
 
-		// A repair that cannot run is a repair skipped, not a generation failed. The first
-		// program was paid for and may well build with omissions; throwing it away because
-		// the *second* call hit the budget ceiling or a transient provider failure would
-		// discard the very thing `onProgram` exists to protect.
 		const second = await (async (): Promise<ProviderReply | null> => {
 			try {
-				deps.ledger.assertCanAfford(model, estimatedInput * 2, maxTokens, deps.provider.id);
+				deps.ledger.assertCanAfford(
+					model,
+					estimatedInput * budgetMultiplier,
+					maxTokens,
+					deps.provider.id,
+				);
 				options.onProgress?.({ stage: 'thinking' });
-				return await session.repair(repairPrompt(problems));
+				return await session.repair(repairPrompt(problems, refineBase !== null));
 			} catch (err) {
 				if (err instanceof BudgetExceededError || transientDelayMs(err, 0) !== null) return null;
 				throw err;
@@ -320,11 +352,13 @@ export async function generateBuild(
 		if (second) record(second, 'repair');
 
 		if (second && second.input !== undefined) {
-			const candidate = unwrapProgram(second.input) as BuildProgram;
+			// A refine's repair may answer with another patch. It applies against the program
+			// as it now stands — replaceComponent keeps ids stable, so targets still resolve.
+			const candidate = interpret(second, refineBase ? program : null);
 			options.onProgram?.(candidate, 'repair');
 			const candidateStructural = schemaIssues(candidate);
 			const candidateExpansion = expand(candidate);
-			const candidateProblems = [...candidateStructural, ...candidateExpansion.errors];
+			const candidateProblems = [...patchProblems, ...candidateStructural, ...candidateExpansion.errors];
 			// Only accept the repair if it is actually better; a worse second attempt should
 			// not replace a nearly-working first one.
 			if (candidateProblems.length < problems.length || candidateExpansion.blockCount > expansion.blockCount) {
@@ -334,6 +368,20 @@ export async function generateBuild(
 				problems = candidateProblems;
 			}
 			repaired = true;
+		}
+	};
+
+	// Exactly one repair round in the common case. The system prompt is cached by now, so it
+	// costs little, but a loop here is how a small balance disappears.
+	if (problems.length > 0) {
+		await attemptRepair(2);
+
+		// One escalation, in one situation only: the build is still *empty* — nothing to show
+		// at all. A flawed-but-standing build is returned with omissions rather than paid for
+		// again; a wall of nothing is worth one more attempt, at a stricter budget bar (the
+		// guard sizes the whole conversation so far, which by now is roughly three calls deep).
+		if (problems.length > 0 && expansion.blockCount === 0) {
+			await attemptRepair(3);
 		}
 	}
 

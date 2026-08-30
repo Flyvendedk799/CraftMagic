@@ -164,8 +164,12 @@ const QUALITY_RULES = `## Making it look good
 - Roofs want an overhang of 1-2 blocks. Eaves should sit level with the top of the walls,
   not float above them — remember the roof's own base level is its eave course.
 - Windows in a row, evenly spaced, using window_grid rather than individually placed boxes.
-- Interiors matter less than silhouette. Spend components on roof shape, depth in the
-  facade, and material contrast.
+- Silhouette first: spend components on roof shape, depth in the facade, and material
+  contrast before anything else.
+- But a building people can enter must not be a solid mass or an empty shell. Use hollow_box
+  with floor: true for each storey, put a stairs_run between storeys, and give rooms a floor
+  material distinct from the walls. One or two interior light blocks per storey (a lantern
+  role in the palette) stop the inside reading as a cave through the windows.
 - Use \`details\` sparingly, for accents like a lantern or a chimney cap. It is capped at
   ${LIMITS.maxDetailOps} ops and a single fill may not exceed ${LIMITS.maxDetailFillVolume}
   blocks; anything larger belongs in a component.`;
@@ -280,6 +284,35 @@ wall head:
       "ridgeAxis": "x", "overhang": 1, "style": "stairs",
       "roofRole": "roof_primary", "trimRole": "roof_trim" }
   ]
+}
+
+A second, rounder shape — a watchtower — showing cylinder, sphere and a weighted noise fill
+for weathered stonework. The dome is centred at "$height+1" with radius 7, and the volume's
+height covers the param's *maximum*, so turning the dial up never clips the dome:
+
+{
+  "version": 1,
+  "meta": { "name": "Stone Tower" },
+  "size": { "x": 17, "y": 30, "z": 17 },
+  "params": { "height": { "value": 20, "min": 10, "max": 21, "label": "Tower height" } },
+  "palette": {
+    "foundation": "minecraft:cobblestone",
+    "wall_primary": "minecraft:stone_bricks",
+    "wall_accent": "minecraft:mossy_stone_bricks",
+    "roof_primary": "minecraft:dark_oak_planks",
+    "light": "minecraft:lantern"
+  },
+  "components": [
+    { "type": "cylinder", "base": ["center","min","center"], "radius": 7, "height": 1,
+      "axis": "y", "fill": { "type": "solid", "role": "foundation" } },
+    { "type": "cylinder", "base": ["center",1,"center"], "radius": 6, "height": "$height",
+      "axis": "y", "hollow": true,
+      "fill": { "type": "noise", "seed": 7, "roles": [
+        { "role": "wall_primary", "weight": 4 }, { "role": "wall_accent", "weight": 1 } ] } },
+    { "type": "sphere", "center": ["center","$height+1","center"], "radius": 7,
+      "hollow": true, "cap": "top_half", "fill": { "type": "solid", "role": "roof_primary" } }
+  ],
+  "details": [ { "op": "set", "at": [8, 4, 8], "block": "minecraft:lantern" } ]
 }`;
 
 export function systemPrompt(): string {
@@ -313,7 +346,10 @@ export function systemPrompt(): string {
 }
 
 /** Repair instructions, sent back as a tool_result when the expander rejects a program. */
-export function repairPrompt(issues: { path: string; code: string; message: string }[]): string {
+export function repairPrompt(
+	issues: { path: string; code: string; message: string }[],
+	offerPatch = false,
+): string {
 	const listed = issues
 		.slice(0, 30)
 		.map((issue) => `- ${issue.path} [${issue.code}]: ${issue.message}`)
@@ -325,8 +361,15 @@ export function repairPrompt(issues: { path: string; code: string; message: stri
 		``,
 		listed + truncated,
 		``,
-		`Fix every one of these and call \`emit_build_program\` again with the complete corrected`,
-		`program. Do not send a partial program or a diff.`,
+		...(offerPatch
+			? [
+					`Fix every one of these — either with \`edit_build_program\` ops against the current`,
+					`program, or by calling \`emit_build_program\` with the complete corrected program.`,
+				]
+			: [
+					`Fix every one of these and call \`emit_build_program\` again with the complete corrected`,
+					`program. Do not send a partial program or a diff.`,
+				]),
 	].join('\n');
 }
 
@@ -343,12 +386,37 @@ export function repairPrompt(issues: { path: string; code: string; message: stri
  * will happily reply with only the components it touched, which expands to a house with
  * nothing but a roof.
  */
-export function refinePrompt(program: unknown, instruction: string): string {
+export function refinePrompt(program: unknown, instruction: string, offerPatch = false): string {
 	// The scale is the user's, not the model's: it is what the size control did to the build
 	// after it was written. Sending it would invite the model to reason about coordinates in a
 	// space it does not write in, and to drop or invent a value that the caller then has to
 	// second-guess. It is put back on whatever comes out.
 	const { scale: _scale, ...unscaled } = (program ?? {}) as Record<string, unknown>;
+
+	// With the patch tool on offer the contract flips: the preferred answer is a short list of
+	// ops addressed to component ids, and re-emitting everything is the fallback for a
+	// sweeping change. Preservation stops being an instruction the model has to obey and
+	// becomes a property of the mechanism — ops cannot touch what they do not name.
+	const answering = offerPatch
+		? [
+				`How to answer:`,
+				`- For a targeted change, call \`edit_build_program\` with a short list of ops.`,
+				`  Address components by the \`id\` field shown above. Ops available:`,
+				`  replaceComponent { target, component } · addComponent { component, before? } ·`,
+				`  removeComponent { target } · setPalette { role, block } (null removes) ·`,
+				`  setParam { name, param } (null removes) · setMeta { name?, description?, style? }.`,
+				`  Everything your ops do not touch is preserved exactly, by construction.`,
+				`- Only if the change genuinely reshapes most of the build, call`,
+				`  \`emit_build_program\` with the COMPLETE updated program instead — everything you`,
+				`  omit there disappears from the build.`,
+				`- A replaced or added component follows all the usual rules (roles, anchoring,`,
+				`  resize-safe expressions). Keep ids you were given; give new components fresh ids.`,
+			]
+		: [
+				`Rules for this edit:`,
+				`- Call \`emit_build_program\` with the COMPLETE updated program, not a diff and not`,
+				`  only the parts you changed. Everything you omit disappears from the build.`,
+			];
 
 	return [
 		`Here is an existing build program:`,
@@ -361,9 +429,7 @@ export function refinePrompt(program: unknown, instruction: string): string {
 		``,
 		instruction,
 		``,
-		`Rules for this edit:`,
-		`- Call \`emit_build_program\` with the COMPLETE updated program, not a diff and not`,
-		`  only the parts you changed. Everything you omit disappears from the build.`,
+		...answering,
 		`- Keep anything the instruction does not mention exactly as it is — the same palette`,
 		`  roles, the same coordinate expressions, the same component order.`,
 		`- Keep \`meta.name\` unless the change makes it wrong.`,

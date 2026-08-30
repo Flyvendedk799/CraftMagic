@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { generateBuild, unwrapProgram } from './pipeline.js';
-import type { Provider, ProviderReply, ProviderSession } from './providers.js';
+import type { Provider, ProviderReply, ProviderSession, SessionOptions } from './providers.js';
+import { PATCH_TOOL_NAME } from './providers.js';
 import { BudgetExceededError, type SpendLedger } from './spend.js';
 
 /**
@@ -209,6 +210,57 @@ describe('generateBuild transient failures', () => {
 		expect(previews[0]!.partial).toMatchObject({ size: goodProgram.size });
 	});
 
+	it('escalates to a second repair only while the build is still empty', async () => {
+		// Valid nowhere: the one component never draws, so blockCount stays 0 through the
+		// first repair — the exact situation the escalation exists for.
+		const broken = {
+			...goodProgram,
+			components: [
+				{ type: 'box', pos: ['nonsense', 0, 0], size: [1, 1, 1], fill: { type: 'solid', role: 'wall_primary' } },
+			],
+		};
+		let repairs = 0;
+		const afford = vi.fn();
+		const provider = providerOf(() => ({
+			emit: vi.fn(async () => reply(broken)),
+			repair: vi.fn(async () => {
+				repairs += 1;
+				return reply(repairs === 1 ? broken : goodProgram);
+			}),
+		}));
+
+		const result = await generateBuild(
+			{ provider, ledger: fakeLedger({ assertCanAfford: afford } as Partial<SpendLedger>) },
+			{ prompt: 'a box' },
+		);
+
+		expect(repairs).toBe(2);
+		expect(result.status).toBe('succeeded');
+		expect(result.repaired).toBe(true);
+		// The escalated round is gated at a stricter bar than the first repair's 2x.
+		const multipliers = afford.mock.calls.map((call) => (call[1] as number));
+		expect(multipliers[2]).toBeGreaterThan(multipliers[1]!);
+	});
+
+	it('does not escalate when the flawed build still stands', async () => {
+		// One component is broken but the rest built: the paid, partly-working program comes
+		// back with omissions after the single repair round — a second round would be spend
+		// with nothing to gain.
+		let repairs = 0;
+		const provider = providerOf(() => ({
+			emit: vi.fn(async () => reply(flawedProgram)),
+			repair: vi.fn(async () => {
+				repairs += 1;
+				return reply(flawedProgram);
+			}),
+		}));
+
+		const result = await generateBuild({ provider, ledger: fakeLedger() }, { prompt: 'a box' });
+
+		expect(repairs).toBe(1);
+		expect(result.status).toBe('succeeded_with_omissions');
+	});
+
 	it('keeps the first program when the repair call itself fails transiently', async () => {
 		const overloaded = Object.assign(new Error('503 unavailable'), { status: 503 });
 		const provider = providerOf(() => ({
@@ -223,5 +275,119 @@ describe('generateBuild transient failures', () => {
 		expect(result.status).toBe('succeeded_with_omissions');
 		expect(result.repaired).toBe(false);
 		expect(result.expansion.blockCount).toBeGreaterThan(0);
+	});
+});
+
+describe('generateBuild diff refine', () => {
+	/** Capture the session options so tests can assert what tools were on offer. */
+	function capturingProvider(session: ProviderSession): { provider: Provider; options: () => SessionOptions } {
+		let captured: SessionOptions | null = null;
+		return {
+			provider: {
+				id: 'anthropic',
+				session: (options) => {
+					captured = options;
+					return session;
+				},
+			},
+			options: () => captured!,
+		};
+	}
+
+	const patchReply = (ops: unknown[]): ProviderReply => ({
+		input: { ops },
+		tool: PATCH_TOOL_NAME,
+		usage: { input_tokens: 100, output_tokens: 50 },
+	});
+
+	it('offers the patch tool and a cached user turn on refine turns only', async () => {
+		const session: ProviderSession = {
+			emit: vi.fn(async () => reply(goodProgram)),
+			repair: vi.fn(),
+		};
+
+		const fresh = capturingProvider(session);
+		await generateBuild({ provider: fresh.provider, ledger: fakeLedger() }, { prompt: 'a box' });
+		expect(fresh.options().patchSchema).toBeUndefined();
+		expect(fresh.options().cacheUserContent).toBeUndefined();
+
+		const refine = capturingProvider(session);
+		await generateBuild(
+			{ provider: refine.provider, ledger: fakeLedger() },
+			{ prompt: 'more moss', refineOf: goodProgram as never },
+		);
+		expect(refine.options().patchSchema).toBeDefined();
+		expect(refine.options().cacheUserContent).toBe(true);
+	});
+
+	it('applies patch ops against the id-tagged base program', async () => {
+		const emit = vi.fn(async (userContent: string) => {
+			// The program shown to the model carries generated ids for ops to address.
+			expect(userContent).toContain('"id": "c1"');
+			return patchReply([
+				{ op: 'setPalette', role: 'wall_primary', block: 'minecraft:mossy_stone_bricks' },
+				{
+					op: 'addComponent',
+					component: {
+						type: 'box',
+						id: 'plinth',
+						pos: [0, 0, 0],
+						size: [4, 1, 4],
+						fill: { type: 'solid', role: 'wall_primary' },
+					},
+				},
+			]);
+		});
+		const provider = providerOf(() => ({ emit: emit as never, repair: vi.fn() }));
+
+		const result = await generateBuild(
+			{ provider, ledger: fakeLedger() },
+			{ prompt: 'mossier, with a plinth', refineOf: goodProgram as never },
+		);
+
+		expect(result.status).toBe('succeeded');
+		expect(result.program.palette.wall_primary).toBe('minecraft:mossy_stone_bricks');
+		expect(result.program.components).toHaveLength(2);
+		expect(result.program.components[0]!.id).toBe('c1');
+		expect(result.program.components[1]!.id).toBe('plinth');
+		// Untouched parts survive by construction.
+		expect(result.program.components[0]!).toMatchObject({ type: 'box', size: [4, 4, 4] });
+	});
+
+	it('feeds unapplicable ops to the repair round like any other problem', async () => {
+		const repair = vi.fn(async (problems: string) => {
+			expect(problems).toContain('BAD_PATCH');
+			expect(problems).toContain('no-such-id');
+			return reply({ ...goodProgram, meta: { name: 'Fixed' } });
+		});
+		const provider = providerOf(() => ({
+			emit: vi.fn(async () => patchReply([{ op: 'removeComponent', target: 'no-such-id' }])),
+			repair,
+		}));
+
+		const result = await generateBuild(
+			{ provider, ledger: fakeLedger() },
+			{ prompt: 'remove the roof', refineOf: goodProgram as never },
+		);
+
+		expect(repair).toHaveBeenCalledOnce();
+		expect(result.repaired).toBe(true);
+		expect(result.program.meta.name).toBe('Fixed');
+	});
+
+	it('honours ops that arrived through the emit tool anyway', async () => {
+		const provider = providerOf(() => ({
+			// Same ops payload, but tool name absent — as the emit tool would deliver it.
+			emit: vi.fn(async () => reply({ ops: [{ op: 'setMeta', name: 'Renamed' }] })),
+			repair: vi.fn(),
+		}));
+
+		const result = await generateBuild(
+			{ provider, ledger: fakeLedger() },
+			{ prompt: 'rename it', refineOf: goodProgram as never },
+		);
+
+		expect(result.program.meta.name).toBe('Renamed');
+		expect(result.program.components).toHaveLength(1);
 	});
 });

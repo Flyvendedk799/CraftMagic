@@ -21,14 +21,24 @@ import { CLAUDE_CODE_SYSTEM, type CodexIdentity } from '@flyvendedk799/ai-auth';
 export const TOOL_NAME = 'emit_build_program';
 
 const TOOL_DESCRIPTION =
-  'Emit the complete build program for the requested structure. This is the only way to respond. ' +
+  'Emit the complete build program for the requested structure. ' +
   'The tool input IS the program object itself — its top-level keys are version, meta, size, ' +
   'palette and components. Do not nest it inside any wrapper object.';
+
+/** The diff-refine tool, offered only on refine turns (when `SessionOptions.patchSchema` is set). */
+export const PATCH_TOOL_NAME = 'edit_build_program';
+
+const PATCH_TOOL_DESCRIPTION =
+  'Edit the existing build program with a short list of ops, addressed to component ids. ' +
+  'Prefer this for targeted changes — everything the ops do not touch is preserved exactly. ' +
+  `For a sweeping redesign, call ${TOOL_NAME} with the complete program instead.`;
 
 export interface ProviderReply {
   /** Whatever the model passed as the tool input. May be wrapped; the pipeline unwraps it. */
   input: unknown;
   usage: TokenUsage;
+  /** Which tool the input came from. Absent when only one tool was on offer. */
+  tool?: string;
   /** Set when the model answered without calling the tool, for the error message. */
   noToolCallReason?: string;
 }
@@ -70,6 +80,18 @@ export interface SessionOptions {
    */
   systemPrefix?: string;
   schema: unknown;
+  /**
+   * When set, a second tool — `edit_build_program`, taking this schema — is offered beside
+   * the emit tool and the model chooses. Set on refine turns only: a diff against nothing is
+   * meaningless, and forcing the emit tool everywhere else keeps first generations simple.
+   */
+  patchSchema?: unknown;
+  /**
+   * Mark the user turn as a prompt-cache breakpoint (Anthropic only; the others cache on
+   * their own). Worth it exactly when the turn is large and will be resent — a refine carries
+   * the whole existing program, and the repair round resends the entire conversation.
+   */
+  cacheUserContent?: boolean;
   maxTokens: number;
   effort?: 'low' | 'medium' | 'high';
   signal?: AbortSignal;
@@ -132,6 +154,15 @@ class AnthropicSession implements ProviderSession {
   ) {}
 
   async emit(userContent: string, image?: ProviderImage): Promise<ProviderReply> {
+    // A refine's user turn carries the whole existing program, and the repair round resends
+    // the conversation — so the pipeline asks for a cache breakpoint on it. On an ordinary
+    // generation the turn is a sentence and a marker would waste one of the four breakpoints
+    // a request is allowed.
+    const text: Anthropic.TextBlockParam = {
+      type: 'text',
+      text: userContent,
+      ...(this.options.cacheUserContent ? { cache_control: { type: 'ephemeral' as const } } : {}),
+    };
     this.messages.push({
       role: 'user',
       content: image
@@ -142,9 +173,11 @@ class AnthropicSession implements ProviderSession {
               type: 'image',
               source: { type: 'base64', media_type: image.mediaType as 'image/png', data: image.data },
             },
-            { type: 'text', text: userContent },
+            text,
           ]
-        : userContent,
+        : this.options.cacheUserContent
+          ? [text]
+          : userContent,
     });
     return this.call();
   }
@@ -210,11 +243,24 @@ class AnthropicSession implements ProviderSession {
             // NOT strict: group children are components, a circular `$ref` that strict tool
             // use rejects outright. ajv and the expander enforce it on our side instead.
           },
+          ...(this.options.patchSchema
+            ? [
+                {
+                  name: PATCH_TOOL_NAME,
+                  description: PATCH_TOOL_DESCRIPTION,
+                  input_schema: this.options.patchSchema as Anthropic.Tool.InputSchema,
+                },
+              ]
+            : []),
         ],
         // One call per turn. The program is a single object, so a second copy of it is never
         // what anyone wanted — and a turn with several calls in it is what produced the 400
-        // above. Asking for one is better than coping with four.
-        tool_choice: { type: 'tool', name: TOOL_NAME, disable_parallel_tool_use: true },
+        // above. Asking for one is better than coping with four. With the patch tool on
+        // offer the choice widens to "any" — a tool call is still required, but which of the
+        // two is the model's decision, which is the whole point of offering both.
+        tool_choice: this.options.patchSchema
+          ? { type: 'any', disable_parallel_tool_use: true }
+          : { type: 'tool', name: TOOL_NAME, disable_parallel_tool_use: true },
         messages: this.messages,
       },
       this.options.signal ? { signal: this.options.signal } : undefined,
@@ -241,11 +287,14 @@ class AnthropicSession implements ProviderSession {
     );
     this.lastToolUseIds = allToolUse.map((block) => block.id);
 
-    const toolUse = allToolUse.find((block) => block.name === TOOL_NAME);
+    const toolUse = allToolUse.find(
+      (block) => block.name === TOOL_NAME || block.name === PATCH_TOOL_NAME,
+    );
 
     return {
       input: toolUse?.input,
       usage: message.usage,
+      ...(toolUse ? { tool: toolUse.name } : {}),
       noToolCallReason: toolUse ? undefined : `stop_reason: ${message.stop_reason}`,
     };
   }
@@ -404,8 +453,25 @@ class OpenAiSession implements ProviderSession {
               strict: false,
             },
           },
+          ...(this.options.patchSchema
+            ? [
+                {
+                  type: 'function' as const,
+                  function: {
+                    name: PATCH_TOOL_NAME,
+                    description: PATCH_TOOL_DESCRIPTION,
+                    parameters: this.options.patchSchema as Record<string, unknown>,
+                    strict: false,
+                  },
+                },
+              ]
+            : []),
         ],
-        tool_choice: { type: 'function', function: { name: TOOL_NAME } },
+        // Same shape as the Anthropic choice: forced onto the one tool normally, "some tool,
+        // your pick" when the patch tool is also on offer.
+        tool_choice: this.options.patchSchema
+          ? ('required' as const)
+          : { type: 'function' as const, function: { name: TOOL_NAME } },
         stream: true,
         stream_options: { include_usage: true },
         messages: this.messages,
@@ -415,6 +481,7 @@ class OpenAiSession implements ProviderSession {
 
     let argsJson = '';
     let callId: string | null = null;
+    let calledTool: string | null = null;
     let seen = 0;
     let usage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
     let finishReason: string | null = null;
@@ -438,6 +505,7 @@ class OpenAiSession implements ProviderSession {
       const call = choice.delta?.tool_calls?.[0];
       if (!call) continue;
       if (call.id) callId = call.id;
+      if (call.function?.name) calledTool = call.function.name;
       if (call.function?.arguments) {
         argsJson += call.function.arguments;
         this.options.onPartial?.(argsJson);
@@ -454,9 +522,10 @@ class OpenAiSession implements ProviderSession {
     }
 
     this.lastToolCallId = callId;
+    const toolName = calledTool ?? TOOL_NAME;
     this.messages.push({
       role: 'assistant',
-      tool_calls: [{ id: callId, type: 'function', function: { name: TOOL_NAME, arguments: argsJson } }],
+      tool_calls: [{ id: callId, type: 'function', function: { name: toolName, arguments: argsJson } }],
     });
 
     // Arguments arrive as a JSON string. A malformed one is not fatal: the pipeline's
@@ -469,7 +538,7 @@ class OpenAiSession implements ProviderSession {
       input = argsJson;
     }
 
-    return { input, usage };
+    return { input, usage, tool: toolName };
   }
 }
 
@@ -560,8 +629,19 @@ class CodexSession implements ProviderSession {
             // circular `$ref` that strict mode rejects outright.
             strict: false,
           },
+          ...(this.options.patchSchema
+            ? [
+                {
+                  type: 'function' as const,
+                  name: PATCH_TOOL_NAME,
+                  description: PATCH_TOOL_DESCRIPTION,
+                  parameters: this.options.patchSchema as Record<string, unknown>,
+                  strict: false,
+                },
+              ]
+            : []),
         ],
-        tool_choice: { type: 'function', name: TOOL_NAME },
+        tool_choice: this.options.patchSchema ? 'required' : { type: 'function', name: TOOL_NAME },
         ...(this.previousResponseId ? { previous_response_id: this.previousResponseId } : {}),
         stream: true,
       } as never,
@@ -569,6 +649,7 @@ class CodexSession implements ProviderSession {
     );
 
     let argsJson = '';
+    let calledTool: string | null = null;
     let seen = 0;
     let usage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
     let status: string | null = null;
@@ -592,6 +673,7 @@ class CodexSession implements ProviderSession {
 
       if (event.type === 'response.output_item.added' && event.item?.type === 'function_call') {
         this.lastCallId = event.item.call_id ?? event.item.id ?? this.lastCallId;
+        calledTool = event.item.name ?? calledTool;
         continue;
       }
 
@@ -620,7 +702,7 @@ class CodexSession implements ProviderSession {
     } catch {
       parsed = argsJson;
     }
-    return { input: parsed, usage };
+    return { input: parsed, usage, tool: calledTool ?? TOOL_NAME };
   }
 }
 
@@ -629,7 +711,7 @@ class CodexSession implements ProviderSession {
 interface CodexStreamEvent {
   type?: string;
   delta?: string;
-  item?: { type?: string; call_id?: string; id?: string };
+  item?: { type?: string; call_id?: string; id?: string; name?: string };
   response?: {
     id?: string;
     status?: string;

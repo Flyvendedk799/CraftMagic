@@ -413,6 +413,8 @@ export function EditorPage() {
   const [region, setRegion] = useState<{ min: BoxCorner; max: BoxCorner } | null>(null);
   const [familyMode, setFamilyMode] = useState(false);
   const [anchor, setAnchor] = useState<BoxCorner | null>(null);
+  /** Where a selection being dragged would land, while it is being dragged. */
+  const [dragGhost, setDragGhost] = useState<{ dx: number; dy: number; dz: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [brushRadius, setBrushRadius] = useState(0);
   const [brushShape, setBrushShape] = useState<BrushShape>('ball');
@@ -601,6 +603,76 @@ export function EditorPage() {
     },
     [region, grid, session],
   );
+
+  /**
+   * A selection drawn or moved with the pointer.
+   *
+   * This is what makes the box a *thing you handle* rather than a pair of coordinates you
+   * enter. Drawing was two separate clicks with nothing on screen between them; moving was
+   * six buttons labelled −X/+X/−Y. Both are now the gesture you would have tried first.
+   *
+   * Preview frames only draw the outline — moving is one `moveEdit` on release, not sixty
+   * during the drag. A move rewrites every cell it covers and pushes an undo entry, so
+   * committing per frame would make one drag an unusable pile of history and re-mesh the
+   * build on every pixel.
+   */
+  const onRegionDrag = useCallback(
+    (drag: { mode: 'draw' | 'move'; from: BoxCorner; to: BoxCorner; phase: 'move' | 'end' }) => {
+      if (drag.mode === 'draw') {
+        // Normalised, not stored as pressed-then-released. A drag that runs right-to-left or
+        // downwards puts the larger coordinate in `from`, and a box whose min is above its max
+        // is one nothing can be inside — so the outline would draw but the box could never be
+        // picked up again, and every "is the pointer in the selection" test would say no.
+        const bounds = boxBounds(grid, drag.from, drag.to);
+        // The box follows the pointer as it is dragged, which is the whole point: you can see
+        // what you are about to select before you let go.
+        setRegion({ min: bounds.min, max: bounds.max });
+        if (drag.phase === 'end') {
+          const cells =
+            (bounds.max.x - bounds.min.x + 1) *
+            (bounds.max.y - bounds.min.y + 1) *
+            (bounds.max.z - bounds.min.z + 1);
+          setAnchor(null);
+          setNotice(
+            `Selected ${bounds.max.x - bounds.min.x + 1}×${bounds.max.y - bounds.min.y + 1}×${
+              bounds.max.z - bounds.min.z + 1
+            } — ${cells.toLocaleString()} cells. Drag it to move it.`,
+          );
+        }
+        return;
+      }
+
+      const dx = drag.to.x - drag.from.x;
+      const dy = drag.to.y - drag.from.y;
+      const dz = drag.to.z - drag.from.z;
+
+      if (drag.phase === 'move') {
+        // A ghost of where it would land. The blocks have not moved yet.
+        setDragGhost(dx === 0 && dy === 0 && dz === 0 ? null : { dx, dy, dz });
+        return;
+      }
+
+      setDragGhost(null);
+      if (dx === 0 && dy === 0 && dz === 0) return;
+      regionNudge(dx, dy, dz);
+    },
+    [grid, regionNudge],
+  );
+
+  /**
+   * The box as drawn: the selection, offset by a move in progress.
+   *
+   * Separate from `region` so the ghost is purely visual. Moving the real selection during
+   * the drag would leave it somewhere else if the pointer left the window, and would make
+   * every verb in the panel point at a box whose contents had not moved yet.
+   */
+  const draggedRegion = useMemo(() => {
+    if (!region || !dragGhost) return region;
+    return {
+      min: { x: region.min.x + dragGhost.dx, y: region.min.y + dragGhost.dy, z: region.min.z + dragGhost.dz },
+      max: { x: region.max.x + dragGhost.dx, y: region.max.y + dragGhost.dy, z: region.max.z + dragGhost.dz },
+    };
+  }, [region, dragGhost]);
 
   const regionResize = useCallback(
     (by: number) => {
@@ -1005,7 +1077,9 @@ export function EditorPage() {
           onStroke={ghost || assembly.assembling ? undefined : strokable ? onStroke : undefined}
           onPick={ghost ? undefined : assembly.assembling ? assembly.skip : onPick}
           marker={ghost ? null : anchor}
-          region={ghost ? null : (partHighlight ?? region)}
+          region={ghost ? null : (partHighlight ?? draggedRegion)}
+          regionDrag={!ghost && !assembly.assembling && tool === 'select'}
+          onRegionDrag={ghost || assembly.assembling ? undefined : onRegionDrag}
           preview={ghost || assembly.assembling ? null : preview}
           onProgress={setRemaining}
           onWorld={ghost ? noopWorld : assembly.assembling ? assembly.onWorld : session.attachWorld}
@@ -1137,35 +1211,6 @@ export function EditorPage() {
         />
         </Section>
 
-        <Section
-          id="stats"
-          title="Details"
-          // Size and block count in the header, because they are what changes while scaling —
-          // collapsing this section must not cost the two numbers people watch.
-          summary={`${grid.size.x}×${grid.size.y}×${grid.size.z} · ${session.blockCount.toLocaleString()}`}
-          defaultOpen={false}
-        >
-        <dl className="hud__stats">
-          <dt>Build</dt>
-          <dd>{name}</dd>
-          <dt>Size</dt>
-          <dd>
-            {grid.size.x}×{grid.size.y}×{grid.size.z}
-          </dd>
-          <dt>Blocks</dt>
-          <dd>{session.blockCount.toLocaleString()}</dd>
-          <dt>Palette</dt>
-          <dd>{grid.palette.length}</dd>
-          <dt>Chunks</dt>
-          <dd>{totalChunks.toLocaleString()}</dd>
-          <dt>Layer</dt>
-          <dd>{layer === null ? 'all' : isolate ? `y ${layer} only` : `0–${layer}`}</dd>
-          <dt>Clipboard</dt>
-          <dd>
-            {clip ? `${clip.size.x}×${clip.size.y}×${clip.size.z}` : 'empty'}
-          </dd>
-        </dl>
-        </Section>
 
 
         {build.program && (
@@ -1208,30 +1253,6 @@ export function EditorPage() {
           </div>
         )}
 
-        {build.program && build.program.components.length > 0 && (
-          <Section
-            id="outline"
-            title="Components"
-            summary={
-              hiddenPaths.length > 0
-                ? `${hiddenPaths.length} hidden`
-                : outlineParts
-                  ? `${outlineParts.length}`
-                  : undefined
-            }
-            defaultOpen={false}
-          >
-            <Outliner
-              parts={outlineParts}
-              hidden={new Set(hiddenPaths)}
-              onToggle={onPartToggle}
-              onSolo={onPartSolo}
-              onShowAll={onPartsShowAll}
-              onFocus={onPartFocus}
-              onHighlight={onPartHighlight}
-            />
-          </Section>
-        )}
 
         {build.params.length > 0 && (
           <div className="params">
@@ -1271,15 +1292,6 @@ export function EditorPage() {
           </ul>
         )}
 
-        <ExportBar
-          grid={grid}
-          program={build.program}
-          name={name}
-          detached={session.detached}
-          guideHref={guideHref}
-          blockCount={session.blockCount}
-          getEdits={session.exportEdits}
-        />
 
         {generated && buildId === generated.id && (
           <p className="hud__generated">
@@ -1316,6 +1328,80 @@ export function EditorPage() {
           onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
           initialPrompt={seededPrompt}
         />
+
+        {/* Moved here from the left column, which had grown to hold the tools, the selection,
+            the brush, the palette, the history, the shape sliders *and* everything below —
+            so on a laptop the export controls sat under the fold of a panel that was already
+            scrolling. This side had three hundred empty pixels. What you *do* is on the left;
+            what the build *is* and where it *goes* is here. */}
+        <section className="hud">
+        <Section
+          id="stats"
+          title="Details"
+          // Size and block count in the header, because they are what changes while scaling —
+          // collapsing this section must not cost the two numbers people watch.
+          summary={`${grid.size.x}×${grid.size.y}×${grid.size.z} · ${session.blockCount.toLocaleString()}`}
+          defaultOpen={false}
+        >
+        <dl className="hud__stats">
+          <dt>Build</dt>
+          <dd>{name}</dd>
+          <dt>Size</dt>
+          <dd>
+            {grid.size.x}×{grid.size.y}×{grid.size.z}
+          </dd>
+          <dt>Blocks</dt>
+          <dd>{session.blockCount.toLocaleString()}</dd>
+          <dt>Palette</dt>
+          <dd>{grid.palette.length}</dd>
+          <dt>Chunks</dt>
+          <dd>{totalChunks.toLocaleString()}</dd>
+          <dt>Layer</dt>
+          <dd>{layer === null ? 'all' : isolate ? `y ${layer} only` : `0–${layer}`}</dd>
+          <dt>Clipboard</dt>
+          <dd>
+            {clip ? `${clip.size.x}×${clip.size.y}×${clip.size.z}` : 'empty'}
+          </dd>
+        </dl>
+        </Section>
+        </section>
+
+          {build.program && build.program.components.length > 0 && (
+            <Section
+              id="outline"
+              title="Components"
+              summary={
+                hiddenPaths.length > 0
+                  ? `${hiddenPaths.length} hidden`
+                  : outlineParts
+                    ? `${outlineParts.length}`
+                    : undefined
+              }
+              defaultOpen={false}
+            >
+              <Outliner
+                parts={outlineParts}
+                hidden={new Set(hiddenPaths)}
+                onToggle={onPartToggle}
+                onSolo={onPartSolo}
+                onShowAll={onPartsShowAll}
+                onFocus={onPartFocus}
+                onHighlight={onPartHighlight}
+              />
+            </Section>
+          )}
+
+        <section className="hud">
+        <ExportBar
+          grid={grid}
+          program={build.program}
+          name={name}
+          detached={session.detached}
+          guideHref={guideHref}
+          blockCount={session.blockCount}
+          getEdits={session.exportEdits}
+        />
+        </section>
 
         <section className="hud">
           <Section id="picture" title="Picture to structure" defaultOpen={false}>

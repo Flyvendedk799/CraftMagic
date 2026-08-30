@@ -67,20 +67,12 @@ describe('previewFor', () => {
     expect((preview as { cells: unknown[] }).cells).toHaveLength(18);
   });
 
-  it('a box previews nothing until a corner is taken, then its extent', () => {
+  it('the box tool previews nothing — the drag draws its own outline', () => {
+    // Selecting is a drag now, not two clicks, and the canvas draws the box as it is pulled
+    // out. A hover preview would be a second rectangle following the pointer around while the
+    // real one sits under it, which is one rectangle too many.
     expect(previewFor({ ...base(grid16()), tool: 'select' })).toBeNull();
-
-    const preview = previewFor({
-      ...base(grid16()),
-      tool: 'select',
-      anchor: { x: 4, y: 0, z: 4 },
-    });
-    expect(preview).toEqual({
-      kind: 'box',
-      min: { x: 4, y: 0, z: 4 },
-      max: { x: 8, y: 0, z: 8 },
-      label: '5×1×5 · 25 cells',
-    });
+    expect(previewFor({ ...base(grid16()), tool: 'select', anchor: { x: 4, y: 0, z: 4 } })).toBeNull();
   });
 
   it('a stamp previews the clip box where it would land', () => {

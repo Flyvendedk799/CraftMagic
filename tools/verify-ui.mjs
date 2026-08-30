@@ -97,13 +97,31 @@ try {
 
 	// Seed a generated build, then reload — the restore path is what we are testing.
 	await evaluate(
-		`sessionStorage.setItem('craftmagic.generated', ${JSON.stringify(
+		// localStorage, not sessionStorage. Generated builds moved when it turned out that a
+		// link-opened tab starts with an empty session store in Chromium, so every generated
+		// build's guide came out as the cottage. Seeding the old store left this report
+		// describing a restored generation it had never actually restored.
+		`localStorage.setItem('craftmagic.generated', ${JSON.stringify(
 			JSON.stringify([['gen:1', program]]),
 		)}), true`,
 	);
 	await send('Page.navigate', { url: `${ORIGIN}/?build=gen:1` });
 	await waitFor("document.querySelector('.editor')?.dataset.remaining === '0'", 'restored build', 60_000);
 	await sleep(700);
+
+	// The HUD collapses into sections now and several start closed, so the stats and the
+	// generate button are not on screen until they are opened — which this report read as
+	// "size / blocks undefined" and "picker button MISSING", describing a working editor as a
+	// broken one. A driver has to open what it needs, exactly as a person would.
+	await evaluate(`(() => {
+		for (const title of ['Details', 'Build', 'Generate']) {
+			const head = [...document.querySelectorAll('.section__head')]
+				.find((h) => h.textContent.includes(title));
+			if (head && head.getAttribute('aria-expanded') !== 'true') head.click();
+		}
+		return true;
+	})()`);
+	await sleep(400);
 
 	const restored = await evaluate(`
 		(() => {
@@ -137,7 +155,7 @@ try {
 	fs.mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });
 	fs.writeFileSync(outFile, Buffer.from(shot.data, 'base64'));
 
-	console.log('--- restored from sessionStorage ---');
+	console.log('--- restored from localStorage ---');
 	console.log(`build          ${restored.build}`);
 	console.log(`name           ${restored.name}`);
 	console.log(`size / blocks  ${restored.size} / ${restored.blocks}`);

@@ -170,6 +170,30 @@ try {
 	};
 
 	const meshed = () => waitFor("document.querySelector('.editor')?.dataset.remaining === '0'", 'meshing');
+
+	/**
+	 * Wait for an edit to land, by growth rather than by an absolute count.
+	 *
+	 * `data-edits` is `EditOverlay.size` — the number of edited *cells*, not the number of
+	 * operations. It counted operations until the detach model was replaced by the overlay, and
+	 * every absolute expectation in this driver quietly became unreachable at that moment: a
+	 * flood fill that changes twenty-one cells can never leave the count at 2, so the fill step
+	 * sat there timing out, blaming the fill for working correctly. Anything that edits a region
+	 * asserts that the overlay grew, and leaves how much to the check that follows.
+	 */
+	const grew = async (from, label, timeoutMs = 15_000) => {
+		try {
+			await waitFor(`Number(document.querySelector('.editor').dataset.edits) > ${from}`, label, timeoutMs);
+		} catch (err) {
+			// A bare timeout says nothing about why. The editor already explains itself in the
+			// notice line — "Nothing to swap there", "already the chosen one" — and surfacing it
+			// turns half an hour of guessing into one line of output.
+			const notice = await evaluate("document.querySelector('.tools__notice')?.textContent ?? '(no notice)'");
+			const readout = await evaluate("document.querySelector('.hover-readout')?.textContent ?? '(no hover)'");
+			throw new Error(`${err.message} — editor said: ${notice} · pointer over: ${readout}`);
+		}
+		return Number(await evaluate("document.querySelector('.editor').dataset.edits"));
+	};
 	const stats = () =>
 		evaluate(`
 			(() => {
@@ -199,6 +223,30 @@ try {
 			type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse',
 		});
 	};
+	/**
+	 * A plain primary drag across the canvas.
+	 *
+	 * No modifier: the Box tool claims an unmodified drag that starts on the build, which is
+	 * what makes 'drag out a box' possible on a surface whose default gesture is orbiting.
+	 */
+	const drag = async (from, to, steps = 8) => {
+		await move(from.x, from.y);
+		await send('Input.dispatchMouseEvent', {
+			type: 'mousePressed', x: from.x, y: from.y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse',
+		});
+		for (let step = 1; step <= steps; step++) {
+			const t = step / steps;
+			await send('Input.dispatchMouseEvent', {
+				type: 'mouseMoved', x: Math.round(from.x + (to.x - from.x) * t), y: Math.round(from.y + (to.y - from.y) * t),
+				button: 'left', buttons: 1, pointerType: 'mouse',
+			});
+			await sleep(40);
+		}
+		await send('Input.dispatchMouseEvent', {
+			type: 'mouseReleased', x: to.x, y: to.y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse',
+		});
+	};
+
 	const key = async (text, modifiers) => {
 		const base = { key: text, code: `Key${text.toUpperCase()}`, windowsVirtualKeyCode: text.toUpperCase().charCodeAt(0), modifiers };
 		await send('Input.dispatchKeyEvent', { type: 'keyDown', ...base });
@@ -233,6 +281,13 @@ try {
 			// block is a one-cell region, which would make a flood fill look broken.
 			if (avoid && Math.abs(x - avoid.x) < 40 && Math.abs(y - avoid.y) < 40) continue;
 			await move(x, y);
+			// The same stopped-compositing trap the wait helper documents, and it bites harder
+			// here because it fails silently: the hover is resolved in the canvas's frame loop,
+			// so with no frames the readout never fills in, every probe reads null, and the
+			// function returns its fallback as though the whole build were air. The fill then
+			// aims at the one block this run placed itself — a one-cell region — and the driver
+			// times out blaming the fill.
+			await send('Page.captureScreenshot', { format: 'jpeg', quality: 1 });
 			await sleep(80);
 			const block = await evaluate("document.querySelector('.hover-readout strong')?.textContent ?? null");
 			if (!block || block === 'Air') continue;
@@ -341,42 +396,70 @@ try {
 	// a stair block is its own palette entry per facing, so filling one proves nothing.
 	const fillTarget = (await probe(['Oak Planks', 'Stone Bricks', 'Dark Oak Planks'], target)) ?? target;
 	const fillAt = Date.now();
+	const beforeFillEdits = (await stats()).edits;
 	await click(fillTarget.x, fillTarget.y);
-	await waitFor("document.querySelector('.editor').dataset.edits === '2'", 'the fill', 15_000);
+	const afterFillEdits = await grew(beforeFillEdits, 'the fill');
 	await meshed();
 	const fillMs = Date.now() - fillAt;
 	const afterFill = await stats();
 	const filled = Number((afterFill.notice ?? '').replace(/[^0-9]/g, ''));
 	check('fill spread across the surface', filled > 1, `${afterFill.notice ?? '(no notice)'} (on ${fillTarget.block})`);
+	check(
+		'and every cell it changed is in the edit overlay',
+		afterFillEdits - beforeFillEdits > 1,
+		`${beforeFillEdits} → ${afterFillEdits} cells`,
+	);
 	check('palette grew for a block the program never used', afterFill.palette === before.palette + 1, `${before.palette} → ${afterFill.palette}`);
 	console.log(`        fill → re-meshed in ${fillMs} ms`);
 
-	// --- box select, two corners ---------------------------------------------
+	// --- box select: drag a region, then act on it -----------------------------
+	//
+	// Box used to be two clicks with a mode chosen up front, and this driver still asked for
+	// that: pick "Clear" from `.tools__mode`, click a corner, click another. The tool has since
+	// become drag-out-a-region-then-choose, with the verbs living in `RegionPanel` and only
+	// existing once something is selected — so the old first step found no button and threw an
+	// in-page TypeError, which `evaluate` reports as a bare "Uncaught" with nothing to go on.
 	await useTool('Box');
-	await evaluate(`
+
+	const cornerA = await probe(null, target);
+	const cornerB = (await probe(null, cornerA)) ?? { x: cornerA.x + 60, y: cornerA.y + 40 };
+	const beforeBoxEdits = (await stats()).edits;
+	await drag(cornerA, cornerB);
+	await sleep(300);
+
+	const selected = await evaluate("document.querySelector('.region__what')?.textContent ?? ''");
+	check(
+		'dragging a box selects rather than edits',
+		/\d+×\d+×\d+/.test(selected) && (await stats()).edits === beforeBoxEdits,
+		selected || '(no region panel)',
+	);
+
+	const beforeBox = await stats();
+	const cleared = await evaluate(`
 		(() => {
-			const button = [...document.querySelectorAll('.tools__mode')].find((b) => b.textContent.trim() === 'Clear');
+			const button = [...document.querySelectorAll('.region .tools__mode')]
+				.find((b) => b.textContent.trim() === 'Clear');
+			if (!button) return false;
 			button.click();
 			return true;
 		})()
 	`);
-
-	const cornerA = await probe(null, target);
-	await click(cornerA.x, cornerA.y);
-	await sleep(250);
-	const anchored = await evaluate("document.querySelector('.tools')?.textContent ?? ''");
-	check('first corner is held, not applied', /Corner at \d+, \d+, \d+/.test(anchored) && (await stats()).edits === 2);
-
-	const cornerB = (await probe(null, cornerA)) ?? cornerA;
-	const beforeBox = await stats();
-	await click(cornerB.x, cornerB.y);
-	await waitFor("document.querySelector('.editor').dataset.edits === '3'", 'the box edit', 15_000);
+	check('the selection offers a Clear verb', cleared === true);
+	await grew(beforeBoxEdits, 'the box edit');
 	await meshed();
 	const afterBox = await stats();
 	check('box clear removed blocks', afterBox.blocks < beforeBox.blocks, `${beforeBox.blocks} → ${afterBox.blocks}`);
 	check('box reported its extent', /box — [\d,]+ blocks changed/.test(afterBox.notice ?? ''), afterBox.notice ?? '');
 
 	// --- palette swap ---------------------------------------------------------
+	//
+	// Escape first. A box selection survives the action performed on it, and while one stands
+	// the canvas keeps claiming plain drags for the region — so the next tool's click lands on
+	// the selection rather than on the build, and the swap silently never happens.
+	for (const type of ['keyDown', 'keyUp']) {
+		await send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+	}
+	await sleep(200);
 	await useTool('Swap');
 	const swapTo = await pickBlock('quartz_block');
 	check('picker reaches a second block', swapTo === 'Quartz Block', String(swapTo));
@@ -384,7 +467,15 @@ try {
 	const swapTarget = (await probe(['Crimson Planks'], null)) ?? (await probe(null, null));
 	const beforeSwap = await stats();
 	await click(swapTarget.x, swapTarget.y);
-	await waitFor("document.querySelector('.editor').dataset.edits === '4'", 'the swap', 15_000);
+	// Waited on the notice, not on the overlay growing — and the difference is the whole
+	// point of the tool. A swap rewrites cells rather than adding them, so swapping blocks
+	// the fill already touched leaves `EditOverlay.size` exactly where it was. Asserting on
+	// the count here failed against a swap that had just correctly rewritten 21 blocks.
+	await waitFor(
+		"/Swapped [\\d,]+ blocks/.test(document.querySelector('.tools__notice')?.textContent ?? '')",
+		'the swap',
+		15_000,
+	);
 	await meshed();
 	const afterSwap = await stats();
 	const swapped = Number((afterSwap.notice ?? '').replace(/[^0-9]/g, ''));
@@ -410,26 +501,42 @@ try {
 		})()
 	`);
 	if (guard) {
-		console.log(`  skip  re-expansion guard — ${guard}`);
+		console.log(`  skip  re-expansion survives edits — ${guard}`);
 	} else {
-		await sleep(300);
-		const warned = await evaluate(`
-			(() => {
-				const el = document.querySelector('.detach');
-				return { shown: !!el, text: el?.textContent ?? null, edits: document.querySelector('.editor').dataset.edits };
-			})()
+		// This used to assert that moving a slider *asked* before discarding hand edits, which
+		// is the behaviour patch 2.0 set out to delete. Edits now live in an `EditOverlay` of
+		// absolute positions and canonical block refs that composites over every re-expansion,
+		// so a param change keeps them and there is nothing to ask about. Asserting the dialog
+		// still appears is asserting the bug came back.
+		const editsBeforeParam = (await stats()).edits;
+		await sleep(400);
+		await meshed();
+		const after = await evaluate(`
+			(() => ({
+				asked: !!document.querySelector('.detach'),
+				edits: Number(document.querySelector('.editor').dataset.edits),
+				detached: document.querySelector('.editor').dataset.detached,
+			}))()
 		`);
-		check('moving a param slider asks before discarding edits', warned.shown, warned.text ?? '');
-		check('edits survive until the answer', warned.edits === '4', `${warned.edits} edits`);
-		await evaluate("document.querySelectorAll('.detach__actions button')[1].click()");
+		check('a param change re-expands without asking to discard edits', after.asked === false);
+		check(
+			'and the hand edits survive it',
+			after.edits === editsBeforeParam,
+			`${editsBeforeParam} → ${after.edits} cells`,
+		);
 	}
 
 	// --- the shortcut must not fight the prompt box ---------------------------
+	const beforePromptEdits = (await stats()).edits;
 	await evaluate("(() => { document.querySelector('.prompt__input').focus(); return true; })()");
 	await key('z', 2);
 	await sleep(300);
 	const withFocus = await stats();
-	check('Ctrl+Z inside the prompt textarea does not undo', withFocus.edits === 4, `${withFocus.edits} edits`);
+	check(
+		'Ctrl+Z inside the prompt textarea does not undo',
+		withFocus.edits === beforePromptEdits,
+		`${beforePromptEdits} → ${withFocus.edits} cells`,
+	);
 	await evaluate("(() => { document.querySelector('.prompt__input').blur(); return true; })()");
 
 	// --- brush, line, clipboard, pick, isolate --------------------------------
@@ -505,7 +612,18 @@ try {
 	await meshed();
 	const afterStroke = await stats();
 	check('a shift-drag places along the whole drag', afterStroke.blocks > beforeStroke.blocks + 1, `${beforeStroke.blocks} → ${afterStroke.blocks}`);
-	check('...as a single undo step', (await editCount()) === editsBeforeStroke + 1, `${editsBeforeStroke} → ${await editCount()} edits`);
+	await key('z', 2);
+	await sleep(300);
+	await meshed();
+	check(
+		'...as a single undo step',
+		(await editCount()) === editsBeforeStroke,
+		`one Ctrl+Z took ${await editCount()} back to ${editsBeforeStroke} cells`,
+	);
+	// Put it back, so the checks after this one see the stroke they were written against.
+	await evaluate("[...document.querySelectorAll('.tools__row--history button')].at(-1).click()");
+	await sleep(300);
+	await meshed();
 	check('...and says so', /in one stroke/.test(afterStroke.notice ?? ''), afterStroke.notice ?? '');
 
 	// Line: two clicks, one op, and a run of blocks between them.
@@ -516,7 +634,7 @@ try {
 	const lineB = (await probe(null, lineA)) ?? lineA;
 	const beforeLine = await editCount();
 	await click(lineB.x, lineB.y);
-	await waitFor(`document.querySelector('.editor').dataset.edits === '${beforeLine + 1}'`, 'the line', 15_000);
+	await grew(beforeLine, 'the line');
 	await meshed();
 	const afterLine = await stats();
 	check('a line is one edit, however long it is', /Drew a line of [\d,]+ blocks/.test(afterLine.notice ?? ''), afterLine.notice ?? '');
@@ -532,19 +650,19 @@ try {
 
 	// Copy a region with the box tool, then stamp it somewhere else.
 	await useTool('Box');
+	const copyA = (await probe(null)) ?? target;
+	const copyB = (await probe(null, copyA)) ?? { x: copyA.x + 60, y: copyA.y + 40 };
+	await drag(copyA, copyB);
+	await sleep(300);
 	await evaluate(`
 		(() => {
-			const button = [...document.querySelectorAll('.tools__mode')].find((b) => b.textContent.trim() === 'Copy');
-			if (!button) throw new Error('no Copy mode on the box tool');
+			const button = [...document.querySelectorAll('.region .tools__mode')]
+				.find((b) => b.textContent.trim() === 'Copy');
+			if (!button) throw new Error('no Copy verb on the selection');
 			button.click();
 			return true;
 		})()
 	`);
-	const copyA = (await probe(null)) ?? target;
-	await click(copyA.x, copyA.y);
-	await sleep(200);
-	const copyB = (await probe(null, copyA)) ?? copyA;
-	await click(copyB.x, copyB.y);
 	await sleep(300);
 	const copied = await stats();
 	check('copying takes the region without editing it', /Copied \d+×\d+×\d+/.test(copied.notice ?? ''), copied.notice ?? '');
@@ -556,7 +674,7 @@ try {
 	const stampTarget = (await probe(null, copyA)) ?? copyA;
 	const beforeStamp = await editCount();
 	await click(stampTarget.x, stampTarget.y);
-	await waitFor(`document.querySelector('.editor').dataset.edits === '${beforeStamp + 1}'`, 'the stamp', 15_000);
+	await grew(beforeStamp, 'the stamp');
 	await meshed();
 	check('stamping writes the clipboard into the build', /Stamped [\d,]+ blocks/.test((await stats()).notice ?? ''), (await stats()).notice ?? '');
 
@@ -582,9 +700,9 @@ try {
 
 	// The shortcut sheet, which is the only place several of these keys are written down.
 	await press('?');
-	check('? opens the shortcut sheet', (await evaluate("!!document.querySelector('.sheet')")) === true);
+	check('? opens the shortcut sheet', (await evaluate("!!document.querySelector('.shortcuts')")) === true);
 	await press('Escape');
-	check('Escape closes it', (await evaluate("!!document.querySelector('.sheet')")) === false);
+	check('Escape closes it', (await evaluate("!!document.querySelector('.shortcuts')")) === false);
 
 	await sleep(400);
 	const shot = await send('Page.captureScreenshot', { format: 'png' });
@@ -595,13 +713,19 @@ try {
 	console.log(`\nfinal: ${end.blocks} blocks, ${end.edits} edits, palette ${end.palette}`);
 	console.log(`shot   ${outFile}  ${(fs.statSync(outFile).size / 1024).toFixed(0)} KB\n`);
 
-	// --- revert, after the screenshot ----------------------------------------
+	// --- clearing the edits, after the screenshot -----------------------------
 	// The only path that reloads the whole world from a restored grid, so nothing else
 	// proves the pre-edit voxels were really kept rather than merely promised.
+	//
+	// It was called "revert" when a hand edit severed a build from its program and going back
+	// meant throwing the edited grid away. The overlay made it something milder — the program
+	// was never lost, so this drops the overlay and re-expands — and the control says "clear
+	// edits" to match.
 	await evaluate(`
 		(() => {
-			const button = [...document.querySelectorAll('.tools__inline')].find((b) => b.textContent.trim() === 'revert');
-			if (!button) throw new Error('revert not offered');
+			const button = [...document.querySelectorAll('.tools__inline')]
+				.find((b) => b.textContent.trim() === 'clear edits');
+			if (!button) throw new Error('no way to clear the hand edits');
 			button.click();
 			return true;
 		})()
@@ -609,19 +733,39 @@ try {
 	await waitFor("document.querySelector('.editor').dataset.edits === '0'", 'the revert', 15_000);
 	await meshed();
 	const reverted = await stats();
-	check('revert restored the expanded build exactly', reverted.blocks === before.blocks && reverted.palette === before.palette, `${end.blocks} → ${reverted.blocks} blocks, palette ${end.palette} → ${reverted.palette}`);
-	check('revert cleared the modified flag', reverted.detached === 'false' && reverted.undoDisabled === true);
+	// Palette rather than blocks, and that is not a weaker check — it is the only correct one
+	// left. This run moves a shape param on its way past the re-expansion check, so the program
+	// no longer expands to the build it opened with and a block count from before that point is
+	// not a baseline any more. The palette is: every slot the hand edits introduced (crimson,
+	// quartz) has to be gone, and the program's own ten have to be back.
+	check(
+		'clearing the edits restores the program\'s own palette',
+		reverted.palette === before.palette,
+		`palette ${end.palette} → ${reverted.palette}, expected ${before.palette}`,
+	);
+	check(
+		'and drops the blocks the edits added',
+		reverted.blocks < end.blocks,
+		`${end.blocks} → ${reverted.blocks} blocks`,
+	);
+	check('and the build reads as unedited again', reverted.detached === 'false', String(reverted.detached));
 	console.log(failures.length === 0 ? '\nall checks passed' : `\n${failures.length} failed: ${failures.join(', ')}`);
 	if (failures.length > 0) exitCode = 1;
 
 	socket.close();
 } catch (err) {
-	console.error(`\n${err.message}`);
+	console.error(`
+${err.stack ?? err.message}`);
 	exitCode = 1;
 } finally {
 	child.kill();
 	await sleep(300);
-	fs.rmSync(profile, { recursive: true, force: true });
+	try {
+		fs.rmSync(profile, { recursive: true, force: true });
+	} catch {
+		// Windows holds the profile open a moment after the browser exits. Leaving a temp
+		// directory behind is not a test result.
+	}
 }
 
 process.exit(exitCode);

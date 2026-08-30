@@ -92,6 +92,14 @@ export function WorldPage() {
    * which is when you look at it.
    */
   const [sculpting, setSculpting] = useState(false);
+  /**
+   * The component the Place tool will drop next.
+   *
+   * Picking one from the shelf arms it and switches to Place, so putting forty lamps down a
+   * street is forty clicks rather than forty round trips to the shelf. It stays armed until
+   * something else is picked, which is what makes a hub buildable at all.
+   */
+  const [armed, setArmed] = useState<ShelfEntry | null>(null);
   const agents = useAgents();
 
   /**
@@ -156,15 +164,16 @@ export function WorldPage() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [session]);
 
-  const addComponent = useCallback(
-    (entry: ShelfEntry) => {
-      // Dropped at the middle of the plot rather than at 0,0 — a component that lands in the
-      // corner of a 1024² map is off screen, and reads as a click that did nothing.
+  /** Drop a component, centred on a column. */
+  const placeAt = useCallback(
+    (entry: ShelfEntry, cx: number, cz: number) => {
       const placement: WorldPlacement = {
         id: worldId('p'),
         buildId: entry.id,
-        x: Math.max(0, Math.round(doc.settings.size.x / 2 - entry.w / 2)),
-        z: Math.max(0, Math.round(doc.settings.size.z / 2 - entry.d / 2)),
+        // Centred on the point rather than cornered at it: you aim a building at where you
+        // want it to stand, not at where its north-west corner should go.
+        x: Math.max(0, Math.min(doc.settings.size.x - 1, Math.round(cx - entry.w / 2))),
+        z: Math.max(0, Math.min(doc.settings.size.z - 1, Math.round(cz - entry.d / 2))),
         y: doc.settings.seaLevel,
         anchor: 'surface',
         turns: 0,
@@ -179,6 +188,12 @@ export function WorldPage() {
     },
     [doc, session, library],
   );
+
+  /** Picking from the shelf arms the component and hands the pointer the Place tool. */
+  const armComponent = useCallback((entry: ShelfEntry) => {
+    setArmed(entry);
+    setTool('place');
+  }, []);
 
   const updatePlacement = useCallback(
     (id: string, patch: Partial<WorldPlacement>) => {
@@ -424,6 +439,10 @@ export function WorldPage() {
               }}
               onTouch={session.touch}
               onCarve={carve}
+              onPlaceAt={(x, z) => {
+                if (armed) placeAt(armed, x, z);
+                else setNotice('Pick a component on the right, then click the map to drop it.');
+              }}
               onEdited={(x, z) => {
                 if (pinned) return;
                 setRegion({
@@ -452,7 +471,8 @@ export function WorldPage() {
             library={library}
             selected={selected}
             onSelect={setSelected}
-            onAdd={addComponent}
+            onAdd={armComponent}
+            armed={armed?.id ?? null}
             onUpdate={updatePlacement}
             onRemove={(id) => {
               session.commitPlacements(doc.placements.filter((entry) => entry.id !== id));

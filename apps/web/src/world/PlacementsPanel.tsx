@@ -24,8 +24,10 @@ export interface PlacementsPanelProps {
   library: ComponentLibrary;
   selected: string | null;
   onSelect: (id: string | null) => void;
-  /** Add a component at the middle of the current view, or wherever the page decides. */
+  /** Arm a component for the Place tool. */
   onAdd: (entry: ShelfEntry) => void;
+  /** Which one is armed, so the shelf shows what the next click will drop. */
+  armed?: string | null;
   onUpdate: (id: string, patch: Partial<WorldPlacement>) => void;
   onRemove: (id: string) => void;
   onDuplicate: (id: string) => void;
@@ -89,6 +91,10 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
         )}
         {library.status === 'loading' && <p className="world__hint">Loading your library…</p>}
         {library.status === 'error' && <p className="world__hint">The library could not be reached.</p>}
+        {props.armed && (
+          <p className="world__hint">Click the map to drop it. It stays armed for the next one.</p>
+        )}
+
         {library.status === 'ready' && shelf.length === 0 && (
           <p className="world__hint">
             Nothing here yet. Save a build from Build or Architecture and it becomes a component.
@@ -98,7 +104,12 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
         <ul className="shelf">
           {shelf.map((entry) => (
             <li key={entry.id}>
-              <button type="button" className="shelf__item" onClick={() => props.onAdd(entry)}>
+              <button
+                type="button"
+                className="shelf__item"
+                aria-pressed={props.armed === entry.id}
+                onClick={() => props.onAdd(entry)}
+              >
                 <span className="shelf__name">{entry.name}</span>
                 <span className="shelf__size">
                   {entry.w}×{entry.h}×{entry.d}

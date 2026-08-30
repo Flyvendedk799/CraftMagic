@@ -562,3 +562,9 @@
     max-height: 32vh;
   }
 }
+
+/* The armed component, so the shelf shows what the next click on the map will drop. */
+.shelf__item[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}

@@ -60,6 +60,8 @@ export interface WorldMapProps {
   onCarve: (columns: Array<{ x: number; z: number }>, top: number, depth: number) => void;
   /** Where an edit gesture landed, so the 3D check can follow the work. */
   onEdited: (x: number, z: number) => void;
+  /** A click with the Place tool, in world columns. */
+  onPlaceAt: (x: number, z: number) => void;
   /** Reported on hover so the page can show a readout instead of putting one in the canvas. */
   onHover: (info: { x: number; z: number; height: number; stratum: number } | null) => void;
 }
@@ -267,6 +269,16 @@ export function WorldMap(props: WorldMapProps) {
           };
           capture(host, event.pointerId);
         }
+        return;
+      }
+
+      if (tool === 'place') {
+        // A click, not a drag: a building is dropped where you point rather than painted along
+        // a stroke. Falling through to the terrain path — which is what happened before this
+        // branch existed — ran a brush whose tool matched none of the write cases, so Place
+        // noted a few hundred columns, changed nothing, and discarded the empty stroke. It
+        // looked exactly like a dead button, which it was.
+        props.onPlaceAt(world.x, world.z);
         return;
       }
 

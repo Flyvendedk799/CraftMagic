@@ -23,6 +23,27 @@ describe('raycastVoxel', () => {
     expect(raycastVoxel(grid8(), { x: -5, y: 6, z: 4.5 }, { x: 0, y: 1, z: 0 })).toBeNull();
   });
 
+  it('ignores one cell, so a block being carried does not block its own aim', () => {
+    const grid = grid8();
+    const down = { x: 0, y: -1, z: 0 };
+    // Straight down the pillar's column: the pillar first, and the floor under it once the
+    // pillar is the thing in hand.
+    expect(raycastVoxel(grid, { x: 4.5, y: 6, z: 4.5 }, down)).toEqual({ x: 4, y: 3, z: 4, face: 'up' });
+    expect(raycastVoxel(grid, { x: 4.5, y: 6, z: 4.5 }, down, { ignore: { x: 4, y: 3, z: 4 } })).toEqual({
+      x: 4,
+      y: 0,
+      z: 4,
+      face: 'up',
+    });
+    // Any other cell is still solid — the option names one cell, not a kind of block.
+    expect(raycastVoxel(grid, { x: 4.5, y: 6, z: 4.5 }, down, { ignore: { x: 0, y: 0, z: 0 } })).toEqual({
+      x: 4,
+      y: 3,
+      z: 4,
+      face: 'up',
+    });
+  });
+
   it('returns null for a zero-length direction', () => {
     expect(raycastVoxel(grid8(), { x: 4.5, y: 6, z: 4.5 }, { x: 0, y: 0, z: 0 })).toBeNull();
   });

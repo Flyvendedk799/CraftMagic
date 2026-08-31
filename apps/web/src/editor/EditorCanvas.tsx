@@ -89,12 +89,15 @@ export interface EditorCanvasProps {
   /**
    * What a plain primary drag starting on the build means for the active tool.
    *
-   * `stroke` paints every cell it crosses; `endpoints` reports the first and last; `none`
-   * leaves the drag to the camera, which is what every tool used to do.
+   * `stroke` paints every cell it crosses; `endpoints` reports the first and last; `lift`
+   * carries the one block the press landed on; `none` leaves the drag to the camera, which
+   * is what every tool used to do.
    */
-  dragMode?: 'stroke' | 'endpoints' | 'none';
+  dragMode?: 'stroke' | 'endpoints' | 'lift' | 'none';
   /** A selection being drawn or moved. See `RegionDrag`. */
   onRegionDrag?: (drag: RegionDrag) => void;
+  /** A single block being carried. See `BlockDrag`. */
+  onBlockDrag?: (drag: BlockDrag) => void;
   /** Outline of what the next click would change. */
   preview?: Preview | null;
   /** Chunks still queued or in flight, for a loading indicator. Fires only on change. */
@@ -195,6 +198,7 @@ function Scene({
   regionDrag,
   dragMode,
   onRegionDrag,
+  onBlockDrag,
   preview,
   onProgress,
   onWorld,
@@ -298,6 +302,7 @@ function Scene({
         onStroke={onStroke}
         onPick={onPick}
         onRegionDrag={onRegionDrag}
+        onBlockDrag={onBlockDrag}
       />
       {marker && <Highlight at={marker} color={PREVIEW_COLOR} />}
       {region && <RegionOutline min={region.min} max={region.max} />}
@@ -326,6 +331,26 @@ export interface RegionDrag {
   from: { x: number; y: number; z: number };
   /** For `draw`, the moving corner. For `move`, where that grabbed cell has got to. */
   to: { x: number; y: number; z: number };
+  /** `move` frames are previews; `end` is the one that should be committed. */
+  phase: 'move' | 'end';
+}
+
+/**
+ * One block being carried by a primary drag.
+ *
+ * Reported as the hit *under the pointer* rather than as a destination cell, because where a
+ * carried block lands is the same question `placementCell` already answers for a place — the
+ * cell in front of the face you are pointing at. Deciding it here would be a second copy of
+ * that rule, and the two would disagree the first time either changed.
+ *
+ * `to` is null when the ray found nothing at all, and on a cancelled gesture. Both mean the
+ * same thing to the page: no drop, drawn as no ghost.
+ */
+export interface BlockDrag {
+  /** The cell the pointer picked up. */
+  from: { x: number; y: number; z: number };
+  /** What is under the pointer now, with the carried block itself ignored. */
+  to: VoxelHit | null;
   /** `move` frames are previews; `end` is the one that should be committed. */
   phase: 'move' | 'end';
 }
@@ -744,6 +769,7 @@ function Picker({
   onStroke,
   onPick,
   onRegionDrag,
+  onBlockDrag,
 }: {
   grid: VoxelGrid;
   layerClip: number | null;
@@ -752,12 +778,13 @@ function Picker({
   /** True while a tool that owns rectangular selections is active. */
   regionDrag?: boolean;
   /** What a plain primary drag on the build means for the active tool. */
-  dragMode?: 'stroke' | 'endpoints' | 'none';
+  dragMode?: 'stroke' | 'endpoints' | 'lift' | 'none';
   onHover?: (hit: VoxelHit | null) => void;
   onClick?: (hit: VoxelHit) => void;
   onStroke?: (hits: VoxelHit[]) => void;
   onPick?: (hit: VoxelHit) => void;
   onRegionDrag?: (drag: RegionDrag) => void;
+  onBlockDrag?: (drag: BlockDrag) => void;
 }) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
@@ -776,6 +803,8 @@ function Picker({
   notifyPick.current = onPick;
   const notifyRegion = useRef(onRegionDrag);
   notifyRegion.current = onRegionDrag;
+  const notifyBlock = useRef(onBlockDrag);
+  notifyBlock.current = onBlockDrag;
   // Read inside the pointer handlers, which are bound once — a re-bind on every selection
   // change would drop the gesture halfway through the drag that caused it.
   const live = useRef({ region, regionDrag, dragMode });
@@ -792,7 +821,7 @@ function Picker({
     setHit(null);
     notify.current?.(null);
 
-    const cast = (event: PointerEvent): VoxelHit | null => {
+    const cast = (event: PointerEvent, ignore?: VoxelHit | null): VoxelHit | null => {
       const rect = canvas.getBoundingClientRect();
       ndc.set(
         ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -800,6 +829,8 @@ function Picker({
       );
       raycaster.setFromCamera(ndc, camera);
       return raycastVoxel(grid, raycaster.ray.origin, raycaster.ray.direction, {
+        // A block being carried must not stop the ray that is aiming it. See `BlockDrag`.
+        ignore: ignore ?? undefined,
         // The layer slider clips with planes, so the picker has to be told where the cuts
         // are — otherwise it happily returns a block nobody can see.
         maxY: layerClip ?? undefined,
@@ -844,6 +875,23 @@ function Picker({
      */
     let boxDrag: { mode: 'draw' | 'move'; from: VoxelHit; plane: THREE.Plane | null } | null = null;
     const planePoint = new THREE.Vector3();
+
+    /**
+     * The one block a drag is carrying, or null.
+     *
+     * Held as the cell it was picked up from and nothing else: where it is going is re-cast
+     * from the pointer on every frame, with this cell ignored, so the block the gesture is
+     * holding never blocks its own aim.
+     */
+    let carrying: VoxelHit | null = null;
+
+    /** Hand the block back and the camera with it. Returns what was being carried. */
+    const dropCarry = (): VoxelHit | null => {
+      const held = carrying;
+      carrying = null;
+      if (held && controls) controls.enabled = true;
+      return held;
+    };
 
     const onPlane = (event: PointerEvent, plane: THREE.Plane): { x: number; z: number } | null => {
       const rect = canvas.getBoundingClientRect();
@@ -923,6 +971,29 @@ function Picker({
       }
 
       /*
+       * A block picked up and carried.
+       *
+       * Same rule as everything else on this button — a press on the build belongs to the
+       * tool, a press on the sky belongs to the camera — with one extra condition: the press
+       * has to land on a *block*. A ground hit names an empty floor cell, and there is
+       * nothing there to pick up.
+       *
+       * Nothing is reported at the press itself. A press that never moves has to stay a
+       * click, because clicking with this tool selects the whole structure, and reporting a
+       * zero-length carry would put a ghost on screen for every one of those.
+       */
+      if (event.button === 0 && !event.shiftKey && live.current.dragMode === 'lift' && notifyBlock.current) {
+        const at = cast(event);
+        if (at && !at.ground) {
+          carrying = at;
+          if (controls) controls.enabled = false;
+          canvas.setPointerCapture(event.pointerId);
+          event.preventDefault();
+          return;
+        }
+      }
+
+      /*
        * A plain drag that starts ON THE BUILD belongs to the tool.
        *
        * This is the rule the box tool has always used one branch above — press the build to
@@ -965,6 +1036,16 @@ function Picker({
     };
 
     const move = (event: PointerEvent) => {
+      if (carrying) {
+        const to = cast(event, carrying);
+        // The highlight follows what the drop is aimed at, not the block in hand — the block
+        // in hand is under the pointer for the whole gesture and highlighting it would say
+        // nothing.
+        show(to);
+        notifyBlock.current?.({ from: carrying, to, phase: 'move' });
+        return;
+      }
+
       if (boxDrag) {
         const to = boxTarget(event, boxDrag);
         if (to) notifyRegion.current?.({ mode: boxDrag.mode, from: boxDrag.from, to, phase: 'move' });
@@ -989,6 +1070,19 @@ function Picker({
       const moved =
         !!downAt &&
         (Math.abs(event.clientX - downAt.x) > DRAG_SLOP || Math.abs(event.clientY - downAt.y) > DRAG_SLOP);
+
+      if (carrying) {
+        const held = dropCarry()!;
+        if (moved) {
+          notifyBlock.current?.({ from: held, to: cast(event, held), phase: 'end' });
+          downAt = null;
+          return;
+        }
+        // A press that never moved is a click on the block, not a move of it — the same rule
+        // a stroke follows one branch below, and what keeps clicking to select a structure
+        // working when the pointer twitches.
+        notifyBlock.current?.({ from: held, to: null, phase: 'end' });
+      }
 
       if (endpoints) {
         const from = endpoints;
@@ -1035,6 +1129,10 @@ function Picker({
     };
 
     const cancel = (event: PointerEvent) => {
+      const held = dropCarry();
+      // A cancelled carry is still an ending: without it the page would keep drawing the
+      // ghost of a drop that is never coming. A null destination is what says "nowhere".
+      if (held) notifyBlock.current?.({ from: held, to: null, phase: 'end' });
       endBoxDrag(event, false);
       endStroke(false);
       // An abandoned endpoint drag must hand the camera back; it is the one gesture that
@@ -1054,6 +1152,8 @@ function Picker({
     return () => {
       // A teardown mid-stroke (a new grid, an unmount) must not leave the camera frozen.
       if (stroke) endStroke(false);
+      const held = dropCarry();
+      if (held) notifyBlock.current?.({ from: held, to: null, phase: 'end' });
       if (endpoints && controls) controls.enabled = true;
       canvas.removeEventListener('pointermove', move);
       canvas.removeEventListener('pointerleave', leave);

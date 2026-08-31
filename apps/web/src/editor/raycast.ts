@@ -49,6 +49,16 @@ export interface RaycastOptions {
    */
   minY?: number;
   /**
+   * One cell to treat as air, wherever it is.
+   *
+   * For a block being carried: while it is dragged it is still in the grid, so it sits under
+   * the pointer for the first part of every drag and the ray stops on the thing the gesture
+   * is holding. Ignoring it makes the ray see what the block would land *on*, which is what
+   * a drop has to be aimed at — and it makes the pointer coming back over the block's own
+   * cell name that cell again, so a drag that changes its mind costs nothing.
+   */
+  ignore?: Vec3Like;
+  /**
    * Fall back to the ground plane at `minY` when the ray touches no block.
    *
    * Off by default, because a pick that names a cell with nothing in it is the wrong answer
@@ -79,6 +89,7 @@ export function raycastVoxel(
   const maxDistance = options.maxDistance ?? 1024;
   const maxY = options.maxY ?? size.y - 1;
   const minY = Math.max(0, options.minY ?? 0);
+  const ignore = options.ignore;
   if (maxY < minY) return null;
 
   const len = Math.hypot(direction.x, direction.y, direction.z);
@@ -124,7 +135,10 @@ export function raycastVoxel(
   let face: VoxelFace = entry.face ?? dominantFace(dx, dy, dz);
 
   while (t <= maxDistance) {
-    if (voxels[voxelIndex(size, x, y, z)] !== 0) return { x, y, z, face };
+    const solid =
+      voxels[voxelIndex(size, x, y, z)] !== 0 &&
+      !(ignore && ignore.x === x && ignore.y === y && ignore.z === z);
+    if (solid) return { x, y, z, face };
 
     if (tMaxX < tMaxY && tMaxX < tMaxZ) {
       x += stepX;

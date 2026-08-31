@@ -35,7 +35,7 @@ import {
   type Vec3,
 } from '@craftmagic/core';
 import { Outliner, type OutlinePart } from './Outliner.js';
-import { EditorCanvas, type ViewKind, type ViewRequest } from './EditorCanvas.js';
+import { EditorCanvas, type BlockDrag, type ViewKind, type ViewRequest } from './EditorCanvas.js';
 import { chunkCounts } from './mesher.js';
 import {
   BLANK_BUILD,
@@ -72,13 +72,15 @@ import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
 import { BuildMenu, type BuildOption } from './BuildMenu.js';
 import { ToolPalette, type RegionAction } from './ToolPalette.js';
 import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
-import { previewFor } from './preview.js';
+import { previewFor, type Preview } from './preview.js';
 import { useAssembly } from './useAssembly.js';
 import { useEditSession } from './useEditSession.js';
 import { TOOL_IMPL, type EditorTool, type ToolCtx, type ToolResult } from './tools/registry.js';
 import { withMirror } from './tools/symmetry.js';
 import { pickBlock } from './tools/pick.js';
 import { boxBounds, boxEdit, moveEdit, type BoxCorner } from './tools/boxSelect.js';
+import { liftBlock } from './tools/lift.js';
+import { placementCell } from './tools/place.js';
 import { MAX_BRUSH_RADIUS, type BrushShape } from './tools/brush.js';
 import {
   ClipTooLargeError,
@@ -416,6 +418,8 @@ export function EditorPage() {
   const [anchor, setAnchor] = useState<BoxCorner | null>(null);
   /** Where a selection being dragged would land, while it is being dragged. */
   const [dragGhost, setDragGhost] = useState<{ dx: number; dy: number; dz: number } | null>(null);
+  /** Where the single block being carried would land, while it is in the air. */
+  const [carryTo, setCarryTo] = useState<BoxCorner | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [brushRadius, setBrushRadius] = useState(0);
   const [brushShape, setBrushShape] = useState<BrushShape>('ball');
@@ -675,6 +679,56 @@ export function EditorPage() {
     };
   }, [region, dragGhost]);
 
+  /**
+   * One block, carried by the pointer.
+   *
+   * The gesture the editor was missing. Grab could take a whole connected mass and the Box
+   * tool could take a region, but the commonest edit of all — *that* block, one course over —
+   * meant erasing it, re-aiming and placing it back, which is two undo entries and a block
+   * that comes back stripped of whatever state made it a stair facing north.
+   *
+   * Where it lands is `placementCell`: the same rule a place follows, so a block dropped on a
+   * wall sits against the wall rather than inside it, and a block dropped on the floor sits on
+   * the floor. Preview frames only draw the ghost — the move is one `liftBlock` on release,
+   * so a drag across half a build is one press of Ctrl+Z and one re-mesh rather than sixty.
+   */
+  const onBlockDrag = useCallback(
+    (drag: BlockDrag) => {
+      const to = drag.to ? placementCell(grid, drag.to) : null;
+
+      if (drag.phase === 'move') {
+        setCarryTo(to);
+        return;
+      }
+
+      setCarryTo(null);
+      // A carry that ended over nothing — off the build, or cancelled outright. Silent: the
+      // block never left, and there is nothing to report about a gesture that did not happen.
+      if (!to) return;
+
+      const result = liftBlock(grid, drag.from, to);
+      if (!result.op) {
+        if (result.refusal) setNotice(result.refusal);
+        return;
+      }
+      session.apply(result.op);
+      setNotice(`Moved one block to ${to.x}, ${to.y}, ${to.z}.`);
+    },
+    [grid, session],
+  );
+
+  /**
+   * The ghost of a block in flight, drawn as the preview rather than as a selection.
+   *
+   * It has to beat the hover preview while a carry is in progress: the pointer is over the
+   * *destination's* neighbour for the whole gesture, so the tool's own preview would be
+   * describing a click nobody is about to make.
+   */
+  const carryPreview = useMemo<Preview | null>(
+    () => (carryTo ? { kind: 'cells', cells: [carryTo], label: 'drop here' } : null),
+    [carryTo],
+  );
+
   const regionResize = useCallback(
     (by: number) => {
       if (!region) return;
@@ -797,6 +851,13 @@ export function EditorPage() {
     () => previewFor({ grid, tool, hover, anchor, radius: brushRadius, shape: brushShape, clip }),
     [grid, tool, hover, anchor, brushRadius, brushShape, clip],
   );
+
+  /**
+   * What "next" looks like: the ghost of a block in flight when one is being carried, and the
+   * tool's own preview otherwise. One value, drawn in the viewport and named in the readout —
+   * an outline the line under the build does not describe is a shape nobody can identify.
+   */
+  const shownPreview = carryPreview ?? preview;
 
   // --- keyboard ------------------------------------------------------------
 
@@ -1124,7 +1185,8 @@ export function EditorPage() {
             ghost || assembly.assembling ? 'none' : TOOL_BY_ID[tool].drag === 'region' ? 'none' : TOOL_BY_ID[tool].drag
           }
           onRegionDrag={ghost || assembly.assembling ? undefined : onRegionDrag}
-          preview={ghost || assembly.assembling ? null : preview}
+          onBlockDrag={ghost || assembly.assembling ? undefined : onBlockDrag}
+          preview={ghost || assembly.assembling ? null : shownPreview}
           onProgress={setRemaining}
           onWorld={ghost ? noopWorld : assembly.assembling ? assembly.onWorld : session.attachWorld}
           view={view}
@@ -1426,7 +1488,7 @@ export function EditorPage() {
           <>
             <strong>{hoverBlock}</strong>
             {hover.x}, {hover.y}, {hover.z} · {hover.face}
-            {preview && <em className="hover-readout__preview"> · {preview.label}</em>}
+            {shownPreview && <em className="hover-readout__preview"> · {shownPreview.label}</em>}
           </>
         ) : (
           <>

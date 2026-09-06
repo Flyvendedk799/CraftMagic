@@ -38,8 +38,20 @@ public final class ModConfig {
 	/** Null until {@code /craftmagic pair <code>} succeeds. */
 	public String agentToken = null;
 
-	/** Blocks placed per second while building. {@code 0} means place everything at once. */
-	public int buildSpeed = 40;
+	/**
+	 * Blocks placed per second while building. {@code 0} means place everything at once.
+	 *
+	 * <p>Was 40, which made the bot pleasant to watch and a map impossible to deliver: a
+	 * region at the engine's 500,000-block cap took about three and a half hours, while the
+	 * website — which had no way to ask — advertised 8,000 a second and printed "about a
+	 * minute" beside it. 800 is a twentieth of what {@link
+	 * dev.craftmagic.agent.build.BuildTask} will do per tick, lands that region in around ten
+	 * minutes, and stays slow enough that the placement is still something you watch happen
+	 * rather than a world that blinks into existence.
+	 *
+	 * <p>{@code /craftmagic speed} still overrides it either way.
+	 */
+	public int buildSpeed = 800;
 
 	private static ModConfig instance;
 

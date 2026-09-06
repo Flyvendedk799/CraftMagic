@@ -28,6 +28,15 @@ export interface SchemOptions {
 /** Largest dimension Sponge can express, since Width/Height/Length are signed shorts. */
 const MAX_DIMENSION = 32767;
 
+/**
+ * Write a build as a gzipped Sponge v2 schematic.
+ *
+ * **Blocks only.** Sponge v2 has `BlockEntities` and `Entities` compounds and this writes
+ * neither, so a chest exports empty, a sign exports blank and a banner loses its pattern. The
+ * same is true of anything sent to the game, since the mod is handed these very bytes. Nothing
+ * downstream can tell the difference — the blocks are all there and correct — which is exactly
+ * why it is worth saying here rather than leaving somebody to find out in their own world.
+ */
 export function writeSchematic(grid: VoxelGrid, options: SchemOptions = {}): Uint8Array {
 	const { x: width, y: height, z: length } = grid.size;
 	if (width > MAX_DIMENSION || height > MAX_DIMENSION || length > MAX_DIMENSION) {

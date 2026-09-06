@@ -32,6 +32,7 @@ import {
   resizeWorld,
   worldId,
   type Overlay,
+  type Region,
   type TerrainBrush,
   type WorldPlacement,
 } from '@craftmagic/core';
@@ -40,7 +41,7 @@ import { useAuth } from '../library/auth.js';
 import { useComponents, type ShelfEntry } from '../library/components.js';
 import { localStore, remoteStore } from './api.js';
 import { useAgents } from '../agent/useAgents.js';
-import { runOf, sendRegion } from './send.js';
+import { runOf, sendRegion, waitForJob } from './send.js';
 import { WorldMap } from './WorldMap.js';
 import { WorldPreview } from './WorldPreview.js';
 import { TerrainPanel } from './TerrainPanel.js';
@@ -287,33 +288,36 @@ export function WorldPage() {
    * "place the first region and I will line the rest up behind it" is a thing the user can
    * act on.
    */
+  /** The paired world to build into, or a sentence saying why there is not one. */
+  const onlineAgent = useCallback(() => {
+    const online = agents.agents.find((agent) => agent.online);
+    if (online) return online;
+    setNotice(
+      agents.needsAccount
+        ? 'Sign in and pair a Minecraft world to send regions to it.'
+        : 'No paired Minecraft world is online. Open the Minecraft mod page to pair one.',
+    );
+    return null;
+  }, [agents]);
+
   const send = useCallback(
-    async (rx: number, rz: number) => {
-      const online = agents.agents.find((agent) => agent.online);
-      if (!online) {
-        setNotice(
-          agents.needsAccount
-            ? 'Sign in and pair a Minecraft world to send regions to it.'
-            : 'No paired Minecraft world is online. Open the Minecraft mod page to pair one.',
-        );
-        return;
-      }
+    async (region: Region) => {
+      const online = onlineAgent();
+      if (!online) return;
 
       const run = runOf(doc);
-      const step = run.find((entry) => entry.rx === rx && entry.rz === rz);
-      if (!step) return;
+      const index = run.findIndex((entry) => entry.key === region.key);
+      if (index < 0) return;
 
       setSending(true);
-      setNotice(`Materialising region ${rx},${rz}…`);
+      setNotice(`Materialising region ${region.rx},${region.rz}…`);
       try {
-        const { blocks } = await sendRegion(
-          doc, rx, rz, step.index, step.total, online.id, library.catalogue,
-        );
+        const { blocks } = await sendRegion(doc, region, index, run.length, online.id, library.catalogue);
         setNotice(
-          step.index === 0
-            ? `Region ${rx},${rz} is on its way — ${blocks.toLocaleString()} blocks. Place it in game; ` +
-              'where it lands is where the rest of the map is measured from.'
-            : `Region ${rx},${rz} queued — ${blocks.toLocaleString()} blocks.`,
+          index === 0
+            ? `Region ${region.rx},${region.rz} is on its way — ${blocks.toLocaleString()} blocks. ` +
+              'Place it in game; where it lands is where the rest of the map is measured from.'
+            : `Region ${region.rx},${region.rz} queued — ${blocks.toLocaleString()} blocks.`,
         );
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error));
@@ -321,8 +325,60 @@ export function WorldPage() {
         setSending(false);
       }
     },
-    [doc, agents, library.catalogue],
+    [doc, onlineAgent, library.catalogue],
   );
+
+  /**
+   * Send the whole map, one region at a time, waiting for each.
+   *
+   * This is the thing the module header claimed to do and did not: `runOf` existed, nothing
+   * ever walked it, and the user had to watch game chat for a region to finish and then come
+   * back and click the next one. Sequential is not a choice — an agent takes one job at a
+   * time, and the server refuses region *n* until region 0 has reported where it landed — so
+   * the loop is mostly waiting, and what it is really for is doing the waiting for you.
+   *
+   * A failure stops the run. Carrying on past a region that did not land would leave a hole
+   * in the middle of a map and keep going as though nothing had happened.
+   */
+  const sendAll = useCallback(async () => {
+    const online = onlineAgent();
+    if (!online) return;
+
+    const run = runOf(doc);
+    setSending(true);
+    try {
+      for (let index = 0; index < run.length; index++) {
+        const region = run[index]!;
+        setNotice(`Region ${index + 1} of ${run.length} — materialising ${region.rx},${region.rz}…`);
+        const { jobId, blocks } = await sendRegion(doc, region, index, run.length, online.id, library.catalogue);
+
+        if (index === 0) {
+          setNotice(
+            `Region 1 of ${run.length} sent — ${blocks.toLocaleString()} blocks. Place it in game: ` +
+              'where it lands is where the rest of the map is measured from.',
+          );
+        }
+
+        const outcome = await waitForJob(jobId, (placed, total) => {
+          setNotice(
+            `Region ${index + 1} of ${run.length} — ${placed.toLocaleString()} of ${total.toLocaleString()} blocks`,
+          );
+        });
+
+        if (!outcome.ok) {
+          setNotice(
+            `Stopped at region ${index + 1} of ${run.length}: ${outcome.error ?? outcome.status}.`,
+          );
+          return;
+        }
+      }
+      setNotice(`All ${run.length} regions built.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSending(false);
+    }
+  }, [doc, onlineAgent, library.catalogue]);
 
   const resize = useCallback(
     (size: { x: number; z: number }) => {
@@ -519,11 +575,12 @@ export function WorldPage() {
               setPinned(true);
               setRegion({ rx, rz });
             }}
-            onSendRegion={(rx, rz) => {
+            onSendRegion={(region) => {
               setPinned(true);
-              setRegion({ rx, rz });
-              void send(rx, rz);
+              setRegion({ rx: region.rx, rz: region.rz });
+              void send(region);
             }}
+            onSendAll={() => void sendAll()}
             sending={sending}
           />
         </aside>

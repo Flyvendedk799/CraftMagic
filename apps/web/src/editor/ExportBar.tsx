@@ -73,7 +73,11 @@ export function ExportBar({ grid, program, name, detached, guideHref, blockCount
           type="button"
           onClick={onDownload}
           disabled={empty}
-          title={empty ? 'Nothing to export yet' : 'WorldEdit-compatible .schem'}
+          title={
+            empty
+              ? 'Nothing to export yet'
+              : 'WorldEdit-compatible .schem — blocks only; chests, signs and banners carry no contents'
+          }
         >
           Download schematic
         </button>

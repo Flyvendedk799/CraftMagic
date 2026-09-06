@@ -39,6 +39,20 @@ export interface Connection {
 
 type JobListener = (event: JobEvent) => void;
 
+/**
+ * What happened to an offer.
+ *
+ * `offer` used to return a bare boolean, and the two falses meant opposite things: an agent
+ * that is merely offline leaves the job pending to land when the player next starts the
+ * game, while a refusal has already failed the job. The route could not tell them apart, so
+ * it answered 202 either way and the website printed "queued" over a row that was already
+ * dead — the one outcome the user most needed to hear about was the one that looked normal.
+ */
+export type OfferResult =
+  | { kind: 'delivered' }
+  | { kind: 'offline' }
+  | { kind: 'refused'; reason: string };
+
 export interface JobEvent {
 	jobId: string;
 	status: string;
@@ -109,9 +123,9 @@ export class AgentHub {
 	 * `region` marks the job as one tile of a world. Omitted, the job is a lone build and
 	 * every line below behaves as it always has.
 	 */
-	async offer(job: JobRow, region?: JobRegion): Promise<boolean> {
+	async offer(job: JobRow, region?: JobRegion): Promise<OfferResult> {
 		const connection = this.connections.get(job.agentId);
-		if (!connection) return false;
+		if (!connection) return { kind: 'offline' };
 
 		// Unscoped on purpose: the offer is sent to the agent the job already names, and the
 		// caller's ownership was checked when the job was created.
@@ -167,14 +181,14 @@ export class AgentHub {
 			await this.store.updateJob(job.id, { status: 'offered' });
 			this.emit(job.id, { jobId: job.id, status: 'offered' });
 		}
-		return true;
+		return { kind: 'delivered' };
 	}
 
 	/** Fail a job with a reason the website can show, rather than sending it. */
-	private async refuse(job: JobRow, reason: string): Promise<false> {
+	private async refuse(job: JobRow, reason: string): Promise<OfferResult> {
 		await this.store.updateJob(job.id, { status: 'failed', error: reason });
 		this.emit(job.id, { jobId: job.id, status: 'failed', error: reason });
-		return false;
+		return { kind: 'refused', reason };
 	}
 
 	/**

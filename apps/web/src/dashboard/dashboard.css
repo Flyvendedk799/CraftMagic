@@ -211,6 +211,44 @@
   color: var(--muted);
 }
 
+/* --- doors ---------------------------------------------------------------- */
+
+/* The three ways into the studio, named for what each makes. Cards rather than chips: a chip
+   is a suggestion, and these are the product's three tools. */
+.doors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.door {
+  display: grid;
+  gap: 0.15rem;
+  padding: var(--space-3);
+  color: inherit;
+  text-decoration: none;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.door:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.door__title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.door__body {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 /* --- card furniture ------------------------------------------------------ */
 
 .dash__card-head {
@@ -304,13 +342,34 @@
   border-radius: inherit;
 }
 
+/* Five cells now, one of them optional; the columns fit themselves rather than assuming a
+   count, so a sixth step would not have to touch this file. */
 .checklist__list {
   list-style: none;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: var(--space-3);
   margin: 0;
   padding: 0;
+}
+
+/* The optional step is on the path but not the finish line: drawn quieter, never lit. */
+.checklist__step[data-optional='1'][data-done='0'] {
+  border-color: var(--border);
+  border-style: dashed;
+}
+
+.checklist__step[data-optional='1'][data-done='0'] .checklist__tick {
+  color: var(--muted);
+  background: var(--border);
+}
+
+.checklist__optional {
+  font-size: var(--text-2xs);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--muted);
 }
 
 .checklist__step {
@@ -481,7 +540,63 @@
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
-/* --- worlds -------------------------------------------------------------- */
+/* The right-hand column holds two cards: paired Minecraft and maps. Stacked, with the same
+   gap the grid uses, so the seam between them reads as the grid's own. */
+.dash__stack {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+/* --- maps ---------------------------------------------------------------- */
+
+.maps {
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+}
+
+.maps__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.maps__name {
+  grid-column: 1;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maps__name:hover {
+  color: var(--accent);
+}
+
+.maps__meta {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--muted);
+}
+
+.maps__row .buildlist__action {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+/* --- paired Minecraft ------------------------------------------------------ */
 
 .worlds {
   list-style: none;

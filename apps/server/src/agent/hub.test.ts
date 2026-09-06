@@ -1,5 +1,5 @@
 /**
- * Two promises the hub is now expected to keep before an offer leaves the building.
+ * The promises the hub is expected to keep before an offer leaves the building.
  *
  * The first is the block ceiling. It has been in every `hello.ok` since the socket existed and
  * was checked in exactly no places, so a build past it was queued, told to the player as on its
@@ -13,18 +13,22 @@
  * mod centres it on whoever is standing nearby, which is precisely the "every region lands on
  * top of the last" bug this whole tier had to be built around.
  *
- * Driven against a hand-written store rather than the database, because neither promise is
- * about SQL. Both are about what the hub does in the seconds before it calls `send`.
+ * The third is that the order survives the process. The anchor and the region both live on the
+ * job rows now, and a hub that has just started has to find them there rather than refusing
+ * the rest of a map it has every fact about.
+ *
+ * Driven against a hand-written store rather than the database, because none of these are
+ * about SQL. All are about what the hub does in the seconds before it calls `send`.
  */
 
 import { describe, expect, it } from 'vitest';
-import { AGENT_LIMITS, type JobRegion, type ServerToAgent } from '@craftmagic/core';
+import { AGENT_LIMITS, deliveryOffset, type JobRegion, type ServerToAgent } from '@craftmagic/core';
 import { AgentHub, type Connection } from './hub.js';
-import type { AgentStore, JobRow } from './store.js';
+import type { AgentStore, JobRow, WorldAnchorRecord } from './store.js';
 
 const AGENT = 'agent-1';
 
-function job(id: string, buildId: string): JobRow {
+function job(id: string, buildId: string, region: JobRegion | null = null): JobRow {
 	return {
 		id,
 		agentId: AGENT,
@@ -34,29 +38,33 @@ function job(id: string, buildId: string): JobRow {
 		progressTotal: 0,
 		anchor: null,
 		error: null,
+		region,
 	};
 }
 
+type FakeBuild = number | { blockCount: number; sizeX: number; sizeZ: number };
+
 /**
- * A store that answers the three questions the hub asks it and records the answers it is given.
+ * A store that answers the questions the hub asks it and records the answers it is given.
  *
  * `failures` is the interesting one: a refused offer is not a silent no-op, it is a job the
- * website has to be able to show a reason for.
+ * website has to be able to show a reason for. `anchors` is what a restarted hub finds in the
+ * rows.
  */
-function fakeStore(blockCounts: Record<string, number>, pending: JobRow[] = []) {
+function fakeStore(
+	builds: Record<string, FakeBuild>,
+	pending: JobRow[] = [],
+	anchors: Record<string, WorldAnchorRecord> = {},
+) {
 	const failures = new Map<string, string | null>();
 	let reaped = 0;
+	let anchorLookups = 0;
 	const store = {
 		async getBuildForAgent(id: string) {
-			if (!(id in blockCounts)) return null;
-			return {
-				id,
-				name: `Build ${id}`,
-				sizeX: 16,
-				sizeY: 16,
-				sizeZ: 16,
-				blockCount: blockCounts[id],
-			};
+			if (!(id in builds)) return null;
+			const build = builds[id]!;
+			const shape = typeof build === 'number' ? { blockCount: build, sizeX: 16, sizeZ: 16 } : build;
+			return { id, name: `Build ${id}`, sizeX: shape.sizeX, sizeY: 16, sizeZ: shape.sizeZ, blockCount: shape.blockCount };
 		},
 		async updateJob(id: string, patch: { status?: string; error?: string | null }) {
 			if (patch.status === 'failed') failures.set(id, patch.error ?? null);
@@ -71,9 +79,13 @@ function fakeStore(blockCounts: Record<string, number>, pending: JobRow[] = []) 
 			reaped++;
 			return 0;
 		},
+		async worldAnchor(worldId: string) {
+			anchorLookups++;
+			return anchors[worldId] ?? null;
+		},
 	} as unknown as AgentStore;
 
-	return { store, failures, reaped: () => reaped };
+	return { store, failures, reaped: () => reaped, anchorLookups: () => anchorLookups };
 }
 
 function fakeConnection(maxVolume = AGENT_LIMITS.maxVolume) {
@@ -206,6 +218,13 @@ describe('a world arrives in order', () => {
 		expect(offers(sent)[1]!.region).toEqual({ ...region(1, 1, 0), anchor });
 	});
 
+	it('reads the region off the job row when the caller passes none', async () => {
+		// The route still passes it; a replay after a restart cannot, and the row is what it has.
+		const { hub, sent } = await world();
+		await hub.offer(job('job-r0', 'build-r0', region(0, 0, 0)));
+		expect(offers(sent)[0]!.region).toEqual(region(0, 0, 0));
+	});
+
 	it('keeps region 0 as the origin, whatever later regions report', async () => {
 		// Every region reports the corner it built from. Letting a later one become the world's
 		// anchor would measure each remaining region from the last one placed rather than from
@@ -238,6 +257,122 @@ describe('a world arrives in order', () => {
 		hub.noteJobState('job-r1', 'done');
 		expect(hub.worldAnchor('world-1')).toBeUndefined();
 	});
+
+	it('does not let a second run of the same map inherit the first run’s anchor', async () => {
+		// The map was sent once and placed. Sending it again offers a fresh region 0, and until
+		// that one reports, region 1 of the new run has nowhere honest to go — the old corner is
+		// wherever the old copy stands, which is exactly not where the player is about to aim.
+		const { hub, failures } = await world();
+		await hub.offer(job('job-a0', 'build-r0'), region(0, 0, 0, 2));
+		hub.noteJobState('job-a0', 'done', { x: 0, y: 64, z: 0, rotation: 0 });
+
+		await hub.offer(job('job-b0', 'build-r0'), region(0, 0, 0, 2));
+		expect((await hub.offer(job('job-b1', 'build-r1'), region(1, 1, 0, 2))).kind).toBe('refused');
+		expect(failures.get('job-b1')).toContain('first region');
+	});
+});
+
+describe('the run survives a restart', () => {
+	it('recovers region 0’s anchor from the rows when memory has never heard of the world', async () => {
+		// A hub that has just started: nothing in memory, but the rows carry region 0's anchor
+		// (from the mod's first progress frame) and its region (migration 009).
+		const anchor = { x: 10, y: 64, z: 20, rotation: 0 } as const;
+		const { store, anchorLookups } = fakeStore(
+			{ 'build-r1': 40_000 },
+			[],
+			{ 'world-1': { anchor, footprint: { x: 128, z: 128 } } },
+		);
+		const hub = new AgentHub(store);
+		const { connection, sent } = fakeConnection();
+		await hub.attach(connection);
+
+		expect((await hub.offer(job('job-r1', 'build-r1', region(1, 1, 0)))).kind).toBe('delivered');
+		expect(offers(sent)[0]!.region?.anchor).toEqual(anchor);
+		expect(anchorLookups()).toBe(1);
+
+		// And caches it, so the next region does not ask the database again.
+		await hub.offer(job('job-r2', 'build-r1', region(2, 0, 1)));
+		expect(anchorLookups()).toBe(1);
+	});
+
+	it('learns region 0’s anchor from a frame that arrives after the restart, via the row’s region', async () => {
+		const { store } = fakeStore({ 'build-r0': 40_000, 'build-r1': 40_000 });
+		const hub = new AgentHub(store);
+		const { connection, sent } = fakeConnection();
+		await hub.attach(connection);
+
+		// The cache is empty, so the only thing that says this frame is about region 0 is the
+		// hint the socket handler reads off the job row.
+		const anchor = { x: 0, y: 64, z: 0, rotation: 0 } as const;
+		hub.noteJobState('job-r0', 'building', anchor, region(0, 0, 0));
+		expect(hub.worldAnchor('world-1')).toEqual(anchor);
+
+		expect((await hub.offer(job('job-r1', 'build-r1', region(1, 1, 0)))).kind).toBe('delivered');
+		expect(offers(sent)[0]!.region?.anchor).toEqual(anchor);
+	});
+
+	it('re-offers a pending region as a region on reconnect, from the row alone', async () => {
+		// `attach` replays whatever the database still calls pending, and this used to depend on
+		// an in-memory map that a restart empties. Replayed without its region the offer becomes
+		// "put this somewhere", and one square of the map lands wherever the player is standing.
+		const anchor = { x: 0, y: 64, z: 0, rotation: 2 } as const;
+		const pending = [job('job-r1', 'build-r1', region(1, 1, 0))];
+		const { store } = fakeStore({ 'build-r1': 40_000 }, pending, {
+			'world-1': { anchor, footprint: { x: 128, z: 128 } },
+		});
+		const hub = new AgentHub(store);
+
+		const { connection, sent } = fakeConnection();
+		await hub.attach(connection);
+
+		const replayed = offers(sent);
+		expect(replayed).toHaveLength(1);
+		expect(replayed[0]!.region?.index).toBe(1);
+		expect(replayed[0]!.region?.anchor?.rotation).toBe(2);
+	});
+});
+
+describe('a truncated edge region under a quarter turn', () => {
+	it('is offered with its offset corrected for the difference in footprint', async () => {
+		// A 300×300 map in 128-blocks regions: the south row is 44 deep. Placed at a quarter turn,
+		// the mod's `anchor + turn(offset)` lands that row 84 blocks off, because the corner it
+		// builds from is the low corner of the *turned* box and a 44-deep box turns differently
+		// from a 128-deep one. The server hands over the corrected offset; the mod's sum is
+		// unchanged.
+		const { store } = fakeStore({
+			'build-r0': { blockCount: 40_000, sizeX: 128, sizeZ: 128 },
+			'build-edge': { blockCount: 10_000, sizeX: 128, sizeZ: 44 },
+		});
+		const hub = new AgentHub(store);
+		const { connection, sent } = fakeConnection();
+		await hub.attach(connection);
+
+		await hub.offer(job('job-r0', 'build-r0'), region(0, 0, 0, 9));
+		const anchor = { x: -40, y: 64, z: 210, rotation: 1 } as const;
+		hub.noteJobState('job-r0', 'building', anchor);
+
+		const edge: JobRegion = { worldId: 'world-1', index: 6, total: 9, rx: 0, rz: 2, offset: { x: 0, y: 0, z: 256 } };
+		expect((await hub.offer(job('job-edge', 'build-edge'), edge)).kind).toBe('delivered');
+
+		const sentRegion = offers(sent)[1]!.region!;
+		expect(sentRegion.offset).toEqual(deliveryOffset(edge.offset, 1, { x: 128, z: 128 }, { x: 128, z: 44 }));
+		expect(sentRegion.offset).toEqual({ x: 0, y: 0, z: 172 });
+	});
+
+	it('leaves a full region’s offset byte for byte as it was', async () => {
+		const { store } = fakeStore({
+			'build-r0': { blockCount: 40_000, sizeX: 128, sizeZ: 128 },
+			'build-r1': { blockCount: 40_000, sizeX: 128, sizeZ: 128 },
+		});
+		const hub = new AgentHub(store);
+		const { connection, sent } = fakeConnection();
+		await hub.attach(connection);
+
+		await hub.offer(job('job-r0', 'build-r0'), region(0, 0, 0));
+		hub.noteJobState('job-r0', 'building', { x: 0, y: 64, z: 0, rotation: 3 });
+		await hub.offer(job('job-r1', 'build-r1'), region(1, 1, 0));
+		expect(offers(sent)[1]!.region!.offset).toEqual(region(1, 1, 0).offset);
+	});
 });
 
 describe('a reconnect closes the books on what went quiet', () => {
@@ -258,10 +393,8 @@ describe('a reconnect closes the books on what went quiet', () => {
 
 describe('a reconnect re-offers a region as a region', () => {
 	it('does not replay it as a lone build a player would have to aim', async () => {
-		// `attach` replays whatever the database still calls pending, and the row cannot say it
-		// is a region — being an ordinary build is what lets the rest of the engine ignore
-		// worlds entirely. Replayed without its region the offer becomes "put this somewhere",
-		// and one square of the map lands wherever the player is standing.
+		// The in-memory path, for a hub that never restarted: the cache still knows the region
+		// and the anchor, and the row need not be consulted.
 		const pending = [job('job-r1', 'build-r1')];
 		const { store } = fakeStore({ 'build-r0': 40_000, 'build-r1': 40_000 }, pending);
 		const hub = new AgentHub(store);

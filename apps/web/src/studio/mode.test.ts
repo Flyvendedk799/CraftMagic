@@ -8,7 +8,38 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { MODE_SPECS, STUDIO_MODES, modeParam, parseMode } from './mode.js';
+import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, ownsParam, parseMode } from './mode.js';
+
+describe('foreignParams', () => {
+  it('flags a build in the address bar while World is on screen, and names its owner', () => {
+    expect(foreignParams('world', new URLSearchParams('mode=world&build=lib:abc'))).toEqual([
+      { key: 'build', owner: 'build' },
+    ]);
+  });
+
+  it('flags a map or a placement while Build is on screen', () => {
+    expect(foreignParams('build', new URLSearchParams('world=w1&place=abc')).map((p) => p.key)).toEqual([
+      'world',
+      'place',
+    ]);
+  });
+
+  it('says nothing about parameters the mode reads', () => {
+    expect(foreignParams('build', new URLSearchParams('build=cottage&p.floors=2&s.x=150&style=nordic&layer=3'))).toEqual([]);
+    expect(foreignParams('arch', new URLSearchParams('mode=arch&plan=lib:abc'))).toEqual([]);
+    expect(foreignParams('world', new URLSearchParams('mode=world&world=w1&place=abc'))).toEqual([]);
+  });
+
+  it('says nothing about the shell’s own mode, or about parameters nobody owns', () => {
+    expect(foreignParams('world', new URLSearchParams('mode=world&utm_source=x'))).toEqual([]);
+  });
+
+  it('treats the param families as Build’s', () => {
+    expect(ownsParam('build', 'p.floors')).toBe(true);
+    expect(ownsParam('build', 's.z')).toBe(true);
+    expect(ownsParam('arch', 'p.floors')).toBe(false);
+  });
+});
 
 describe('parseMode', () => {
   it('treats an absent mode as Build', () => {

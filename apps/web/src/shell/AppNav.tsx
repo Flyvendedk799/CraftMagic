@@ -47,6 +47,8 @@ interface Destination {
   label: string;
   /** Signed-out visitors get the tour, not the filing cabinet. */
   requiresAccount: boolean;
+  /** Shown on hover. Only where the label alone does not say what is behind it. */
+  hint?: string;
 }
 
 const DESTINATIONS: Destination[] = [
@@ -56,10 +58,17 @@ const DESTINATIONS: Destination[] = [
     label: 'Dashboard',
     requiresAccount: false,
   },
-  // One entry for both ways of making a building — blocks in Build mode, rooms in Plan mode.
-  // They used to be two nav entries ("Editor", "Layouter"), which made two hands of one tool
-  // read as two tools; the studio's own switch does the mode picking now.
-  { key: 'studio', to: '/studio', label: 'Studio', requiresAccount: false },
+  // One entry for all three ways of making something — blocks in Build, rooms in Architecture,
+  // terrain and placements in World. They used to be two nav entries ("Editor", "Layouter"),
+  // which made two hands of one tool read as two tools; the studio's own switch does the mode
+  // picking now, and the hover says what is behind the door.
+  {
+    key: 'studio',
+    to: '/studio',
+    label: 'Studio',
+    requiresAccount: false,
+    hint: 'Build, Architecture and World — make a structure, draw a floorplan, compose a map',
+  },
   { key: 'library', to: '/library', label: 'Library', requiresAccount: true },
   { key: 'mod', to: '/mod', label: 'Minecraft mod', requiresAccount: false },
 ];
@@ -95,6 +104,7 @@ export function AppNav({ current }: AppNavProps) {
                 key={destination.key}
                 className="nav__link"
                 to={destination.to}
+                title={destination.hint}
                 aria-current={entryFor(current) === destination.key ? 'page' : undefined}
               >
                 {destination.label}

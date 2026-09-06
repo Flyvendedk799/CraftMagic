@@ -13,13 +13,25 @@
  * class can see: region 0 is placed by a player and reports where it landed, and every later
  * region is measured from that report. So the hub also holds the two facts that ordering
  * needs — which world a job is a region of, and where each world's first region ended up.
- * Both are deliberately in memory. A socket does not survive a restart and neither does the
- * mod's idea of what it is halfway through building; persisting a half-delivered world
- * belongs with the world rows, not here.
+ *
+ * Both used to be *only* in memory, on the reasoning that a socket does not survive a restart
+ * and neither does the mod's idea of what it is halfway through. That was half right. The mod
+ * does forget — but the rows do not, and a server restarted between region 3 and region 4 of
+ * a sixteen-region map had every fact it needed in the database and refused the remaining
+ * twelve with "region 0 has not reported where it landed". Since migration 009 the region
+ * rides on the job row and the anchor was always on it, so what this class keeps in memory is
+ * now a cache in front of `store.worldAnchor`, not the only copy.
  */
 
-import { AGENT_LIMITS, type AgentLimits, type BuildAnchor, type JobRegion, type ServerToAgent } from '@craftmagic/core';
-import type { AgentStore, JobRow } from './store.js';
+import {
+	AGENT_LIMITS,
+	deliveryOffset,
+	type AgentLimits,
+	type BuildAnchor,
+	type JobRegion,
+	type ServerToAgent,
+} from '@craftmagic/core';
+import type { AgentStore, JobRow, WorldAnchorRecord } from './store.js';
 
 export interface Connection {
 	agentId: string;
@@ -62,24 +74,34 @@ export interface JobEvent {
 	error?: string | null;
 }
 
+/** A region job in flight, with the footprint of the build it carries. */
+interface RegionJob {
+	region: JobRegion;
+	footprint: { x: number; z: number };
+}
+
 export class AgentHub {
 	/** One connection per agent; a reconnect replaces the old socket. */
 	private readonly connections = new Map<string, Connection>();
 	private readonly jobListeners = new Map<string, Set<JobListener>>();
 
 	/**
-	 * Which world region an in-flight job is, by job id.
+	 * Which world region an in-flight job is, by job id, with its build's footprint.
 	 *
-	 * The job row itself cannot say: a region is an ordinary build as far as the database is
-	 * concerned, which is exactly the property that lets the whole engine downstream of the
-	 * world document stay unchanged. Keeping the mapping here also means a reconnect re-offers
-	 * a region *as* a region — `attach` replays pending jobs, and replaying one of them as a
-	 * lone build would centre a region of a map on whoever happened to be standing nearby.
+	 * A cache: the row carries the region too (`JobRow.region`), and `attach` and
+	 * `noteJobState` both fall back to it. What the cache adds is the footprint, which is
+	 * read off the build at offer time and is what region 0's anchor record needs.
 	 */
-	private readonly regionJobs = new Map<string, JobRegion>();
+	private readonly regionJobs = new Map<string, RegionJob>();
 
-	/** Where region 0 of each world in flight reported that it landed. */
-	private readonly worldAnchors = new Map<string, BuildAnchor>();
+	/**
+	 * Where region 0 of each world in flight reported that it landed.
+	 *
+	 * Written the moment the mod's first progress frame arrives, so a region 1 sent a
+	 * millisecond later does not have to wait for the row. Read before the store, and filled
+	 * from the store on a miss — see `anchorFor`.
+	 */
+	private readonly worldAnchors = new Map<string, WorldAnchorRecord>();
 
 	constructor(private readonly store: AgentStore) {}
 
@@ -98,9 +120,13 @@ export class AgentHub {
 		// there forever, since nothing else ever moved a job out of an active status.
 		await this.store.reapStaleJobs(connection.agentId);
 
-		// Deliver anything queued while this agent was offline.
+		// Deliver anything queued while this agent was offline. The row's region wins over the
+		// cache: after a restart the cache is empty and the row is the only thing left that
+		// knows a pending job is square nine of a map rather than a house.
 		const waiting = await this.store.pendingJobsFor(connection.agentId);
-		for (const job of waiting) await this.offer(job, this.regionJobs.get(job.id));
+		for (const job of waiting) {
+			await this.offer(job, job.region ?? this.regionJobs.get(job.id)?.region);
+		}
 	}
 
 	detach(agentId: string, connection: Connection): void {
@@ -120,10 +146,10 @@ export class AgentHub {
 	/**
 	 * Push a job to its agent, if it is connected. Returns whether it went out.
 	 *
-	 * `region` marks the job as one tile of a world. Omitted, the job is a lone build and
-	 * every line below behaves as it always has.
+	 * `region` marks the job as one tile of a world; omitted, the job's own row is consulted,
+	 * and a job with neither is a lone build and every line below behaves as it always has.
 	 */
-	async offer(job: JobRow, region?: JobRegion): Promise<OfferResult> {
+	async offer(job: JobRow, regionArg?: JobRegion): Promise<OfferResult> {
 		const connection = this.connections.get(job.agentId);
 		if (!connection) return { kind: 'offline' };
 
@@ -144,20 +170,34 @@ export class AgentHub {
 			);
 		}
 
+		const region = regionArg ?? job.region ?? undefined;
+		const footprint = { x: build.sizeX, z: build.sizeZ };
+
 		// A region after the first has to be measured from somewhere, and the only thing that
 		// knows where is region 0's own report. Until that report arrives there is no honest
 		// answer to "where does this go", so the job fails with the reason rather than being
 		// sent to be dropped wherever a player is standing.
 		let placement = region;
 		if (region && region.index > 0) {
-			const anchor = this.worldAnchors.get(region.worldId);
-			if (!anchor) {
+			const record = await this.anchorFor(region.worldId);
+			if (!record) {
 				return this.refuse(
 					job,
 					`region ${region.index + 1} of ${region.total} cannot be placed until the first region reports where it landed`,
 				);
 			}
-			placement = { ...region, anchor };
+			// The offset the mod adds is pre-corrected for a truncated edge region under a
+			// quarter turn — see `deliveryOffset`. A full region, or an unrotated map, gets the
+			// offset back untouched, so the wire is unchanged for the common case.
+			const offset = record.footprint
+				? deliveryOffset(region.offset, record.anchor.rotation, record.footprint, footprint)
+				: region.offset;
+			placement = { ...region, offset, anchor: record.anchor };
+		} else if (region) {
+			// A fresh region 0 is a fresh run. Whatever an earlier run of the same map reported
+			// must not be inherited by this one's later regions while this region 0 has not yet
+			// said where *it* landed.
+			this.worldAnchors.delete(region.worldId);
 		}
 
 		connection.send({
@@ -175,7 +215,9 @@ export class AgentHub {
 			...(placement ? { region: placement } : {}),
 		});
 
-		if (placement) this.regionJobs.set(job.id, placement);
+		// The uncorrected region is what is cached: a reconnect replays it through this same
+		// method, which corrects it again against whatever region 0 reported.
+		if (region) this.regionJobs.set(job.id, { region, footprint });
 
 		if (job.status === 'pending') {
 			await this.store.updateJob(job.id, { status: 'offered' });
@@ -192,18 +234,40 @@ export class AgentHub {
 	}
 
 	/**
+	 * Region 0's report for a world: the cache, then the rows.
+	 *
+	 * The store answers from the latest region 0 job of that world, which is what makes a
+	 * restart survivable and a second run of the same map independent of the first. A store
+	 * without the method — the hand-written one in the tests — simply has no rows to ask.
+	 */
+	private async anchorFor(worldId: string): Promise<WorldAnchorRecord | undefined> {
+		const cached = this.worldAnchors.get(worldId);
+		if (cached) return cached;
+		const stored = await this.store.worldAnchor?.(worldId);
+		if (stored) this.worldAnchors.set(worldId, stored);
+		return stored ?? undefined;
+	}
+
+	/**
 	 * Record what an agent reported about a job, for the sake of the regions still to come.
 	 *
 	 * Only region 0's anchor is kept. Every region reports the corner it built from, and
 	 * letting a later one overwrite the world's anchor would move the origin of the map
 	 * halfway through delivering it — each remaining region would then be offset from the last
 	 * one placed instead of from the first, so the world would walk away across the map.
+	 *
+	 * `regionHint` is the job row's own region, for the frame that arrives after a restart
+	 * has emptied the cache. The row cannot carry the footprint, so an anchor learned that
+	 * way is stored without one and `anchorFor` goes to the store, which joins the build.
 	 */
-	noteJobState(jobId: string, state: string, anchor?: BuildAnchor): void {
-		const region = this.regionJobs.get(jobId);
+	noteJobState(jobId: string, state: string, anchor?: BuildAnchor, regionHint?: JobRegion | null): void {
+		const cached = this.regionJobs.get(jobId);
+		const region = cached?.region ?? regionHint ?? undefined;
 		if (!region) return;
 
-		if (region.index === 0 && anchor) this.worldAnchors.set(region.worldId, anchor);
+		if (region.index === 0 && anchor) {
+			this.worldAnchors.set(region.worldId, { anchor, footprint: cached?.footprint ?? null });
+		}
 
 		if (state === 'done' || state === 'cancelled' || state === 'failed') {
 			this.regionJobs.delete(jobId);
@@ -214,7 +278,7 @@ export class AgentHub {
 
 	/** Where region 0 of a world landed, once it has said. Undefined until then. */
 	worldAnchor(worldId: string): BuildAnchor | undefined {
-		return this.worldAnchors.get(worldId);
+		return this.worldAnchors.get(worldId)?.anchor;
 	}
 
 	cancel(job: JobRow): void {

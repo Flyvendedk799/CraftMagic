@@ -18,6 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   OVERLAY_AIR,
   createWorld,
@@ -50,6 +51,8 @@ import { WorldPanel } from './WorldPanel.js';
 import { useRegionGrid } from './useRegionGrid.js';
 import { useWorldSession } from './useWorldSession.js';
 import { ExportBar } from '../editor/ExportBar.js';
+import { registerImportedBuild } from '../editor/builds.js';
+import { openGuide } from '../studio/handoff.js';
 import { isTextEntry, useUndoKeys } from '../studio/undoKeys.js';
 import { WORLD_SHORTCUTS } from './shortcuts.js';
 import { ShortcutHelp } from '../editor/ShortcutHelp.js';
@@ -203,6 +206,84 @@ export function WorldPage() {
     setArmed(entry);
     setTool('place');
   }, []);
+
+  /**
+   * The two ways in from elsewhere: `?world=<id>` opens a named map, `?place=<row>` arms a
+   * saved build in the Place tool. Both are how the dashboard, the library and the other two
+   * modes hand work to this one — see `studio/handoff.ts` — and both are consumed once and
+   * dropped from the address bar, so a reload keeps whatever was done since rather than
+   * re-opening the map over it.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const worldParam = searchParams.get('world');
+  const placeParam = searchParams.get('place');
+
+  const dropParam = useCallback(
+    (key: string) => {
+      setSearchParams(
+        (params) => {
+          params.delete(key);
+          return params;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  useEffect(() => {
+    // Not before the draft has been read: `useWorldSession` assigns the stored draft over the
+    // live document when it lands, and a map opened a moment earlier would be overwritten.
+    // Not before auth has settled either, or the store is the wrong one.
+    if (!worldParam || session.loading || auth.status === 'loading') return;
+    let live = true;
+    void store.load(worldParam).then((opened) => {
+      if (!live) return;
+      if (opened) {
+        session.open(opened);
+        setNotice(`Opened “${opened.name}”.`);
+      } else {
+        setNotice(
+          auth.status === 'signedIn'
+            ? 'That map could not be opened — it may have been deleted, or belong to another account.'
+            : 'That map is on an account. Sign in to open it; the draft in this browser is shown instead.',
+        );
+      }
+      dropParam('world');
+    });
+    return () => {
+      live = false;
+    };
+    // `session` is memoised on every change; only the id, the store and the loading flag decide
+    // whether an open is due.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worldParam, store, session.loading, auth.status]);
+
+  useEffect(() => {
+    if (!placeParam) return;
+    if (library.status === 'loading') return;
+    if (library.status === 'signedOut') {
+      setNotice('Sign in to place saved builds on the map. The terrain tools work without an account.');
+      dropParam('place');
+      return;
+    }
+    if (library.status === 'error') {
+      setNotice('Your library could not be reached, so nothing was armed to place.');
+      dropParam('place');
+      return;
+    }
+    const entry = library.shelf.find((candidate) => candidate.id === placeParam);
+    if (entry) {
+      armComponent(entry);
+      void library.load(entry.id);
+      setNotice(`“${entry.name}” is armed — click the map to drop it.`);
+    } else {
+      setNotice('That build is not in your library, so it cannot be placed here.');
+    }
+    dropParam('place');
+    // `library` is a fresh object every render; the shelf and its status are what matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeParam, library.status, library.shelf, armComponent, dropParam]);
 
   const updatePlacement = useCallback(
     (id: string, patch: Partial<WorldPlacement>) => {
@@ -609,15 +690,32 @@ export function WorldPage() {
               the studio you could not get blocks out of. It is scoped to a region rather than
               the whole map on purpose: a region *is* an ordinary build, which is why the
               schematic writer, the guide and the library all take one without knowing worlds
-              exist, and a whole map is not a thing any of those formats can hold. */}
+              exist, and a whole map is not a thing any of those formats can hold. That scope
+              used to live only in this comment; `scopeNote` puts it where the buttons are. */}
           <ExportBar
             grid={built.grid}
             program={built.program}
             name={`${doc.name} — region ${clampedRegion.rx},${clampedRegion.rz}`}
             detached={false}
-            // The guide is reached by URL and rebuilt from a build id; a materialised region has
-            // no id to name, so there is nothing to link to.
+            // The guide is reached by URL and rebuilt from a build id, and a materialised region
+            // has none until asked for. Asking registers the region's blocks the way an opened
+            // `.schem` is registered — a voxel build this browser remembers — and opens the guide
+            // on that id. Done on click rather than on every stroke, or the store would fill with
+            // drafts of the same hill.
             guideHref={null}
+            onGuide={() => {
+              const id = registerImportedBuild(
+                `${doc.name} — region ${clampedRegion.rx},${clampedRegion.rz}`,
+                built.grid,
+                'region',
+              );
+              window.open(openGuide(id), '_blank', 'noreferrer');
+            }}
+            scopeNote={
+              `Covers the region on screen (${clampedRegion.rx},${clampedRegion.rz}) only — not the whole map. ` +
+              'To deliver every region in order, use “Send the whole map” under Regions.'
+            }
+            sendTitle="Send this region to game"
             blockCount={built.stats.blocks}
           />
         </aside>

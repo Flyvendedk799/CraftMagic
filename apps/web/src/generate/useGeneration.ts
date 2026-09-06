@@ -36,6 +36,8 @@ export interface GenerationResult {
   repaired: boolean;
   issues: ExpandIssue[];
   costUsd: number;
+  /** The server's `generations` row, when it kept one. A library save sends it back to link the two. */
+  generationId: string | null;
 }
 
 export type GenerationPhase =
@@ -223,6 +225,7 @@ export function useGeneration(onComplete: (result: GenerationResult) => void): U
           repaired: data.repaired,
           issues: data.issues ?? [],
           costUsd: data.costUsd,
+          generationId: typeof data.generationId === 'string' ? data.generationId : null,
         });
         return;
       }

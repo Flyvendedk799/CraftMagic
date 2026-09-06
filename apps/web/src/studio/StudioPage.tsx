@@ -34,9 +34,16 @@ import { BUILD_IDS, generatedBuilds } from '../editor/builds.js';
 import { EditorPage } from '../editor/EditorPage.js';
 import { ArchitecturePage } from '../architecture/ArchitecturePage.js';
 import { WorldPage } from '../world/WorldPage.js';
+import { useAuth } from '../library/auth.js';
+import { listBuilds, type LibraryBuild } from '../library/library.js';
+import { localStore, remoteStore, type SavedWorld } from '../world/api.js';
 import { CommandPalette, type Command } from './CommandPalette.js';
-import { MODE_SPECS, STUDIO_MODES, modeParam, parseMode, type StudioMode } from './mode.js';
+import { composeMap, libRef, openGuide, openInBuild, openMap, placeOnMap } from './handoff.js';
+import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, parseMode, type StudioMode } from './mode.js';
 import './studio.css';
+
+/** Enough recent library builds for the palette to offer without becoming the library. */
+const PALETTE_LIBRARY_LIMIT = 5;
 
 export type { StudioMode } from './mode.js';
 
@@ -58,6 +65,36 @@ export function StudioPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = parseMode(searchParams.get('mode'));
   const [palette, setPalette] = useState(false);
+  const auth = useAuth();
+
+  /**
+   * What the palette can name that is not in the bundle: the account's maps and its recent
+   * library builds. Fetched when the palette opens rather than on mount, because most visits
+   * never open it, and kept as plain lists so every command stays a navigation — the map
+   * opens through `?world=`, the build arms through `?place=`, exactly as the dashboard's
+   * links do.
+   */
+  const [maps, setMaps] = useState<SavedWorld[]>([]);
+  const [libraryBuilds, setLibraryBuilds] = useState<LibraryBuild[]>([]);
+  useEffect(() => {
+    if (!palette || auth.status === 'loading') return;
+    let live = true;
+    const store = auth.status === 'signedIn' ? remoteStore : localStore;
+    void store.list().then((rows) => live && setMaps(rows), () => undefined);
+    if (auth.status === 'signedIn') {
+      void listBuilds().then(
+        (rows) => live && setLibraryBuilds(
+          [...rows].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, PALETTE_LIBRARY_LIMIT),
+        ),
+        () => undefined,
+      );
+    } else {
+      setLibraryBuilds([]);
+    }
+    return () => {
+      live = false;
+    };
+  }, [palette, auth.status]);
 
   const setMode = useCallback(
     (next: StudioMode) => {
@@ -130,11 +167,51 @@ export function StudioPage() {
       list.push({
         id: `build-${entry.id}`,
         label: `Open build: ${entry.name}`,
-        hint: 'Generated',
+        hint: 'Generated — this browser only',
         run: () => withSearch((params) => {
           params.delete('mode');
           params.set('build', entry.id);
         }),
+      });
+    }
+
+    // The account's recent library builds: open, guide, or arm on a map. Every one of these
+    // carries a `lib:` id, which is the one kind of id that still resolves tomorrow.
+    for (const build of libraryBuilds) {
+      list.push({
+        id: `lib-open-${build.id}`,
+        label: `Open build: ${build.name}`,
+        hint: 'Library',
+        run: () => navigate(openInBuild(libRef(build.id))),
+      });
+      list.push({
+        id: `lib-place-${build.id}`,
+        label: `Place on map: ${build.name}`,
+        hint: 'World — armed in the Place tool',
+        run: () => navigate(placeOnMap(build.id)),
+      });
+      list.push({
+        id: `lib-guide-${build.id}`,
+        label: `Open the build guide: ${build.name}`,
+        hint: 'Printable, in a new tab',
+        run: () => window.open(openGuide(libRef(build.id)), '_blank', 'noreferrer'),
+      });
+    }
+
+    // Maps. Nothing here reaches into World mode's state: a map opens through `?world=`, the
+    // same door the dashboard uses, and the draft is simply the mode with nothing named.
+    list.push({
+      id: 'world-draft',
+      label: 'Open the map draft',
+      hint: 'World — whatever was last sculpted in this browser',
+      run: () => navigate(composeMap()),
+    });
+    for (const map of maps) {
+      list.push({
+        id: `map-${map.id}`,
+        label: `Open map: ${map.name}`,
+        hint: `World — ${map.sizeX}×${map.sizeZ}, ${map.placements} placed`,
+        run: () => navigate(openMap(map.id)),
       });
     }
 
@@ -167,20 +244,62 @@ export function StudioPage() {
 
     list.push(
       { id: 'go-library', label: 'Go to the library', hint: 'Saved builds', run: () => navigate('/library') },
-      { id: 'go-dashboard', label: 'Go to the dashboard', hint: 'Account, quota, worlds', run: () => navigate('/dashboard') },
+      { id: 'go-dashboard', label: 'Go to the dashboard', hint: 'Account, quota, paired Minecraft, maps', run: () => navigate('/dashboard') },
       { id: 'go-mod', label: 'Go to the Minecraft mod page', hint: 'Pairing and downloads', run: () => navigate('/mod') },
     );
 
     return list;
-  }, [palette, mode, searchParams, navigate, setMode]);
+  }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds]);
 
   // Resolved once per render rather than inside the JSX: mounting through a variable is what
   // keeps "which page" and "which pill is lit" reading from the same table.
   const Mounted = MODE_PAGES[mode];
 
+  /**
+   * Parameters in the address bar that this mode does not read.
+   *
+   * A pill switch keeps the whole query on purpose — flip to World and back and your `?build=`
+   * is still there — but that silence also let a link like `/studio?mode=world&build=lib:x`
+   * look as though it had placed the build on the map. It had not. One line says which
+   * parameter is waiting for which mode; "Clear" drops it for anyone who meant to move on.
+   */
+  const foreign = foreignParams(mode, searchParams);
+  const foreignKey = `${mode}|${foreign.map((entry) => entry.key).join(',')}`;
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const clearForeign = useCallback(() => {
+    setSearchParams(
+      (params) => {
+        for (const entry of foreign) params.delete(entry.key);
+        return params;
+      },
+      { replace: true },
+    );
+  }, [foreign, setSearchParams]);
+
   return (
     <div className="studio">
       <Mounted />
+
+      {foreign.length > 0 && dismissed !== foreignKey && (
+        <p className="studio__notice" role="status">
+          {describeForeign(foreign)}{' '}
+          <button type="button" className="studio__notice-link" onClick={() => setMode(foreign[0]!.owner)}>
+            Switch to {MODE_SPECS[foreign[0]!.owner].label}
+          </button>
+          {' · '}
+          <button type="button" className="studio__notice-link" onClick={clearForeign}>
+            Clear
+          </button>
+          <button
+            type="button"
+            className="studio__notice-close"
+            aria-label="Dismiss"
+            onClick={() => setDismissed(foreignKey)}
+          >
+            ×
+          </button>
+        </p>
+      )}
 
       <div className="studio__switch" role="group" aria-label="Studio mode">
         {STUDIO_MODES.map((id) => (
@@ -207,4 +326,27 @@ export function StudioPage() {
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
     </div>
   );
+}
+
+/** One sentence, in the visitor's terms rather than the query string's. */
+function describeForeign(foreign: ReturnType<typeof foreignParams>): string {
+  const first = foreign[0]!;
+  const what =
+    first.key === 'build'
+      ? 'The build in the address bar'
+      : first.key === 'plan'
+        ? 'The plan in the address bar'
+        : first.key === 'place'
+          ? 'The build waiting to be placed'
+          : first.key === 'world'
+            ? 'The map in the address bar'
+            : `“${first.key}” in the address bar`;
+  const owner = MODE_SPECS[first.owner].label;
+  const tail =
+    first.owner === 'world' && first.key === 'place'
+      ? ' — nothing is placed here.'
+      : first.owner === 'build'
+        ? ' — it is not on this map or plan.'
+        : '.';
+  return `${what} belongs to ${owner} mode and is not open here${tail}`;
 }

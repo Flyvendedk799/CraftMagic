@@ -1,8 +1,8 @@
 /**
  * "What do I do next?", as data.
  *
- * CraftMagic is four products stitched together — a generator, an editor, a printable guide
- * and a Minecraft mod — and the seam between the website and the game is where people get
+ * CraftMagic is one path — make a build, save it, optionally compose it onto a map, then get
+ * it into Minecraft — and the seam between the website and the game is where people get
  * stuck: nothing on the site tells you that the block you are missing is a jar file. This
  * turns that path into a list with a visible finish line.
  *
@@ -11,21 +11,41 @@
  * that guesses ticks itself for someone who has not done it, which is worse than not having a
  * checklist — so the conditions are unit-tested rather than eyeballed in a browser.
  *
- * Sending a build into a world is deliberately absent, tempting as it is as a finale: there is
- * no endpoint that reports whether a job ever ran, and inferring it from "a world has been
- * online" would tick for someone who paired and then closed the game.
+ * The finale is a build actually landing in Minecraft. For a long time it was absent, on the
+ * honest grounds that no endpoint reported whether a job ever ran and inferring it from "a
+ * world has been online" would tick for somebody who paired and then closed the game. The
+ * endpoint exists now (`GET /api/agent/jobs/summary` counts the jobs that reached `done`), so
+ * the checklist can end where the product does.
  */
 
 export interface OnboardingFacts {
   signedIn: boolean;
   /** Builds in the library. Not builds *generated* — see the note on step 2. */
   savedBuilds: number;
-  /** Paired worlds. Pairing is only possible from inside the game, so it implies the mod. */
-  pairedWorlds: number;
+  /**
+   * Paired Minecraft worlds or servers (agents). Pairing is only possible from inside the
+   * game, so it implies the mod. Named for what it counts: "worlds" here collided with World
+   * mode, the map tier, on every surface that used the word.
+   */
+  pairedAgents: number;
+  /** Jobs that reached `done` for this account — a build that really landed in a game. */
+  successfulJobs: number;
+  /**
+   * Maps on the account with at least one build placed on them.
+   *
+   * Counted from the `placements` column the worlds listing already carries, so the optional
+   * map step ticks only on evidence. Absent means the listing was not fetched.
+   */
+  mapsWithPlacements?: number;
+  /**
+   * Where "send a build" should point once there is something to send — the most recently
+   * saved build, opened in Build where the send panel is. Null falls back to the studio.
+   */
+  recentBuildHref?: string | null;
 }
 
 export interface OnboardingStep {
-  id: 'account' | 'build' | 'world';
+  id: 'account' | 'build' | 'map' | 'pair' | 'send';
   title: string;
   detail: string;
   done: boolean;
@@ -33,14 +53,21 @@ export interface OnboardingStep {
   href: string | null;
   /** The label on that link. */
   action: string;
+  /**
+   * Shown but never counted. Composing a map is part of the product and worth teaching, but a
+   * checklist that cannot finish without it would hold the finish line hostage to a feature
+   * plenty of people rightly never need.
+   */
+  optional?: boolean;
 }
 
 export function onboardingSteps(facts: OnboardingFacts): OnboardingStep[] {
+  const sent = facts.successfulJobs > 0;
   return [
     {
       id: 'account',
       title: 'Create an account',
-      detail: 'Generating and saving are metered per account, so this comes first.',
+      detail: 'Generating, saving and pairing are metered per account, so this comes first.',
       done: facts.signedIn,
       href: facts.signedIn ? null : '/dashboard?signup=1',
       action: 'Sign up',
@@ -48,39 +75,58 @@ export function onboardingSteps(facts: OnboardingFacts): OnboardingStep[] {
     {
       id: 'build',
       title: 'Save your first build',
-      detail: 'Describe one in the prompt box, edit it, then press “Save to library”.',
+      detail: 'Describe one, draw its floorplan in Architecture, or open a sample — then press “Save to library”.',
       // Saved rather than generated on purpose. The account carries `generationsUsedToday`,
       // which is a rolling 24-hour count — a step keyed off it would tick on Monday and
       // silently un-tick on Tuesday, which reads as the app forgetting what you did.
       done: facts.savedBuilds > 0,
-      href: facts.savedBuilds > 0 ? null : '/editor',
-      action: 'Open the editor',
+      href: facts.savedBuilds > 0 ? null : '/studio',
+      action: 'Open the studio',
     },
     {
-      id: 'world',
-      title: 'Pair a Minecraft world',
+      id: 'map',
+      title: 'Place it on a map',
+      detail: 'Optional: sculpt terrain in World mode and drop your saved builds onto it.',
+      done: (facts.mapsWithPlacements ?? 0) > 0,
+      href: (facts.mapsWithPlacements ?? 0) > 0 ? null : '/studio?mode=world',
+      action: 'Open World mode',
+      optional: true,
+    },
+    {
+      id: 'pair',
+      title: 'Pair Minecraft',
       detail: 'Install the mod, then type the pairing code in game to build there for real.',
-      done: facts.pairedWorlds > 0,
-      href: facts.pairedWorlds > 0 ? null : '/mod',
+      done: facts.pairedAgents > 0,
+      href: facts.pairedAgents > 0 ? null : '/mod',
       action: 'Get the mod',
+    },
+    {
+      id: 'send',
+      title: 'Send a build to Minecraft',
+      detail: 'Open a saved build, press “Build here”, and place it with the wand. Done when the bot finishes.',
+      done: sent,
+      href: sent ? null : (facts.recentBuildHref ?? '/studio'),
+      action: 'Send one',
     },
   ];
 }
 
 export interface OnboardingProgress {
+  /** Required steps done. Optional ones are shown but never counted. */
   done: number;
   total: number;
   complete: boolean;
-  /** The first unfinished step — what the page should point at. */
+  /** The first unfinished required step — what the page should point at. */
   next: OnboardingStep | null;
 }
 
 export function onboardingProgress(steps: OnboardingStep[]): OnboardingProgress {
-  const done = steps.filter((step) => step.done).length;
+  const required = steps.filter((step) => !step.optional);
+  const done = required.filter((step) => step.done).length;
   return {
     done,
-    total: steps.length,
-    complete: done === steps.length,
-    next: steps.find((step) => !step.done) ?? null,
+    total: required.length,
+    complete: done === required.length,
+    next: required.find((step) => !step.done) ?? null,
   };
 }

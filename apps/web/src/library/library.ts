@@ -144,6 +144,15 @@ export function saveToLibrary(input: {
    * placeable structures. The `in_library` column already exists to keep exactly this out.
    */
   library?: boolean;
+  /**
+   * The generation this program came out of, when it came out of one.
+   *
+   * `generations.build_id` has existed since the first migration and nothing wrote to it. The
+   * link is what lets support answer "which of my saved builds did that generation become",
+   * and it costs one optional field. Ignored server-side for a generation the caller does not
+   * own.
+   */
+  generationId?: string | null;
 }): Promise<{ id: string; blockCount: number }> {
   return request(
     '/api/builds',
@@ -155,6 +164,7 @@ export function saveToLibrary(input: {
       program: input.program ?? undefined,
       edits: input.edits ?? undefined,
       plan: input.plan ?? undefined,
+      generationId: input.generationId ?? undefined,
       grid: {
         size: input.grid.size,
         palette: input.grid.palette,

@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { recentBuilds, totalBlocks } from './useDashboard.js';
+import { mapsWithPlacements, recentBuilds, totalBlocks } from './useDashboard.js';
 import type { LibraryBuild } from '../library/library.js';
+
+describe('mapsWithPlacements', () => {
+  it('counts only maps that have something on them', () => {
+    const map = (id: string, placements: number) => ({
+      id, name: id, sizeX: 64, sizeZ: 64, placements, updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(mapsWithPlacements([])).toBe(0);
+    expect(mapsWithPlacements([map('empty', 0), map('hub', 3), map('town', 1)])).toBe(2);
+  });
+});
 
 function build(id: string, updatedAt: string, blockCount = 100): LibraryBuild {
   return {

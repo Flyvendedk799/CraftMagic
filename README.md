@@ -1,8 +1,16 @@
 # CraftMagic
 
 Describe a Minecraft build in words, or lay out its floorplan storey by storey. Get it back as
-a 3D model you can edit, then export it three ways: a WorldEdit schematic, a LEGO-style
-instruction booklet, or a builder bot that walks into your world and constructs it.
+a 3D model you can edit, save it to your library, place it on a sculpted map with your other
+builds, then get it out three ways: a WorldEdit schematic, a LEGO-style instruction booklet, or
+a builder bot that walks into your Minecraft world and constructs it — one build, or a whole
+map region by region.
+
+The product path, which every door (landing, dashboard, studio) is meant to tell the same way:
+**Make** (Build, Architecture, or a prompt) → **Save** (the library) → optionally **Compose**
+(World mode) → **Build in Minecraft / Export**. `1PLAN.md` is the working plan that made the
+three studio modes one product rather than three demos; `docs/PATCH-2.0.md` is the record of
+the release before it.
 
 ## How it works
 
@@ -452,8 +460,9 @@ Guides cap at `MAX_PRINTABLE_STEPS = 400`. The 202,700-block stress build segmen
 5,423 steps, so it renders the cover and materials only and says so, rather than opening
 thousands of canvases.
 
-`mod/.../build/Schematic.java` is the parser the builder bot will use in M4, and
-`verifySchematic` runs that exact class — so a passing check means the bot can place the
+`mod/.../build/Schematic.java` is the parser the builder bot uses — M4 (delivery) is done:
+`JobManager` fetches a job's `.schem` over HTTPS and `BuildTask` places it — and
+`verifySchematic` runs that exact class, so a passing check means the bot can place the
 file, not merely that some reader could.
 
 **M2 (AI generation) — working end to end, in the browser.** Type a description in the
@@ -464,7 +473,9 @@ The server returns the **program**, not voxels, and the browser expands it. That
 means a generated build is not a special case anywhere downstream: it gets the same mesher,
 the same layer clip, and — the part worth seeing — its own live param sliders, so an
 AI-generated tower can be resized exactly like a built-in sample. Generated builds are kept
-in `sessionStorage`, because losing something you paid for to an accidental refresh is worse
+in `localStorage` — one browser only, until "Save to library" gives them a durable home; the
+studio says so next to every generated build — because losing something you paid for to an
+accidental refresh is worse
 than the code it takes to persist it.
 
 ```bash
@@ -676,27 +687,33 @@ and still runs first. A server that cannot enforce the quota refuses to generate
 running unmetered.
 
 **M6 (the dashboard) — done.** `/dashboard` is home for anyone with an account, and the
-sign-in door for anyone without. It exists because the product is four things joined end to
-end — generate, edit, export, build in game — and every one of them lived on its own route, so
-the whole path was only visible to somebody who had already walked it.
+sign-in door for anyone without. It exists because the product is one path joined end to
+end — make, save, compose, build in game — and every one of those steps lived on its own
+route, so the whole path was only visible to somebody who had already walked it.
 
-What is on it: a prompt box that hands its text to the editor as `?prompt=` (it never spends a
-generation itself — the editor shows the price first), four stat tiles, a three-step setup
-checklist that hides itself once finished, the most recent builds, the paired worlds with the
-pairing code, and the three ways a build leaves here.
+What is on it: a prompt box that hands its text to the studio as `?prompt=` (it never spends a
+generation itself — the studio shows the price first), three doors named for the studio's
+modes (Build, Architecture, World), four stat tiles, a setup checklist that hides itself once
+finished, the most recent builds with every verb the product has for one (Open, Guide, Plan,
+Place on map), the account's **Maps**, **Paired Minecraft** with the pairing code, and the
+three ways a build leaves here.
 
 Nothing on it is a second implementation. Builds come from the same `listBuilds` the library
-uses, worlds from the same `useAgents` the editor's send panel uses, and the account form is
-the library's `AccountPanel`. A dashboard is a *view* over the product; the moment it grows its
-own copy of a feature, the two start disagreeing.
+uses, maps from the same `/api/worlds` World mode uses, paired Minecraft from the same
+`useAgents` the send panel uses, and the account form is the library's `AccountPanel`. A
+dashboard is a *view* over the product; the moment it grows its own copy of a feature, the two
+start disagreeing.
+
+On words: the card that lists paired game instances was called "Your worlds" until the studio
+grew a World mode, at which point one word meant two things on one page. Paired game instances
+are "Minecraft" everywhere in the UI now; "world" and "map" belong to World mode.
 
 `shell/AppNav` is the other half. Before it, each route knew about one or two of its
 neighbours by hand — the editor linked to `/mod` and `/status`, the library to the editor, the
 mod page back to the editor — and which links you got depended on which door you came in
-through. One component now owns the destinations, and the library and mod pages wear it in
-place of the single back-link they each used to carry. Not the editor or the guide: the editor
-is a full-viewport canvas with its own floating HUD, and the guide is a document that gets
-printed. Both link back instead.
+through. One component now owns the destinations, and every screen wears it — the studio
+included, where it floats over the canvas. The guide is the exception and stays one: it is a
+document that gets printed.
 
 No new colour was introduced for any of it. What `styles.css` did grow is the vocabulary that
 was missing: `--sunken` and `--raised` name two surfaces that were already in the product as
@@ -709,9 +726,30 @@ The checklist's conditions are unit-tested (`dashboard/onboarding.test.ts`) rath
 eyeballed, because every step's tick is a claim about the account that has to be *observable*
 from data already on the page. "Save your first build" keys off the library count and not
 `generationsUsedToday`, which is a rolling 24-hour number — a step keyed off that would tick on
-Monday and silently un-tick on Tuesday. Sending a build into a world is deliberately absent as
-a finale: no endpoint reports whether a job ever ran, and inferring it from "a world has been
-online" would tick for somebody who paired and then closed the game.
+Monday and silently un-tick on Tuesday. The finale — a build actually landing in Minecraft —
+was absent for a long time on the honest grounds that no endpoint reported whether a job ever
+ran, and inferring it from "a world has been online" would tick for somebody who paired and
+then closed the game. `GET /api/agent/jobs/summary` now counts the account's jobs that reached
+`done`, which is the one status the mod reports exactly when the last block is placed, so the
+checklist ends where the product does. Placing a build on a map is a fifth, optional step,
+ticked from the `placements` count the worlds listing already carries and never counted
+toward the finish line.
+
+**M7 (one product, not three demos) — done; the plan is `1PLAN.md`.** The studio's three
+modes shared export machinery but not a document, a journey or a persistence story, and the
+landing page and dashboard still sold the first of them. What changed, in the plan's order:
+every door tells the same Make → Save → Compose → Build story and the UI stopped claiming
+anonymous generation or send; handoffs carry a durable `lib:` id through one module
+(`apps/web/src/studio/handoff.ts`) — "Place on map" arms a saved build in World's Place tool
+via `?place=`, a map opens via `?world=`, a placement links back to its source build, and the
+studio shell says so when a query parameter belongs to a mode other than the one on screen
+instead of silently ignoring it; Architecture's local plans are labelled browser drafts with a
+per-plan (or all-at-once) "→ Library"; a send carries the edit layer and a save links its
+`generations` row; and delivery survives a server restart — the region rides on the job row
+(migration 009), the hub re-learns region 0's anchor and footprint from the rows, and a
+truncated edge region under a quarter turn is offered with a pre-corrected offset
+(`packages/core/src/world/delivery.ts`, locked by a simulation of the mod's own placement
+arithmetic) so the mod's unchanged `anchor + turn(offset)` lands it exactly.
 
 ### Verifying changes
 
@@ -914,9 +952,14 @@ sudo systemd-run --pipe --uid=craftmagic --property=ProtectSystem=strict \
 
 ### The mod
 
-`tools/bundle-mod.mjs` copies `mod/build/libs/*.jar` into `apps/web/dist/mod/` so the site can
-serve it at `/mod/craftmagic-mod.jar`. It runs *after* the web build, because vite empties
-`dist` on every run. The jar's default `serverUrl` is the deployment address and has to stay in
-step with `PUBLIC_ORIGIN`; when a domain is registered, both change together.
+`tools/bundle-mod.mjs` copies `mod/build/libs/*.jar` into `apps/web/public/mod/` — committed,
+so the Docker image builds without a JDK — and writes `manifest.json` beside it, which `/mod`
+reads for the version, size and Minecraft version it displays. Vite copies `public/` into
+`dist/` on every build, so the jar is served at `/mod/craftmagic-mod.jar` from any deploy of
+the site. Run it after `gradlew build` in `mod/` and commit the result. The jar's default
+`serverUrl` is the deployment address and has to stay in step with `PUBLIC_ORIGIN`; when a
+domain is registered, both change together.
 
-See `.claude/plans/` for the full milestone plan.
+See `1PLAN.md` for the product plan this branch executed (its phases, notes and progress
+log), and `docs/PATCH-2.0.md` for the release before it. The `.claude/plans/` directory that
+older notes point at is gone.

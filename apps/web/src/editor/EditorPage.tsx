@@ -45,6 +45,7 @@ import {
   generatedBuilds,
   importedBuilds,
   isBuildId,
+  libraryRowId,
   muralBuilds,
   paramsOf,
   previewScale,
@@ -99,6 +100,7 @@ import { useGeneration, type GenerationResult } from '../generate/useGeneration.
 import { AccountPanel } from '../library/AccountPanel.js';
 import { useAuth } from '../library/auth.js';
 import { AppNav } from '../shell/AppNav.js';
+import { placeOnMap } from '../studio/handoff.js';
 import type { VoxelHit } from './raycast.js';
 import './editor.css';
 import '../image/image.css';
@@ -994,9 +996,12 @@ export function EditorPage() {
     for (const entry of imported) {
       options.push({
         id: entry.id,
-        group: 'Imported',
+        group: entry.source === 'region' ? 'Map regions' : 'Imported',
         name: entry.name,
-        title: `${entry.name} — imported from a schematic`,
+        title:
+          entry.source === 'region'
+            ? `${entry.name} — one region of a World mode map, as blocks`
+            : `${entry.name} — imported from a schematic`,
         removable: true,
       });
     }
@@ -1377,6 +1382,14 @@ export function EditorPage() {
               ? `$${generated.result.costUsd.toFixed(4)}`
               : `$${generated.result.costUsd.toFixed(2)}`}
             {generated.result.repaired && ' · needed one repair round'}
+            {/* The soft push toward the library. A generated build costs money and lives in
+                this browser's localStorage until saved — which is a fact that used to be
+                learned the hard way, on the other device. */}
+            <span className="hud__generated-save">
+              {' '}
+              · lives in this browser only until you{' '}
+              {auth.status === 'signedIn' ? 'save it to your library' : 'sign in and save it'}
+            </span>
           </p>
         )}
 
@@ -1386,12 +1399,9 @@ export function EditorPage() {
 
         {/* Dashboard, Architecture mode and the mod page were all listed here. All three are one
             click away in the bar above now, and a link that repeats one already on screen is
-            furniture. `/status` stays because nothing else in the product points at it. */}
-        <p className="hud__sub" style={{ marginTop: '0.875rem' }}>
-          <Link className="hud__link" to="/status">
-            Deployment checks →
-          </Link>
-        </p>
+            furniture. `/status` was the last to go: it is the deployment smoke test, reached
+            by whoever deploys, and a product panel pointing at a milestone page taught
+            visitors that the product was a milestone. */}
       </section>
 
       <div className="hud-right">
@@ -1478,6 +1488,21 @@ export function EditorPage() {
           guideHref={guideHref}
           blockCount={session.blockCount}
           getEdits={session.exportEdits}
+          // Identity for the handoffs: the library row this was opened from, and the
+          // generation it came out of, so a save can link the two and a "Place on map" can
+          // carry an id that still resolves tomorrow.
+          libraryRowId={libraryRowId(buildId)}
+          generationId={generated && buildId === generated.id ? generated.result.generationId : null}
+          afterSave={
+            libraryRowId(buildId) ? (
+              <p className="save__note">
+                Already in your library ·{' '}
+                <Link className="save__inline" to={placeOnMap(libraryRowId(buildId)!)}>
+                  place it on a map
+                </Link>
+              </p>
+            ) : null
+          }
         />
         </section>
 

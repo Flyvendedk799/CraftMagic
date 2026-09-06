@@ -795,6 +795,11 @@
   font-weight: 600;
 }
 
+/* The soft push toward the library after a generation: the same line, quieter. */
+.hud__generated-save {
+  color: var(--muted);
+}
+
 /* --- export ------------------------------------------------------------ */
 
 .export {
@@ -825,6 +830,38 @@
 
 .export__link:hover {
   text-decoration: underline;
+}
+
+/* A button that reads as the link beside it. Architecture and World reach the guide through a
+   verb rather than an href, and the two must not look like different kinds of thing. */
+.export__linkish {
+  padding: 0;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.export__linkish:hover {
+  text-decoration: underline;
+}
+
+.export__linkish:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/* The one line that says what the controls below cover, when it is less than the document. */
+.export__note--scope {
+  margin: 0 0 0.6rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--pending);
 }
 
 .export__note {

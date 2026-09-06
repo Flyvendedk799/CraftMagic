@@ -37,6 +37,13 @@ export type GenerationEvent =
 			costUsd: number;
 			spentThisMonthUsd: number;
 			remainingUsd: number;
+			/**
+			 * The `generations` row this came out of, so a later library save can link the two.
+			 *
+			 * Not the in-memory id this store keys on — that one dies with the process. Absent
+			 * on a server without a database, where there is no row to link.
+			 */
+			generationId?: string;
 	  }
 	| { type: 'error'; message: string };
 

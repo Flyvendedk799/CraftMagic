@@ -33,7 +33,8 @@ import { AccountPanel } from './AccountPanel.js';
 import { BuildThumb } from './BuildThumb.js';
 import { useAuth } from './auth.js';
 import { deleteBuild, listBuilds, renameBuild, type LibraryBuild } from './library.js';
-import { forgetLibraryBuild, libraryBuildId } from '../editor/builds.js';
+import { forgetLibraryBuild } from '../editor/builds.js';
+import { libRef, openGuide, openInBuild, openPlan, placeOnMap } from '../studio/handoff.js';
 import './library.css';
 
 type Listing =
@@ -138,11 +139,11 @@ export function LibraryPage() {
             <h1 className="library__title">Everything you have built</h1>
             <p className="library__sub">
               Saved builds stay here across devices. Open one to keep editing it, print it as a
-              guide, or send it into a paired world — <Link to="/dashboard">your dashboard</Link>{' '}
-              shows the recent ones.
+              guide, place it on a map in World mode, or send it into paired Minecraft —{' '}
+              <Link to="/dashboard">your dashboard</Link> shows the recent ones.
             </p>
           </div>
-          <Link className="library__new" to="/editor?build=empty">
+          <Link className="library__new" to={openInBuild('empty')}>
             New build
           </Link>
         </header>
@@ -159,7 +160,7 @@ export function LibraryPage() {
               initialMode={signingUp ? 'register' : 'login'}
               invitation={
                 signingUp
-                  ? 'Create an account to save builds, generate from a prompt, and send a bot into your world.'
+                  ? 'Create an account to save builds, generate from a prompt, and send a bot into your Minecraft world.'
                   : 'Sign in to keep your builds.'
               }
             />
@@ -272,7 +273,7 @@ export function LibraryPage() {
                             would be a smaller target for the same intent. */}
                         <Link
                           className="card__open"
-                          to={`/editor?build=${libraryBuildId(build.id)}`}
+                          to={openInBuild(libRef(build.id))}
                           aria-label={`Open ${build.name} in the editor`}
                         >
                           <BuildThumb build={build} />
@@ -280,7 +281,7 @@ export function LibraryPage() {
 
                         <div className="card__body">
                           <h2 className="card__name">
-                            <Link to={`/editor?build=${libraryBuildId(build.id)}`}>
+                            <Link to={openInBuild(libRef(build.id))}>
                               {build.name}
                             </Link>
                           </h2>
@@ -307,14 +308,11 @@ export function LibraryPage() {
                         <div className="card__actions">
                           <Link
                             className="card__action card__action--go"
-                            to={`/editor?build=${libraryBuildId(build.id)}`}
+                            to={openInBuild(libRef(build.id))}
                           >
                             Open
                           </Link>
-                          <Link
-                            className="card__action"
-                            to={`/guide?build=${libraryBuildId(build.id)}`}
-                          >
+                          <Link className="card__action" to={openGuide(libRef(build.id))}>
                             Guide
                           </Link>
                           {/* Only for builds Architecture mode saved: the drawing rode up with
@@ -322,12 +320,21 @@ export function LibraryPage() {
                           {build.hasPlan && (
                             <Link
                               className="card__action"
-                              to={`/architecture?plan=lib:${encodeURIComponent(build.id)}`}
+                              to={openPlan(build.id)}
                               aria-label={`Open ${build.name} as a plan in Architecture`}
                             >
                               Plan
                             </Link>
                           )}
+                          {/* The third tier's verb, with the durable id: a saved build is a
+                              component, and this is the door to the map it goes on. */}
+                          <Link
+                            className="card__action"
+                            to={placeOnMap(build.id)}
+                            aria-label={`Place ${build.name} on a map in World mode`}
+                          >
+                            Place on map
+                          </Link>
                           {/* Housekeeping, pushed to the far edge and drawn quietly. Four
                               buttons of equal weight would say all four are equally likely,
                               and one of them deletes the build. */}
@@ -392,37 +399,44 @@ function Totals({ builds }: { builds: LibraryBuild[] }) {
 /**
  * The library with nothing in it.
  *
- * Three doors rather than one sentence, because "nothing saved yet" is a statement about the
- * past and what someone needs here is the next move. All three lead into the editor, which
- * is the only place a build can be made.
+ * Doors rather than one sentence, because "nothing saved yet" is a statement about the past
+ * and what someone needs here is the next move. There are three ways to make a build — describe
+ * it, draw its floorplan, or start from a sample or an empty plot — and for a long time this
+ * offered only the Build-mode ones, which taught a newcomer that Architecture did not exist.
  */
 function FirstBuild() {
   return (
     <section className="firstbuild">
       <h2 className="firstbuild__title">Nothing saved yet</h2>
       <p className="firstbuild__lead">
-        A build lands here the moment you press “Save to library” in the editor. From there it
-        follows you across devices, prints as a guide, and can be handed to a bot in your own
-        world.
+        A build lands here the moment you press “Save to library” in the studio — from Build or
+        from Architecture. From there it follows you across devices, prints as a guide, can be
+        placed on a map in World mode, and can be handed to a bot in your Minecraft world.
       </p>
       <div className="firstbuild__ways">
-        <Link className="firstbuild__way" to="/editor?build=empty">
-          <span className="firstbuild__way-title">Start from an empty plot</span>
+        <Link className="firstbuild__way" to="/dashboard">
+          <span className="firstbuild__way-title">Describe one</span>
           <span className="firstbuild__way-body">
-            Bare ground and a full block palette. Click the floor to lay the first block.
+            Type what you want on the dashboard and let the model draft it, then edit from there.
           </span>
         </Link>
-        <Link className="firstbuild__way" to="/editor?build=cottage">
+        <Link className="firstbuild__way" to="/studio?mode=arch">
+          <span className="firstbuild__way-title">Draw a floorplan</span>
+          <span className="firstbuild__way-body">
+            Lay out rooms, doors and storeys in Architecture. The building compiles as you draw.
+          </span>
+        </Link>
+        <Link className="firstbuild__way" to="/studio?build=cottage">
           <span className="firstbuild__way-title">Open a sample</span>
           <span className="firstbuild__way-body">
             The cottage, the tower and the pavilion all come apart — change their shape with the
             sliders and save the result.
           </span>
         </Link>
-        <Link className="firstbuild__way" to="/dashboard">
-          <span className="firstbuild__way-title">Describe one instead</span>
+        <Link className="firstbuild__way" to="/studio?build=empty">
+          <span className="firstbuild__way-title">Start from an empty plot</span>
           <span className="firstbuild__way-body">
-            Type what you want on the dashboard and let the model draft it, then edit from there.
+            Bare ground and a full block palette. Click the floor to lay the first block.
           </span>
         </Link>
       </div>

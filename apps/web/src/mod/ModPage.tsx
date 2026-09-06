@@ -58,7 +58,9 @@ export function ModPage() {
           <div>
             <h1 className="modpage__title">Get the mod</h1>
             <p className="modpage__sub">
-              Installs once. After that, any build on this site can be sent straight into your world.
+              Installs once. After that, any build on this site can be sent straight into your
+              Minecraft world. Pairing links that world to your CraftMagic account, so you need
+              one — <Link to="/dashboard?signup=1">create it here</Link> if you have not yet.
             </p>
           </div>
         </header>
@@ -121,9 +123,10 @@ export function ModPage() {
           <h2>Pair it with your account</h2>
           <ol className="modpage__steps">
             <li>
-              On your <Link to="/dashboard">dashboard</Link>, press <strong>Pair a world</strong>{' '}
-              — or open <strong>Send to game</strong> in the editor, which offers the same thing
-              next to a build. Either gives you a six-character code.
+              On your <Link to="/dashboard">dashboard</Link>, press <strong>Pair Minecraft</strong>{' '}
+              — or open <strong>Send to game</strong> in the studio, which offers the same thing
+              next to a build. Either gives you a six-character code. Both need you to be signed
+              in.
             </li>
             <li>
               In Minecraft, type <code>/craftmagic pair ABC123</code> with that code. The world

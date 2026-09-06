@@ -15,6 +15,7 @@
  *   POST   /api/agent/claim                the mod exchanges that code for a token
  *   GET    /api/agent/agents               paired worlds, with online status
  *   POST   /api/agent/jobs                 send a build to a world
+ *   GET    /api/agent/jobs/summary         how many of the caller's sends finished
  *   GET    /api/agent/jobs/:id/events      SSE progress for the website
  *   GET    /api/agent/jobs/:id/schem       the mod fetches the build (agent token required)
  *
@@ -57,6 +58,9 @@ export interface AgentRoutesOptions {
 }
 
 const MAX_BUILD_NAME = 80;
+
+/** Loose on purpose: enough to keep a typo out of a `::uuid` cast, not a validator. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * The tiers a saved build can be filed under, and the only two accepted on the wire.
@@ -175,6 +179,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				plan?: unknown;
 				kind?: unknown;
 				library?: unknown;
+				generationId?: unknown;
 				grid?: {
 					size?: { x: number; y: number; z: number };
 					palette?: string[];
@@ -263,6 +268,16 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				// explicit save belongs in a list the user curates.
 				inLibrary: body?.library === true,
 			});
+
+			// Best effort, after the save: the row is what matters, and the link is a courtesy
+			// for support. Shape-checked so a junk value cannot turn into a uuid cast error on
+			// a request that has already done its real work.
+			const generationId = body?.generationId;
+			if (typeof generationId === 'string' && UUID_SHAPE.test(generationId)) {
+				await store!
+					.linkGeneration(generationId, id, user.id)
+					.catch((err: unknown) => app.log.warn({ err }, 'could not link the generation to the build'));
+			}
 
 			return reply.code(201).send({ id, blockCount });
 		});
@@ -780,7 +795,15 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				return reply.code(404).send({ error: 'unknown_agent' });
 			}
 
-			const created = await store!.createJob({ agentId, buildId, userId: user.id, total: blockCount });
+			// The region rides on the row (migration 009), so a restart mid-run can re-learn which
+			// world each pending job belongs to instead of re-offering a map tile as a lone build.
+			const created = await store!.createJob({
+				agentId,
+				buildId,
+				userId: user.id,
+				total: blockCount,
+				region: region ?? null,
+			});
 			if ('conflict' in created) {
 				return reply.code(409).send({
 					error: 'agent_busy',
@@ -813,6 +836,24 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				delivered: outcome.kind === 'delivered',
 				online: hub!.isOnline(agentId),
 			});
+		});
+
+		/**
+		 * Session-authenticated. The one number the onboarding checklist's finale keys off.
+		 *
+		 * Declared before `/api/agent/jobs/:id` for the reader's sake; the router matches the
+		 * static segment first regardless of order.
+		 */
+		app.get('/api/agent/jobs/summary', async (request, reply) => {
+			if (!requireDb(reply)) return;
+			const user = await auth.requireUser(request, reply);
+			if (!user) return;
+
+			const summary = await store!.jobSummary(user.id);
+			return {
+				successful: summary.successful,
+				lastSuccessAt: summary.lastSuccessAt ? summary.lastSuccessAt.toISOString() : null,
+			};
 		});
 
 		/** Session-authenticated. The mod reports its own progress over the WebSocket instead. */

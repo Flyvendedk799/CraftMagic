@@ -47,6 +47,56 @@
   font-size: 12px;
 }
 
+/* One line under the pill saying which parameter is waiting for which mode. Fixed like the
+   pill, because it is about the address bar rather than about anything on the page. */
+.studio__notice {
+  position: fixed;
+  top: 104px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(640px, calc(100vw - 32px));
+  margin: 0;
+  padding: 6px 10px 6px 14px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(10, 14, 22, 0.9);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+.studio__notice-link {
+  padding: 0;
+  font: inherit;
+  color: #5eea9e;
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.studio__notice-close {
+  margin-left: 4px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.studio__notice-close:hover {
+  color: #fff;
+}
+
 /* --- palette ---------------------------------------------------------- */
 
 .palette {

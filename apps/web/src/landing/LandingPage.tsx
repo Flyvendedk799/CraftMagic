@@ -122,8 +122,9 @@ export function LandingPage() {
             <TypedPrompt />
 
             <p className="landing__lede">
-              Describe any structure and get it back as an <strong>editable 3D model</strong> —
-              then export a schematic, a printable guide, or a bot that builds it in your world.
+              Describe any structure — or draw its floorplan — and get it back as an{' '}
+              <strong>editable 3D model</strong>. Save it, place it on a map, then export a
+              schematic, a printable guide, or a bot that builds it in your Minecraft world.
             </p>
 
             <div className="landing__actions">
@@ -174,10 +175,12 @@ export function LandingPage() {
         <div data-reveal="hidden">
           <p className="landing__eyebrow">How it works</p>
           <h2 className="landing__h2 landing__h2--narrow">
-            Three steps from a sentence to a standing structure
+            Three steps from a sentence — or a floorplan — to a standing structure
           </h2>
         </div>
 
+        {/* Make → Save → (compose) → Build. The same progression the dashboard's checklist and
+            the studio's mode pill name, so no door tells a different story from the next. */}
         <ol className="landing__steps">
           <li className="landing__step" data-reveal="hidden">
             <p className="landing__step-num">01</p>
@@ -186,10 +189,11 @@ export function LandingPage() {
                 <path d="M4 6h16M4 12h10M4 18h13" strokeLinecap="round" />
               </svg>
             </div>
-            <h3 className="landing__step-title">Describe it</h3>
+            <h3 className="landing__step-title">Make it</h3>
             <p className="landing__step-body">
-              Type a build in plain words. The AI writes a parametric{' '}
-              <em>build program</em> — not raw voxels — so it&rsquo;s tiny, exact, and resizable.
+              Describe a build in plain words and the AI writes a parametric{' '}
+              <em>build program</em> — tiny, exact, resizable. Or draw its floorplan storey by
+              storey in Architecture, or open a sample.
             </p>
           </li>
 
@@ -204,10 +208,11 @@ export function LandingPage() {
                 />
               </svg>
             </div>
-            <h3 className="landing__step-title">Edit &amp; resize</h3>
+            <h3 className="landing__step-title">Shape &amp; save it</h3>
             <p className="landing__step-body">
-              Open it in a real 3D editor. Place, erase, flood-fill and swap blocks — then drag
-              one slider to resize the whole build. Walls stay walls.
+              Open it in a real 3D editor. Place, erase, restyle, drag one slider to resize —
+              walls stay walls. Save it to your library and it follows you across devices, ready
+              to place on a sculpted map in World mode.
             </p>
           </li>
 
@@ -222,10 +227,11 @@ export function LandingPage() {
                 />
               </svg>
             </div>
-            <h3 className="landing__step-title">Export it</h3>
+            <h3 className="landing__step-title">Build it</h3>
             <p className="landing__step-body">
               Take it three ways: a WorldEdit <code>.schem</code>, a printable instruction
-              booklet, or a bot that builds it in your world.
+              booklet, or a bot that builds it in your Minecraft world — one build, or a whole
+              map region by region.
             </p>
           </li>
         </ol>
@@ -362,9 +368,9 @@ export function LandingPage() {
             </div>
             <h3 className="landing__path-title">Builder bot</h3>
             <p className="landing__path-body">
-              Pair your world, point a wand at the ground and punch the air — a bot walks in and
-              builds it for you. The mod always dials out — no port forwarding, works behind any
-              home router.
+              Pair your Minecraft world, point a wand at the ground and punch the air — a bot
+              walks in and builds it for you. The mod always dials out — no port forwarding,
+              works behind any home router.
             </p>
             <p className="landing__path-meta">/wand · Fabric 26.2</p>
           </article>
@@ -377,8 +383,9 @@ export function LandingPage() {
           <div className="landing__final-inner">
             <h2 className="landing__final-title">Start building free</h2>
             <p className="landing__final-lede">
-              Create an account to save builds, generate from a prompt, and send a bot into your
-              world. Samples, the editor, and downloads are free to try — no account needed.
+              Create an account to save builds, generate from a prompt, compose maps, and send a
+              bot into your Minecraft world. Samples, the editor, the downloads and the printed
+              guide are free to try — no account needed.
             </p>
             <div className="landing__actions landing__actions--centred">
               <Link className="landing__cta" to={signedIn ? '/dashboard' : SIGN_UP}>

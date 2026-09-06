@@ -83,8 +83,10 @@ export function ComponentsPanel({
   if (shelf.length === 0) {
     return (
       <p className="arch__empty">
-        Nothing saved yet. Build something in Build mode, save it to your library, and it
-        becomes a component you can place here — as many times as you like.
+        Nothing saved yet. Make something in{' '}
+        <Link to="/studio?build=empty">Build</Link> — or describe one from the{' '}
+        <Link to="/dashboard">dashboard</Link> — and press “Save to library”. Every saved build
+        becomes a component you can place here, as many times as you like.
       </p>
     );
   }

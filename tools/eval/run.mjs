@@ -8,7 +8,7 @@
  *
  * Two modes:
  *
- *   node tools/eval/run.mjs --offline [files...]
+ *   node tools/eval/run.mjs --offline [files...] [--json out.json]
  *       No network, no spend. Scores the built-in sample programs (and any *.program.json
  *       files given) so the metrics themselves can be developed and sanity-checked anywhere.
  *
@@ -39,10 +39,18 @@ const RECOMMENDED_ROLES = [
 
 /**
  * Enclosed interior air: the fraction of the build's bounding box that is air you cannot
- * reach from outside. Zero for a solid statue or an open pavilion, meaningfully positive for
- * anything with rooms — which makes it the one number that catches the classic failure of
- * buildings generated as solid masses (or as shells with no floors, which score near 1 and
- * look just as wrong from the other side).
+ * reach from outside. Zero for a solid statue or an open pavilion, and meant to be positive
+ * for anything with rooms — the one number catching buildings generated as solid masses, or as
+ * shells with no floors, which score near 1 and look just as wrong from the other side.
+ *
+ * **Read the zeros carefully.** The flood is 6-connected from the bounding box boundary, so a
+ * doorway that reaches the edge of the box connects the inside to the outside and the whole
+ * interior stops counting. The first run of this harness scored the cottage sample 0.00 and the
+ * tower 0.40 for exactly that reason — the cottage has doors. So this is closer to "sealed
+ * volume" than to "has rooms", and `shelteredAir` is the number that actually notices a room
+ * you can walk into. Left as it is rather than redefined mid-baseline: changing a metric to
+ * flatter numbers, on the same day you first measure anything, is how a harness stops being
+ * evidence.
  */
 function interiorAirRatio(grid) {
 	const { size, voxels } = grid;
@@ -220,24 +228,37 @@ function summarize(rows) {
 
 // --- Modes ----------------------------------------------------------------------------------
 
-function runOffline(files) {
+function runOffline(files, outFile) {
 	console.log('offline scoring — no model calls, no spend\n');
 	const rows = [];
+	const report = [];
 
 	for (const [name, program] of Object.entries(samples)) {
 		const result = scoreProgram(program);
 		rows.push(result);
+		report.push({ id: `sample:${name}`, ...result });
 		printRow(`sample:${name}`, result);
 	}
 
 	for (const file of files) {
 		const program = JSON.parse(fs.readFileSync(file, 'utf8'));
 		const result = scoreProgram(program);
+		const id = path.basename(file, '.program.json');
 		rows.push(result);
-		printRow(path.basename(file, '.program.json'), result);
+		report.push({ id, ...result });
+		printRow(id, result);
 	}
 
 	summarize(rows);
+
+	// The offline pass could print a baseline and not keep it, which made the mode that costs
+	// nothing the one you could not compare against later — the wrong way round for a harness
+	// whose whole purpose is before-and-after numbers.
+	if (outFile) {
+		fs.mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });
+		fs.writeFileSync(outFile, JSON.stringify({ mode: 'offline', at: new Date().toISOString(), results: report }, null, 2));
+		console.log(`wrote ${outFile}`);
+	}
 }
 
 async function runLive(args) {
@@ -291,8 +312,38 @@ async function runLive(args) {
 	}
 
 	summarize(rows);
+	/*
+	 * A run where nothing succeeded is not a baseline.
+	 *
+	 * The first live run ever attempted hit a 401 on every prompt — the key had expired — and
+	 * this wrote twelve results scoring zero into a file named `eval-live-base.json`, reporting
+	 * "mean score 0.0" as though that were a measurement. Compare anything against that later
+	 * and every change in the product looks like an enormous improvement. For a harness whose
+	 * entire purpose is before-and-after numbers, silently emitting an all-failures baseline is
+	 * the worst thing it can do.
+	 *
+	 * Partial failures still write: some prompts failing is a real result about the pipeline,
+	 * and the report records which. It is *none of them working* that means the run never
+	 * happened.
+	 */
+	const succeeded = report.filter((row) => row.error === undefined).length;
+	if (succeeded === 0) {
+		console.error('\nnothing generated — every prompt failed, so there is no baseline to write.');
+		console.error('check the API key in apps/server/.env; an expired one fails every call with 401.');
+		process.exitCode = 1;
+		return;
+	}
+
 	if (outFile) {
-		fs.writeFileSync(outFile, JSON.stringify({ model, at: new Date().toISOString(), results: report }, null, 2));
+		fs.mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });
+		fs.writeFileSync(
+			outFile,
+			JSON.stringify(
+				{ mode: 'live', model, at: new Date().toISOString(), succeeded, of: report.length, results: report },
+				null,
+				2,
+			),
+		);
 		console.log(`wrote ${outFile}`);
 	}
 }
@@ -304,12 +355,19 @@ function valueOf(args, flag) {
 
 const args = process.argv.slice(2);
 if (args.includes('--offline')) {
-	runOffline(args.filter((arg) => arg.endsWith('.json') && !arg.includes('prompts')));
+	// `--json` names the *output*. Filtering for `.json` alone swept it up as another program
+	// to score, so `--offline --json out.json` tried to read the file it was about to write and
+	// died on ENOENT — the first thing anyone would type, and proof this had never been run.
+	const outFile = valueOf(args, '--json');
+	const inputs = args.filter(
+		(arg) => arg.endsWith('.json') && !arg.includes('prompts') && arg !== outFile,
+	);
+	runOffline(inputs, outFile);
 } else if (args.includes('--live')) {
 	await runLive(args);
 } else {
 	console.log('usage:');
-	console.log('  node tools/eval/run.mjs --offline [program.json...]   score samples, no spend');
+	console.log('  node tools/eval/run.mjs --offline [program.json...] [--json out.json]  score samples, no spend');
 	console.log('  node tools/eval/run.mjs --live [--model m] [--only id,id] [--json out.json]');
 	console.log('                                                        run golden prompts — SPENDS MONEY');
 }

@@ -1,0 +1,62 @@
+{
+  "mode": "offline",
+  "at": "2026-09-06T12:09:57.375Z",
+  "results": [
+    {
+      "id": "sample:cottage",
+      "score": 100,
+      "metrics": {
+        "blockCount": 979,
+        "components": 7,
+        "errors": 0,
+        "warnings": 0,
+        "paletteRoles": 8,
+        "recommendedRoles": 8,
+        "gridPalette": 10,
+        "params": 1,
+        "interiorRatio": 0,
+        "interiorBlocks": 0,
+        "shelteredAir": 1415
+      },
+      "notes": []
+    },
+    {
+      "id": "sample:tower",
+      "score": 100,
+      "metrics": {
+        "blockCount": 1299,
+        "components": 3,
+        "errors": 0,
+        "warnings": 0,
+        "paletteRoles": 6,
+        "recommendedRoles": 6,
+        "gridPalette": 6,
+        "params": 1,
+        "interiorRatio": 0.3988,
+        "interiorBlocks": 2602,
+        "shelteredAir": 3402
+      },
+      "notes": []
+    },
+    {
+      "id": "sample:pavilion",
+      "score": 95,
+      "metrics": {
+        "blockCount": 818,
+        "components": 3,
+        "errors": 0,
+        "warnings": 0,
+        "paletteRoles": 5,
+        "recommendedRoles": 5,
+        "gridPalette": 12,
+        "params": 0,
+        "interiorRatio": 0,
+        "interiorBlocks": 0,
+        "shelteredAir": 2678
+      },
+      "notes": [
+        "-5 no params (nothing for the sliders)"
+      ]
+    }
+  ]
+}

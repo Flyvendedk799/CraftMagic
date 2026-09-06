@@ -6,7 +6,9 @@
  * whose `components` are only the fully-closed ones — which is what lets a 3D preview
  * assemble live during generation instead of a spinner.
  *
- * It leans on a fact the system prompt enforces: top-level keys arrive in a fixed order,
+ * It leans on a fact the system prompt states — and, until this was checked, did not: the
+ * instruction was described here and absent there, so a model emitting another key order
+ * produced no preview at all, silently, for as long as that was true. The claim now holds: top-level keys arrive in a fixed order,
  * `version, meta, size, palette, components` — so by the time the first component streams,
  * `size` and `palette` are complete. The scanner only has to find the `components` array,
  * remember every position where a component object just closed, cut there, and append the

@@ -15,54 +15,23 @@
  * slideshow, which is a bad trade for a view you are not looking at while you sculpt.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import {
-  materializeRegion,
-  paletteColors,
-  paletteFlags,
-  type Prefab,
-  type WorldDoc,
-} from '@craftmagic/core';
+import { useMemo } from 'react';
+import { paletteColors, paletteFlags, type MaterializedRegion } from '@craftmagic/core';
 import { EditorCanvas } from '../editor/EditorCanvas.js';
-import type { Catalogue } from '../library/components.js';
 
 export interface WorldPreviewProps {
-  doc: WorldDoc;
-  /** Bumped by the session; the preview recomputes on it, but only once the drag has ended. */
-  revision: number;
+  /**
+   * The region, already materialised.
+   *
+   * Handed in rather than computed here, because the export bar needs the same grid and two
+   * materialisations could differ — letting somebody download a region that is not the one
+   * they are looking at.
+   */
+  built: MaterializedRegion;
   region: { rx: number; rz: number };
-  catalogue: Catalogue;
-  /** False while a stroke is in flight, so a drag does not pay for a materialise per frame. */
-  live: boolean;
 }
 
-export function WorldPreview({ doc, revision, region, catalogue, live }: WorldPreviewProps) {
-  // The revision the preview was last built at. Holding it here rather than reading `revision`
-  // directly is what lets the view lag a drag deliberately instead of accidentally.
-  const [settled, setSettled] = useState(revision);
-
-  useEffect(() => {
-    if (live) setSettled(revision);
-  }, [live, revision]);
-
-  /**
-   * The catalogue as `materializeRegion` wants it.
-   *
-   * `LoadedComponent` already holds the encoded prefab — `useComponents` packs it once on
-   * arrival precisely so that neither the compiler nor this has to re-pack a saved building on
-   * every recompute — so this is a re-key, not a conversion.
-   */
-  const prefabs = useMemo(() => {
-    const map = new Map<string, Prefab>();
-    for (const [id, component] of catalogue) map.set(id, component.prefab);
-    return map;
-  }, [catalogue]);
-
-  const built = useMemo(
-    () => materializeRegion(doc, region.rx, region.rz, prefabs),
-    [doc, settled, region.rx, region.rz, prefabs],
-  );
-
+export function WorldPreview({ built, region }: WorldPreviewProps) {
   const colors = useMemo(() => paletteColors(built.grid.palette), [built.grid.palette]);
   const flags = useMemo(() => paletteFlags(built.grid.palette), [built.grid.palette]);
 

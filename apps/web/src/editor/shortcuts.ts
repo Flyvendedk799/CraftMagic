@@ -14,6 +14,10 @@ import { TOOL_GROUPS, toolsInGroup } from './toolset.js';
 export const EDITOR_SHORTCUTS: readonly ShortcutGroup[] = [
   // Grouped the way the palette is, and by the same argument: a flat list of nine digits is
   // a lookup table, while three short lists are something a person can hold in their head.
+  //
+  // 1 is Box rather than Place, matching Architecture and World. It used to place a block here
+  // and select in both of the others, so the key you reach for to get out of a tool did
+  // something irreversible in one mode out of three.
   ...TOOL_GROUPS.map((group) => ({
     title: group.label,
     rows: toolsInGroup(group.id).map((tool) => ({ keys: tool.key, what: tool.label })),

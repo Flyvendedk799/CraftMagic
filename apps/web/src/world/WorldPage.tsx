@@ -47,8 +47,12 @@ import { WorldPreview } from './WorldPreview.js';
 import { TerrainPanel } from './TerrainPanel.js';
 import { PlacementsPanel } from './PlacementsPanel.js';
 import { WorldPanel } from './WorldPanel.js';
+import { useRegionGrid } from './useRegionGrid.js';
 import { useWorldSession } from './useWorldSession.js';
+import { ExportBar } from '../editor/ExportBar.js';
 import { isTextEntry, useUndoKeys } from '../studio/undoKeys.js';
+import { WORLD_SHORTCUTS } from './shortcuts.js';
+import { ShortcutHelp } from '../editor/ShortcutHelp.js';
 import { WORLD_TOOLS, type WorldTool } from './toolset.js';
 import './world.css';
 
@@ -83,6 +87,7 @@ export function WorldPage() {
   const [showRegions, setShowRegions] = useState(true);
   const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [help, setHelp] = useState(false);
   const [sending, setSending] = useState(false);
   /**
    * True while a terrain gesture is in flight, and the 3D view watches it.
@@ -153,6 +158,11 @@ export function WorldPage() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (isTextEntry(event.target)) return;
+      if (event.key === '?') {
+        event.preventDefault();
+        setHelp(true);
+        return;
+      }
       const match = WORLD_TOOLS.find((entry) => entry.key === event.key);
       if (match) {
         event.preventDefault();
@@ -395,11 +405,27 @@ export function WorldPage() {
     [session],
   );
 
+  /**
+   * The region on screen, materialised once and shared.
+   *
+   * World had no export at all: `materializeRegion` could turn any part of a map into an
+   * ordinary grid, and `send.ts` proved it, but the only way to reach that grid was the send
+   * path — which returns early unless a paired Minecraft world is online. So a world was the
+   * one thing in the studio you could not get blocks out of without a running game server.
+   */
   const counts = regionCount(doc.settings);
   const clampedRegion = {
     rx: Math.min(region.rx, counts.x - 1),
     rz: Math.min(region.rz, counts.z - 1),
   };
+
+  const built = useRegionGrid({
+    doc,
+    revision: session.revision,
+    region: clampedRegion,
+    catalogue: library.catalogue,
+    live: !sculpting,
+  });
 
   return (
     /* The `data-` attributes are the same affordance `.editor` uses for `data-remaining`: a
@@ -437,6 +463,7 @@ export function WorldPage() {
             targetY={targetY}
             onTargetY={setTargetY}
             hover={hover}
+            onShowHelp={() => setHelp(true)}
           />
         </aside>
 
@@ -510,13 +537,7 @@ export function WorldPage() {
             />
 
             {showPreview && (
-              <WorldPreview
-                doc={doc}
-                revision={session.revision}
-                region={clampedRegion}
-                catalogue={library.catalogue}
-                live={!sculpting}
-              />
+              <WorldPreview built={built} region={clampedRegion} />
             )}
           </div>
         </main>
@@ -581,8 +602,34 @@ export function WorldPage() {
             onSendAll={() => void sendAll()}
             sending={sending}
           />
+
+          {/* The same export bar Build and Architecture use, over the region on screen.
+
+              A world had no way out except a paired, online Minecraft server — the one thing in
+              the studio you could not get blocks out of. It is scoped to a region rather than
+              the whole map on purpose: a region *is* an ordinary build, which is why the
+              schematic writer, the guide and the library all take one without knowing worlds
+              exist, and a whole map is not a thing any of those formats can hold. */}
+          <ExportBar
+            grid={built.grid}
+            program={built.program}
+            name={`${doc.name} — region ${clampedRegion.rx},${clampedRegion.rz}`}
+            detached={false}
+            // The guide is reached by URL and rebuilt from a build id; a materialised region has
+            // no id to name, so there is nothing to link to.
+            guideHref={null}
+            blockCount={built.stats.blocks}
+          />
         </aside>
       </div>
+
+      {help && (
+        <ShortcutHelp
+          groups={WORLD_SHORTCUTS}
+          foot="Sculpt from above; the 3D view beside the map is where you check it."
+          onClose={() => setHelp(false)}
+        />
+      )}
     </div>
   );
 }

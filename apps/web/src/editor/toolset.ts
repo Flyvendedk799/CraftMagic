@@ -6,10 +6,16 @@
  * and a `TOOLS` array inside the palette — with a comment admitting that both were wrong the
  * moment they disagreed.
  *
- * **Digits never move.** The first five have had their numbers since there were five tools,
- * and `group` reorders the palette without touching them: a shortcut that silently changes
- * under someone's fingers is worse than one that was never advertised. The badge is small and
- * dim for the same reason — it is a reminder, not a ranking.
+ * **Digits do not move, with one exception that has now been taken.** The rule is that a
+ * shortcut changing silently under someone's fingers is worse than one never advertised, and
+ * `group` reorders the palette without touching the keys for exactly that reason. The badge is
+ * small and dim on the same grounds — a reminder, not a ranking.
+ *
+ * The exception: `1` selected in Architecture and in World and *placed a block* here, so the
+ * one key you reach for to get out of a tool did something irreversible in one mode out of
+ * three. That rule was written per-mode, and across modes it was the thing producing the
+ * collision. Box and Place swapped digits — two tools moved, seven stayed — rather than
+ * remapping the row, and the shortcut sheet says so.
  *
  * `drag` is the interesting field, and it exists because nine buttons that all look alike were
  * hiding the fact that they do three different kinds of thing.
@@ -77,7 +83,7 @@ export const TOOLS: readonly ToolSpec[] = [
     hint: 'Click a face to add a block against it, or drag to paint a run of them.',
     needsBlock: true,
     usesBrush: true,
-    key: '1',
+    key: '4',
   },
   {
     id: 'erase',
@@ -125,7 +131,7 @@ export const TOOLS: readonly ToolSpec[] = [
     hint: 'Drag across the build to select a box. Drag inside one to move it. The box stays, so you can fill it, hollow it, rotate it or copy it — as many times as you like.',
     needsBlock: true,
     usesBrush: false,
-    key: '4',
+    key: '1',
   },
   {
     id: 'grab',

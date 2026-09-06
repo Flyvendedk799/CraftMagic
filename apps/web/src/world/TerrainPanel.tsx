@@ -29,6 +29,7 @@ export interface TerrainPanelProps {
   onTargetY: (y: number) => void;
   /** The column under the pointer, so the readout is a fact rather than a guess. */
   hover: { x: number; z: number; height: number; stratum: number } | null;
+  onShowHelp: () => void;
 }
 
 export function TerrainPanel(props: TerrainPanelProps) {
@@ -53,7 +54,12 @@ export function TerrainPanel(props: TerrainPanelProps) {
             </button>
           ))}
         </div>
-        <p className="world__hint">{spec.hint}</p>
+        <p className="world__hint">
+          {spec.hint}{' '}
+          <button type="button" className="tools__inline" onClick={props.onShowHelp}>
+            shortcuts
+          </button>
+        </p>
       </Section>
 
       {spec.brush && (

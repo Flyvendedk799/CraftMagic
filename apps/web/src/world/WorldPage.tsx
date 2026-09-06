@@ -48,6 +48,7 @@ import { TerrainPanel } from './TerrainPanel.js';
 import { PlacementsPanel } from './PlacementsPanel.js';
 import { WorldPanel } from './WorldPanel.js';
 import { useWorldSession } from './useWorldSession.js';
+import { isTextEntry, useUndoKeys } from '../studio/undoKeys.js';
 import { WORLD_TOOLS, type WorldTool } from './toolset.js';
 import './world.css';
 
@@ -141,20 +142,17 @@ export function WorldPage() {
     }
   }, [library.catalogue, doc, session]);
 
+  // Shared with the other two modes, which also gets this mode Ctrl+Y — the Windows redo key
+  // did nothing here — and a guard that sees `contentEditable`, which the old inline test for
+  // `tagName` did not.
+  useUndoKeys({ undo: session.undo, redo: session.redo });
+
   // Number-row tool shortcuts, matching the editor and Architecture. Ignored while a text
   // field has focus, or typing a world's name would silently change the tool.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) {
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-          event.preventDefault();
-          if (event.shiftKey) session.redo();
-          else session.undo();
-        }
-        return;
-      }
-      const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isTextEntry(event.target)) return;
       const match = WORLD_TOOLS.find((entry) => entry.key === event.key);
       if (match) {
         event.preventDefault();
@@ -163,7 +161,7 @@ export function WorldPage() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [session]);
+  }, []);
 
   /** Drop a component, centred on a column. */
   const placeAt = useCallback(

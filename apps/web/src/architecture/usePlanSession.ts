@@ -57,7 +57,17 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
 
   const [revision, setRevision] = useState(0);
   const [saved, setSaved] = useState<SavedPlan[]>(() => listSaved());
-  const [savedRevision, setSavedRevision] = useState<string | null>(null);
+  /**
+   * The revision the plan was last saved at, or null if it never has been.
+   *
+   * This was a `JSON.stringify` of the whole document, compared against a fresh one on every
+   * render. `preview()` gives the plan a new identity on every pointer-move frame of a drag,
+   * so the memo re-ran and the entire plan was serialised sixty times a second — to light a
+   * one-word "unsaved" label. The counter is the same answer for an integer compare, and it
+   * only moves on a commit, which is the honest definition anyway: a drag in progress has not
+   * changed anything until it is let go.
+   */
+  const [savedRevision, setSavedRevision] = useState<number | null>(null);
 
   const bump = useCallback(() => setRevision((n) => n + 1), []);
 
@@ -107,8 +117,8 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
 
   const save = useCallback(() => {
     setSaved(savePlan(plan));
-    setSavedRevision(fingerprint(plan));
-  }, [plan]);
+    setSavedRevision(revision);
+  }, [plan, revision]);
 
   const remove = useCallback((id: string) => {
     setSaved(deleteSaved(id));
@@ -141,7 +151,7 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
     [],
   );
 
-  const dirty = useMemo(() => savedRevision !== fingerprint(plan), [savedRevision, plan]);
+  const dirty = savedRevision !== revision;
 
   return {
     plan,
@@ -162,7 +172,4 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
   };
 }
 
-/** Cheap identity for "has this changed since it was saved". */
-function fingerprint(plan: LayoutPlan): string {
-  return JSON.stringify({ ...plan, updatedAt: '' });
-}
+

@@ -325,6 +325,15 @@ export function systemPrompt(): string {
 		``,
 		`Always answer by calling the \`emit_build_program\` tool. Never reply with prose.`,
 		``,
+		// The streaming preview parser leans on this and says so in its own docstring, but the
+		// instruction was never actually here — the only "in this order" in this file is about
+		// building foundation-before-roof. It fails safe: a program whose keys arrive in another
+		// order simply never previews and nobody sees an error, which is why it went unnoticed.
+		`Emit the program object with its top-level keys in this order: \`version\`, \`meta\`,`,
+		`\`size\`, \`palette\`, \`components\`. The website builds a live preview out of the`,
+		`partial JSON as you write it, and it can only do that if the palette is known before`,
+		`the components that use it.`,
+		``,
 		CONVENTIONS,
 		``,
 		EXPANSION_RULES,

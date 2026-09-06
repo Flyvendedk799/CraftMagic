@@ -34,6 +34,7 @@ import {
 } from '@craftmagic/core';
 import { editsOf, rememberEdits, type LoadedBuild } from './builds.js';
 import type { VoxelWorld } from './VoxelWorld.js';
+import { useUndoKeys } from '../studio/undoKeys.js';
 import { EditHistory } from './history.js';
 import { blockDelta } from './tools/op.js';
 import { resolvePaletteIndex } from './tools/palette.js';
@@ -315,28 +316,10 @@ export function useEditSession(build: LoadedBuild): EditSession {
   );
 
   // Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z, on the window so they work wherever the pointer is.
-  // Skipped while a text field has focus: the generation prompt is a textarea on this same
-  // page, and stealing undo inside it would be worse than not having the shortcut at all.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      if (isTextEntry(event.target)) return;
-
-      const key = event.key.toLowerCase();
-      if (key === 'z') {
-        event.preventDefault();
-        if (event.shiftKey) redo();
-        else undo();
-      } else if (key === 'y') {
-        // Windows convention, and free to support.
-        event.preventDefault();
-        redo();
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [undo, redo]);
+  // Shared with the other two modes. It skips text fields — the generation prompt is a
+  // textarea on this same page, and stealing undo inside it would be worse than not having
+  // the shortcut at all.
+  useUndoKeys({ undo, redo });
 
   const exportEdits = useCallback(
     () => (overlay.size > 0 ? overlay.toJSON() : null),
@@ -363,9 +346,4 @@ export function useEditSession(build: LoadedBuild): EditSession {
   };
 }
 
-function isTextEntry(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-}
+

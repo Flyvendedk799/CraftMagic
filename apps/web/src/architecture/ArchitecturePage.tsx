@@ -39,6 +39,7 @@ import { expand, paletteColors, paletteFlags, voxelIndex, type BuildPart, type V
 import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorCanvas.js';
 import type { VoxelHit } from '../editor/raycast.js';
 import { ExportBar } from '../editor/ExportBar.js';
+import { isTextEntry, useUndoKeys } from '../studio/undoKeys.js';
 import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild } from '../editor/builds.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
@@ -137,6 +138,10 @@ export function ArchitecturePage() {
   const [hover, setHover] = useState<{ x: number; z: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
+
+  // Suppressed while the shortcut sheet is up: it is the only thing on screen, and a key that
+  // changed the plan behind it is not what anyone meant.
+  useUndoKeys({ undo: session.undo, redo: session.redo, disabled: help });
   /** The saved build the Place tool will drop. Armed from the Components panel. */
   const [placeChoice, setPlaceChoice] = useState<PlaceChoice | null>(null);
   /** Bumped to ask the plan to re-frame; see `PlanCanvas`'s `fitNonce`. */
@@ -406,17 +411,7 @@ export function ArchitecturePage() {
 
       if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         const key = event.key.toLowerCase();
-        if (key === 'z') {
-          event.preventDefault();
-          if (event.shiftKey) session.redo();
-          else session.undo();
-          return;
-        }
-        if (key === 'y') {
-          event.preventDefault();
-          session.redo();
-          return;
-        }
+        // Undo and redo are bound once for the whole studio; see `useUndoKeys` below.
         if (key === 'c') {
           event.preventDefault();
           copy();
@@ -1149,9 +1144,4 @@ function offset(item: PlanItem, dx: number, dz: number): PlanItem {
   return { ...item, x: item.x + dx, z: item.z + dz };
 }
 
-function isTextEntry(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-}
+

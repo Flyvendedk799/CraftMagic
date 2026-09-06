@@ -1,21 +1,30 @@
 /**
- * The studio: one address for both ways of making a building.
+ * The studio: one address for three ways of making something.
  *
- * Two modes, not two products. **Build** is the voxel editor — you place blocks, the building
- * is what the blocks add up to. **Plan** is Architecture mode — you draw rooms, the blocks are a
- * consequence. Both compile to the same `BuildProgram` and reach the same exports, and the
- * fact that they were two routes with two nav entries made them read as two tools when they
- * are two hands of one.
+ * Three modes, not three products. **Build** is the voxel editor — you place blocks and the
+ * building is what they add up to. **Architecture** draws rooms and the blocks are a
+ * consequence. **World** sculpts terrain and places the other two on it, as saved builds.
+ * Build and Architecture compile to the same `BuildProgram` and reach the same exports; World
+ * does neither, because a world is a description that materialises into ordinary builds one
+ * region at a time — which is the only reason a map can exist at all here.
  *
- * The shell owns exactly three things: which mode is mounted, the switcher pill that flips
- * it, and the Ctrl+K command palette. `EditorPage` and `ArchitecturePage` render here *intact* —
- * their HUDs, shortcuts, autosave and undo are untouched, and each keeps its own history
- * (undo in Plan never unwinds a Build edit). Everything the palette does is a navigation, so
- * the pages react to a command exactly as they would to a typed URL.
+ * (This paragraph described two modes for a while after there were three, and said that both
+ * compiled to a `BuildProgram`. Worth naming: a shell whose own docstring has not noticed a
+ * whole mode is a shell that is not being read as the shell.)
  *
- * Mode lives in the query (`?mode=plan`) rather than the path so that `/editor?build=…`
- * links — the product's main way of spreading — redirect here with their whole query intact
- * and land in the right mode by default.
+ * What the shell owns is which mode is mounted, the switcher pill, and the Ctrl+K palette.
+ * Each page renders here *intact* — its own HUD, its own tools, its own autosave. What they no
+ * longer each own is the undo stack's machinery and its keybinding: those live in `studio/` so
+ * that Ctrl+Z means the same thing whichever pill is lit. Each mode still keeps its own
+ * history, so undo in Architecture never unwinds a Build edit.
+ *
+ * Everything the palette does is a navigation, so a page reacts to a command exactly as it
+ * would to a typed URL — which is also why the palette can offer so little for World, whose
+ * state is not in the URL at all.
+ *
+ * Mode lives in the query (`?mode=arch`) rather than the path so that `/editor?build=…` links —
+ * the product's main way of spreading — redirect here with their whole query intact and land
+ * in the right mode by default.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';

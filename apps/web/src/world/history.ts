@@ -18,6 +18,7 @@
  */
 
 import type { Overlay, WorldPlacement } from '@craftmagic/core';
+import { History } from '../studio/history.js';
 
 /** Deep enough that undo feels unlimited while sculpting. */
 export const MAX_ENTRIES = 120;
@@ -115,100 +116,67 @@ export interface WorldHistoryLimits {
   maxBytes?: number;
 }
 
+/**
+ * The world's stack.
+ *
+ * The container came from `studio/history` once this was the second copy of it. That was not
+ * only tidiness: this copy had lost the guard the editor wrote a comment about, so an entry
+ * bigger than the whole byte ceiling evicted itself the moment it was pushed. The entries most
+ * likely to be that big are exactly the ones here — a resize snapshots the whole heightfield,
+ * twice — so the one stack that could not afford the bug was the one that had it.
+ */
 export class WorldHistory {
-  /** Oldest first. Entries below `cursor` are applied; from it up is the redo tail. */
-  private readonly entries: WorldDelta[] = [];
-  /** Byte cost parallel to `entries`, so eviction is not an O(depth) re-measure. */
-  private readonly costs: number[] = [];
-
-  private cursor = 0;
-  private total = 0;
-
-  private readonly maxEntries: number;
-  private readonly maxBytes: number;
+  private readonly inner: History<WorldDelta>;
 
   constructor(limits: WorldHistoryLimits = {}) {
-    this.maxEntries = Math.max(1, limits.maxEntries ?? MAX_ENTRIES);
-    this.maxBytes = Math.max(1, limits.maxBytes ?? MAX_BYTES);
+    this.inner = new History(costOf, {
+      maxEntries: limits.maxEntries ?? MAX_ENTRIES,
+      maxBytes: limits.maxBytes ?? MAX_BYTES,
+    });
   }
 
   get canUndo(): boolean {
-    return this.cursor > 0;
+    return this.inner.canUndo;
   }
 
   get canRedo(): boolean {
-    return this.cursor < this.entries.length;
+    return this.inner.canRedo;
   }
 
   get depth(): number {
-    return this.entries.length;
+    return this.inner.depth;
   }
 
   get bytes(): number {
-    return this.total;
+    return this.inner.bytes;
   }
 
   /**
    * Record a completed edit.
    *
-   * Pushing discards the redo tail, which is the ordinary rule, and an empty terrain delta is
-   * dropped rather than stored: a stroke that landed entirely off the map would otherwise
-   * become an undo the user has to press twice for, once for the stroke they saw and once for
-   * the one they did not.
+   * An empty terrain or carve delta is dropped rather than stored: a stroke that landed
+   * entirely off the map would otherwise become an undo the user has to press twice for, once
+   * for the stroke they saw and once for the one they did not. A placement delta with two empty
+   * sides is kept, because an empty placement list is a real state — it is what removing the
+   * last building leaves behind.
    */
   push(delta: WorldDelta): void {
     if (delta.kind === 'terrain' && delta.columns.length === 0) return;
     if (delta.kind === 'carve' && delta.keys.length === 0) return;
-
-    while (this.entries.length > this.cursor) {
-      this.total -= this.costs.pop()!;
-      this.entries.pop();
-    }
-
-    this.entries.push(delta);
-    this.costs.push(costOf(delta));
-    this.total += this.costs[this.costs.length - 1]!;
-    this.cursor = this.entries.length;
-
-    this.evict();
+    this.inner.push(delta);
   }
 
-  /** The entry to reverse, or null. The caller applies it and the cursor has already moved. */
+  /** The entry to reverse, or null. The caller applies it. */
   undo(): WorldDelta | null {
-    if (!this.canUndo) return null;
-    this.cursor--;
-    return this.entries[this.cursor] ?? null;
+    return this.inner.undo();
   }
 
   /** The entry to re-apply, or null. */
   redo(): WorldDelta | null {
-    if (!this.canRedo) return null;
-    const entry = this.entries[this.cursor] ?? null;
-    this.cursor++;
-    return entry;
+    return this.inner.redo();
   }
 
   clear(): void {
-    this.entries.length = 0;
-    this.costs.length = 0;
-    this.cursor = 0;
-    this.total = 0;
-  }
-
-  /**
-   * Drop the oldest entries until both ceilings hold.
-   *
-   * Evicting from the bottom moves the cursor with it — the entries below it are the applied
-   * ones, and forgetting one means the stack is shorter, not that the document changed.
-   */
-  private evict(): void {
-    while (
-      this.entries.length > 0 &&
-      (this.entries.length > this.maxEntries || this.total > this.maxBytes)
-    ) {
-      this.total -= this.costs.shift()!;
-      this.entries.shift();
-      if (this.cursor > 0) this.cursor--;
-    }
+    this.inner.clear();
   }
 }

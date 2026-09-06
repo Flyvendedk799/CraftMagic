@@ -34,12 +34,24 @@ const check = (label, ok, detail = '') => {
 	if (!ok) failures++;
 };
 
-const EDGE = [
+/**
+ * Any Chromium will do — the driver speaks CDP, not Edge.
+ *
+ * The same list `verify-edit.mjs` keeps, and for the same reason: the Linux paths are what
+ * let this run in CI and in a container, where the only browser on disk is the one Playwright
+ * unpacked. `CM_BROWSER` wins over both, for a checkout that keeps its browser elsewhere.
+ */
+const BROWSER = [
+	process.env.CM_BROWSER,
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
 	'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-].find((p) => fs.existsSync(p));
-if (!EDGE) {
-	console.error('Edge not found.');
+	'/opt/pw-browsers/chromium',
+	'/usr/bin/chromium',
+	'/usr/bin/chromium-browser',
+	'/usr/bin/google-chrome',
+].find((p) => p && fs.existsSync(p));
+if (!BROWSER) {
+	console.error('no Chromium-based browser found — set CM_BROWSER to one');
 	process.exit(1);
 }
 
@@ -47,10 +59,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const port = 9300 + (process.pid % 300);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-gest-'));
 const child = spawn(
-	EDGE,
+	BROWSER,
 	[
 		'--headless=new', '--disable-gpu', '--use-gl=swiftshader', '--enable-unsafe-swiftshader',
 		'--hide-scrollbars', '--window-size=1280,900',
+		// Extra flags for the machine this runs on. A container running as root needs
+		// `--no-sandbox`, which is not something to hardcode for everyone else.
+		...(process.env.CM_BROWSER_FLAGS ?? '').split(' ').filter(Boolean),
 		`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, 'about:blank',
 	],
 	{ stdio: 'ignore' },
@@ -283,6 +298,86 @@ try {
 		`${beforeRight} → ${await blocks()}`,
 	);
 	check('and orbits instead — the way out when the build fills the screen', (await viewHash()) !== camBeforeRight);
+
+	// --- 5. Grab carries one block, and still selects a structure on a click -----------------
+	//
+	// The two halves of the same tool, and they have to be told apart by *movement alone*: a
+	// drag moves the one block it picked up, a press that never moves selects the whole
+	// connected mass. A move is also the one edit that changes no block count, which is what
+	// separates it here from a place (one more) and an erase (one fewer).
+	const notice = () => evaluate("document.querySelector('.tools__notice')?.textContent ?? ''");
+
+	check('Grab is selectable', await useTool('grab'));
+	const onBuildAgain = await findOnBuild();
+	if (!onBuildAgain) throw new Error('could not find a point over the build for Grab');
+
+	const beforeGrab = await blocks();
+	const editsBeforeGrab = await edits();
+
+	// Hand-rolled rather than through `drag`, because the interesting frame is *during* the
+	// gesture: a block in flight has to say where it would land before it lands there.
+	const dropAt = { x: onBuildAgain.x + 30, y: onBuildAgain.y - 10 };
+	await moveTo(onBuildAgain.x, onBuildAgain.y);
+	await frame();
+	await sleep(120);
+	await press(onBuildAgain.x, onBuildAgain.y);
+	for (let i = 1; i <= 10; i++) {
+		const t = i / 10;
+		await moveTo(
+			Math.round(onBuildAgain.x + (dropAt.x - onBuildAgain.x) * t),
+			Math.round(onBuildAgain.y + (dropAt.y - onBuildAgain.y) * t),
+		);
+		await sleep(30);
+	}
+	await frame();
+	await sleep(150);
+	const readout = await evaluate("document.querySelector('.hover-readout')?.textContent ?? ''");
+	check('a block in flight shows where it would land', readout.includes('drop here'), readout);
+
+	await release(dropAt.x, dropAt.y);
+	await frame();
+	await sleep(300);
+	await meshed();
+
+	check(
+		'a Grab drag moves the block rather than adding or removing one',
+		(await blocks()) === beforeGrab,
+		`${beforeGrab} → ${await blocks()} blocks`,
+	);
+	check('and it says so', /^Moved one block to /.test(await notice()), await notice());
+	const editsAfterGrab = await edits();
+	check(
+		'and it is a two-cell edit, not a repaint',
+		editsAfterGrab > editsBeforeGrab && editsAfterGrab <= editsBeforeGrab + 2,
+		`${editsBeforeGrab} → ${editsAfterGrab} cells`,
+	);
+
+	for (const type of ['keyDown', 'keyUp']) {
+		await send('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+	}
+	await sleep(300);
+	await meshed();
+	check(
+		'and one undo puts it back where it was',
+		(await edits()) === editsBeforeGrab,
+		`${await edits()} cells, expected ${editsBeforeGrab}`,
+	);
+
+	// The click half: no movement, so the whole structure rather than the one block.
+	const beforeSelect = await blocks();
+	await moveTo(onBuildAgain.x, onBuildAgain.y);
+	await frame();
+	await sleep(150);
+	await press(onBuildAgain.x, onBuildAgain.y);
+	await release(onBuildAgain.x, onBuildAgain.y);
+	await frame();
+	await sleep(400);
+	check('a Grab click still selects the whole structure', /^Selected /.test(await notice()), await notice());
+	check(
+		'and selecting moves nothing',
+		(await blocks()) === beforeSelect,
+		`${beforeSelect} → ${await blocks()}`,
+	);
 
 	check('no uncaught errors', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 

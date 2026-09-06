@@ -155,9 +155,19 @@ remainder of the approved roadmap for follow-up work.
   import and an Import control sat above the tools and grew with use — the least-used thing
   on screen taking the most room, pushing the editing controls under the fold a little
   further with each generation. One row now names what is open and holds the rest.
-- `tools/verify-gestures.mjs`, 13 checks, driving real CDP mouse buttons: a drag paints and
-  costs one undo, a click still places exactly one, the sky still orbits, and a right-drag
-  orbits over the build.
+- **A single block can be picked up and carried.** Grab could take a whole connected mass and
+  the Box tool a region, but the commonest edit of all — *that* block, one course over — had
+  no gesture: it meant erase, re-aim, place, which is two undo entries and a stair that comes
+  back facing the wrong way. Dragging with Grab now carries the one block the press landed on
+  and drops it against the face under the pointer, as one two-cell op (`tools/lift.ts`) — one
+  Ctrl+Z, and the palette slot travels, so block states survive. A ghost names the drop cell
+  while the block is in flight, and the block being carried no longer blocks the ray aiming
+  it (`raycast`'s new `ignore`). Grab's *click* is unchanged: a press that never moves still
+  selects the whole structure.
+- `tools/verify-gestures.mjs`, 20 checks, driving real CDP mouse buttons: a drag paints and
+  costs one undo, a click still places exactly one, the sky still orbits, a right-drag orbits
+  over the build, and a Grab drag moves exactly one block — the block count unchanged, which
+  is what separates a move from a place — while a Grab click still selects its structure.
 
 ## Remaining roadmap (approved, not yet built)
 

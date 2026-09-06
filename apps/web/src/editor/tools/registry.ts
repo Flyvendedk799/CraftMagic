@@ -281,21 +281,27 @@ const swap: EditorTool = {
 };
 
 /**
- * Grab: click a thing, get it selected.
+ * Grab: drag a block to move it, click one to select what it belongs to.
+ *
+ * Two gestures on one tool, and they answer the two questions someone has about a block they
+ * are pointing at. A *drag* takes the block itself — the smallest edit the editor can make,
+ * and for a long time the one it had no gesture for; it lives in the canvas and the page,
+ * because carrying something is a pointer gesture rather than a click (see `tools/lift.ts`).
+ * A *click* takes the whole connected mass it belongs to, which is this function.
  *
  * It used to *cut*. One click deleted the whole connected mass you hit, put it in the
  * clipboard and switched you to Stamp — so a misjudged click on a wall made a chunk of the
  * build disappear, and the way back was an undo you had to realise you needed. A tool whose
  * name is "grab" should hand you the thing, not take it away.
  *
- * It selects the structure's box now and leaves every block where it is. Everything that was
+ * The click selects the structure's box now and leaves every block where it is. Everything that was
  * possible before is still one press away and now visible while you decide: Cut lifts it,
  * Copy takes a duplicate, dragging moves it, and the box shows exactly what any of those
  * would affect — including the neighbours a bounding box inevitably catches, which the old
  * version deleted without ever showing you.
  */
 const grab: EditorTool = {
-  groundRefusal: 'Nothing to grab there — click any block of the structure you want to select.',
+  groundRefusal: 'Nothing to grab there — drag a block to move it, or click one to select its structure.',
   onClick(ctx, hit) {
     const result = grabStructure(ctx.grid, hit);
     if (result.capped) {

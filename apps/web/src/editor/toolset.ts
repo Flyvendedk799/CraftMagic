@@ -39,12 +39,13 @@ export const TOOL_GROUPS: readonly { id: ToolGroup; label: string; hint: string 
  * - `stroke`   every cell the drag crosses, as one edit — painting.
  * - `endpoints` the cell it started on and the cell it ended on — a straight run.
  * - `region`   a box drawn or moved; the canvas owns this one.
+ * - `lift`     the single block under the press, carried to wherever it is released.
  * - `none`     nothing; the drag belongs to the camera, as it always did.
  *
  * The default used to be `none` for everything, with painting hidden behind Shift. That is
  * backwards from every other tool anyone has used, and it is the first thing a new user tries.
  */
-export type ToolDrag = 'stroke' | 'endpoints' | 'region' | 'none';
+export type ToolDrag = 'stroke' | 'endpoints' | 'region' | 'lift' | 'none';
 
 export interface ToolSpec {
   id: ToolId;
@@ -130,10 +131,10 @@ export const TOOLS: readonly ToolSpec[] = [
     id: 'grab',
     group: 'select',
     verb: 'select a structure',
-    dragVerb: null,
-    drag: 'none',
+    dragVerb: 'move that block',
+    drag: 'lift',
     label: 'Grab',
-    hint: 'Click any block to select the whole connected structure — a tree, a statue, a chimney. Nothing moves until you drag it or press Cut.',
+    hint: 'Drag any block to move it on its own — it lands against the face you drop it on. Click one instead to select the whole connected structure: a tree, a statue, a chimney.',
     needsBlock: false,
     usesBrush: false,
     key: '9',

@@ -21,7 +21,7 @@ export const EDITOR_SHORTCUTS: readonly ShortcutGroup[] = [
   {
     title: 'The pointer',
     rows: [
-      { keys: 'Drag on the build', what: 'Whatever the tool does — paint, erase, a line, a box' },
+      { keys: 'Drag on the build', what: 'Whatever the tool does — paint, erase, a line, a box, one block carried' },
       { keys: 'Click', what: 'The same thing, once' },
       { keys: 'Drag on the sky', what: 'Orbit' },
       { keys: 'Right-drag', what: 'Orbit from anywhere, including over the build' },
@@ -32,6 +32,8 @@ export const EDITOR_SHORTCUTS: readonly ShortcutGroup[] = [
   {
     title: 'Editing',
     rows: [
+      { keys: 'Grab tool, drag a block', what: 'Move that one block on its own, wherever you drop it' },
+      { keys: 'Grab tool, click a block', what: 'Select the whole connected structure instead' },
       { keys: 'Alt + click', what: 'Pick the block under the pointer, from any tool' },
       { keys: 'Shift + drag', what: 'Paint even where the press missed the build — onto the ground plane' },
       { keys: 'Esc', what: 'Cancel the corner in progress' },

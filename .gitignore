@@ -31,3 +31,8 @@ tools/registry-gen/work/
 
 # Agent worktrees, created by the harness inside the repo.
 .claude/
+
+# Throwaway patch scripts. I write these to make a precise multi-line edit and delete them
+# straight after; two have reached main by being forgotten between the write and the commit.
+tools/_*.cjs
+tools/_*.mjs

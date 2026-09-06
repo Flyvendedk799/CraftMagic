@@ -112,7 +112,7 @@ describe('the announced block ceiling is enforced, not just announced', () => {
 		const { connection, sent } = fakeConnection();
 		await hub.attach(connection);
 
-		expect(await hub.offer(job('job-1', 'build-big'))).toBe(false);
+		expect((await hub.offer(job('job-1', 'build-big'))).kind).toBe('refused');
 		expect(offers(sent)).toHaveLength(0);
 		expect(failures.get('job-1')).toContain(String(AGENT_LIMITS.maxVolume));
 	});
@@ -125,7 +125,7 @@ describe('the announced block ceiling is enforced, not just announced', () => {
 		const { connection, sent } = fakeConnection();
 		await hub.attach(connection);
 
-		expect(await hub.offer(job('job-1', 'build-exact'))).toBe(true);
+		expect((await hub.offer(job('job-1', 'build-exact'))).kind).toBe('delivered');
 		expect(offers(sent)).toHaveLength(1);
 	});
 
@@ -137,7 +137,7 @@ describe('the announced block ceiling is enforced, not just announced', () => {
 		const { connection, sent } = fakeConnection(500);
 		await hub.attach(connection);
 
-		expect(await hub.offer(job('job-1', 'build-1'))).toBe(false);
+		expect((await hub.offer(job('job-1', 'build-1'))).kind).toBe('refused');
 		expect(offers(sent)).toHaveLength(0);
 		expect(failures.get('job-1')).toContain('500');
 	});
@@ -148,9 +148,23 @@ describe('the announced block ceiling is enforced, not just announced', () => {
 		const { connection, sent } = fakeConnection();
 		await hub.attach(connection);
 
-		expect(await hub.offer(job('job-1', 'build-big'), region(0, 0, 0))).toBe(false);
+		expect((await hub.offer(job('job-1', 'build-big'), region(0, 0, 0))).kind).toBe('refused');
 		expect(offers(sent)).toHaveLength(0);
 		expect(failures.get('job-1')).toBeDefined();
+	});
+});
+
+describe('an offline world is not a refusal', () => {
+	it('leaves the job pending rather than failing it', async () => {
+		// The two used to be the same `false`, so the route answered 202 for both and the site
+		// printed "queued" over a job that was already dead. A job for a world that is merely
+		// switched off really is queued — it lands when the player next starts the game.
+		const { store, failures } = fakeStore({ 'build-1': 10 }, []);
+		const hub = new AgentHub(store);
+
+		const outcome = await hub.offer(job('job-1', 'build-1'));
+		expect(outcome.kind).toBe('offline');
+		expect(failures.size).toBe(0);
 	});
 });
 
@@ -166,7 +180,7 @@ describe('a world arrives in order', () => {
 	it('offers region 0 with no anchor, because a player is about to choose one', async () => {
 		const { hub, sent } = await world();
 
-		expect(await hub.offer(job('job-r0', 'build-r0'), region(0, 0, 0))).toBe(true);
+		expect((await hub.offer(job('job-r0', 'build-r0'), region(0, 0, 0))).kind).toBe('delivered');
 		expect(offers(sent)[0]!.region).toEqual(region(0, 0, 0));
 		expect(offers(sent)[0]!.region!.anchor).toBeUndefined();
 	});
@@ -175,7 +189,7 @@ describe('a world arrives in order', () => {
 		const { hub, sent, failures } = await world();
 		await hub.offer(job('job-r0', 'build-r0'), region(0, 0, 0));
 
-		expect(await hub.offer(job('job-r1', 'build-r1'), region(1, 1, 0))).toBe(false);
+		expect((await hub.offer(job('job-r1', 'build-r1'), region(1, 1, 0))).kind).toBe('refused');
 		expect(offers(sent)).toHaveLength(1);
 		expect(failures.get('job-r1')).toContain('region 2 of 4');
 	});
@@ -188,7 +202,7 @@ describe('a world arrives in order', () => {
 		hub.noteJobState('job-r0', 'building', anchor);
 		expect(hub.worldAnchor('world-1')).toEqual(anchor);
 
-		expect(await hub.offer(job('job-r1', 'build-r1'), region(1, 1, 0))).toBe(true);
+		expect((await hub.offer(job('job-r1', 'build-r1'), region(1, 1, 0))).kind).toBe('delivered');
 		expect(offers(sent)[1]!.region).toEqual({ ...region(1, 1, 0), anchor });
 	});
 

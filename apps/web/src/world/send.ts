@@ -1,8 +1,8 @@
 /**
  * Sending a world into Minecraft, one region at a time.
  *
- * A world does not go through the mod in one send and could not: the builder bot places 400
- * blocks a tick — 8,000 a second — and a region alone is millions of blocks. So a run is a
+ * A world does not go through the mod in one send and could not: the builder bot places a few
+ * hundred blocks a second and a region alone is hundreds of thousands of them. So a run is a
  * queue of ordinary builds, each materialised on demand, and the only thing that makes them a
  * map rather than sixteen buildings in a heap is the region metadata riding alongside.
  *
@@ -20,6 +20,7 @@ import {
   materializeRegion,
   regionsOf,
   type Prefab,
+  type Region,
   type WorldDoc,
 } from '@craftmagic/core';
 import { saveToLibrary } from '../library/library.js';
@@ -53,14 +54,23 @@ export function prefabsOf(catalogue: Catalogue): Map<string, Prefab> {
  */
 export async function sendRegion(
   doc: WorldDoc,
-  rx: number,
-  rz: number,
+  region: Region,
   index: number,
   total: number,
   agentId: string,
   catalogue: Catalogue,
 ): Promise<{ jobId: string; blocks: number }> {
-  const built = materializeRegion(doc, rx, rz, prefabsOf(catalogue));
+  const { rx, rz } = region;
+  /*
+   * The region, *including its y slab*.
+   *
+   * `regionsOf` returns one entry per (rx, ry, rz) — a world taller than a single build is
+   * cut into stacked slabs — and this used to take a bare rx/rz and call `materializeRegion`
+   * with no slab at all. That silently kept the top 160 layers and dropped everything under
+   * them (`clippedY`), while the run still counted the slabs it was not sending. A tall world
+   * delivered its roof and none of its ground, and said nothing.
+   */
+  const built = materializeRegion(doc, rx, rz, prefabsOf(catalogue), region);
 
   const { id: buildId } = await saveToLibrary({
     name: `${doc.name} — region ${rx},${rz}`,
@@ -89,9 +99,13 @@ export async function sendRegion(
         rz,
         // Blocks from the world's own origin. The mod turns this by however the player rotated
         // region 0 before adding it to the anchor, so a map placed at an angle stays a map.
+        //
+        // `y` was hardcoded to zero while the materialised origin sat right there unused.
+        // Harmless while every region bottoms out at the world floor, and wrong the moment one
+        // is a slab of a tall world, where each slab starts somewhere different.
         offset: {
           x: built.stats.origin[0],
-          y: 0,
+          y: built.stats.origin[1] - doc.settings.minY,
           z: built.stats.origin[2],
         },
       },
@@ -100,18 +114,65 @@ export async function sendRegion(
 
   const body = (await response.json().catch(() => ({}))) as { id?: string; message?: string; error?: string };
   if (!response.ok) {
+    // The server distinguishes a refusal from a queue now, and its own words are the ones worth
+    // showing: "over the ceiling" and "region 0 has not said where it landed" are different
+    // problems with different answers, and both are things the user can act on.
     throw new Error(body.message ?? body.error ?? `could not queue the region (HTTP ${response.status})`);
   }
   return { jobId: body.id ?? '', blocks: built.stats.blocks };
 }
 
-/** Every region of a world, in the order they must be sent. */
-export function runOf(doc: WorldDoc): Array<{ rx: number; rz: number; index: number; total: number }> {
-  const regions = regionsOf(doc.settings);
-  return regions.map((region, index) => ({
-    rx: region.rx,
-    rz: region.rz,
-    index,
-    total: regions.length,
-  }));
+/** Every region of a world, in the order they must be sent — slabs and all. */
+export function runOf(doc: WorldDoc): Region[] {
+  return regionsOf(doc.settings);
+}
+
+/**
+ * Wait for one job to stop being in flight.
+ *
+ * The run has to be sequential and the server enforces it twice over: an agent takes one job
+ * at a time, and a region after the first is refused until region 0 reports where it landed.
+ * So sending a whole world means waiting, and the only thing that knows when a build has
+ * finished is the event stream the editor already uses for its progress bar.
+ *
+ * Resolves rather than rejects on a failed job: the caller is walking a run and needs to stop
+ * cleanly with a reason, not unwind through a throw. A stream that simply dies also resolves —
+ * pessimistically, as not-done — because a run that hangs forever on a dropped connection is
+ * worse than one that stops and says so.
+ */
+export function waitForJob(
+  jobId: string,
+  onProgress?: (placed: number, total: number) => void,
+): Promise<{ ok: boolean; status: string; error?: string }> {
+  return new Promise((resolve) => {
+    const source = new EventSource(`/api/agent/jobs/${jobId}/events`);
+    let settled = false;
+    const finish = (result: { ok: boolean; status: string; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      source.close();
+      resolve(result);
+    };
+
+    source.onmessage = (event) => {
+      const progress = JSON.parse(event.data) as {
+        status: string;
+        placed?: number;
+        total?: number;
+        error?: string;
+      };
+      if (progress.status === 'building' || progress.status === 'offered') {
+        onProgress?.(progress.placed ?? 0, progress.total ?? 0);
+        return;
+      }
+      if (progress.status === 'done') finish({ ok: true, status: progress.status });
+      else if (progress.status === 'failed' || progress.status === 'cancelled') {
+        finish({ ok: false, status: progress.status, error: progress.error });
+      }
+    };
+
+    source.onerror = () => {
+      finish({ ok: false, status: 'disconnected', error: 'lost the connection while building' });
+    };
+  });
 }

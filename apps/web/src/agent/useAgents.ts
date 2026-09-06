@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { encodeVoxels, toBase64 } from '@craftmagic/core';
 import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
 
 export interface PairedAgent {
@@ -193,7 +194,11 @@ export function useAgents(): UseAgents {
           grid: {
             size: build.grid.size,
             palette: build.grid.palette,
-            voxels: Array.from(build.grid.voxels),
+            // The same base64 ICVX blob "Save to library" has sent since the body-limit fix.
+            // This was still posting one JSON number per cell — 20 MB at the engine's own size
+            // cap against a 16 MB limit — so the stress-test sample saved fine and then 413'd on
+            // send, from the same Export bar.
+            data: toBase64(encodeVoxels(build.grid)),
           },
         }),
       });

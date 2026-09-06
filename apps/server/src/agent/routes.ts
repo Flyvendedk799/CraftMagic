@@ -790,13 +790,27 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 			}
 
 			const job = await store!.getJob(created.id, user.id);
-			const delivered = job ? await hub!.offer(job, region ?? undefined) : false;
+			const outcome = job ? await hub!.offer(job, region ?? undefined) : ({ kind: 'offline' } as const);
+
+			/*
+			 * A refusal is not a queued job, and this used to say it was.
+			 *
+			 * `offer` answered a bare boolean and both falses came back as `delivered: false`, so a
+			 * build past the agent's ceiling — or a region of a world whose first region has not
+			 * reported where it landed — was already `failed` in the database while the caller got
+			 * a 202 and printed "queued". The website then waited for progress on a job that was
+			 * never going to start. 409 rather than 400: nothing about the request was malformed,
+			 * the world simply will not take it right now.
+			 */
+			if (outcome.kind === 'refused') {
+				return reply.code(409).send({ error: 'refused', message: outcome.reason, id: created.id });
+			}
 
 			return reply.code(202).send({
 				id: created.id,
 				// A queued job for an offline world is normal, not an error — it lands when the
 				// player next starts the game.
-				delivered,
+				delivered: outcome.kind === 'delivered',
 				online: hub!.isOnline(agentId),
 			});
 		});

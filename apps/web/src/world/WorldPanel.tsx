@@ -21,6 +21,7 @@ import {
   regionStats,
   regionsOf,
   resizeWorld,
+  type Region,
   type WorldDoc,
 } from '@craftmagic/core';
 import { Section } from '../editor/Section.js';
@@ -41,13 +42,28 @@ export interface WorldPanelProps {
   onNew: () => void;
   /** Jump the map to a region. */
   onFrameRegion: (rx: number, rz: number) => void;
-  onSendRegion: (rx: number, rz: number) => void;
+  onSendRegion: (region: Region) => void;
+  /** Walk the whole run, waiting for each region — the thing a per-region button cannot do. */
+  onSendAll?: () => void;
   /** One region at a time: the run is ordered, and a second send would be refused anyway. */
   sending?: boolean;
 }
 
-/** Blocks a second the builder bot places — 400 per tick, twenty ticks. Fixed by the mod. */
-const BLOCKS_PER_SECOND = 8_000;
+/**
+ * Blocks a second the builder bot places, matching the mod's shipped default.
+ *
+ * This said 8,000 — the mod's *ceiling* of 400 a tick — while `ModConfig.buildSpeed` shipped
+ * 40, so every estimate on this panel was two hundred times optimistic and a region that
+ * really took three and a half hours read as "about a minute". The mod now defaults to 800
+ * and this is the same number, so the two can only disagree if somebody changes one and not
+ * the other.
+ *
+ * It is still a default rather than a measurement: a player who has run `/craftmagic speed`
+ * has a different number and this cannot see it. Carrying the real speed through the
+ * handshake is the honest fix and it costs a protocol field; this is the half that stops
+ * the panel being wrong by two orders of magnitude.
+ */
+const BLOCKS_PER_SECOND = 800;
 
 export function WorldPanel(props: WorldPanelProps) {
   const { doc, saved, dirty } = props;
@@ -190,7 +206,25 @@ export function WorldPanel(props: WorldPanelProps) {
       >
         <p className="world__hint">
           {stats.length} region{stats.length === 1 ? '' : 's'}, {totalBlocks.toLocaleString()} blocks —
-          about {formatDuration(totalBlocks / BLOCKS_PER_SECOND)} of building at 8,000 blocks a second.
+          about {formatDuration(totalBlocks / BLOCKS_PER_SECOND)} of building at{' '}
+          {BLOCKS_PER_SECOND.toLocaleString()} blocks a second.
+        </p>
+
+        {props.onSendAll && (
+          <div className="world__row">
+            <button
+              type="button"
+              className="world__action"
+              disabled={props.sending}
+              onClick={props.onSendAll}
+            >
+              {props.sending ? 'Building…' : 'Send the whole map'}
+            </button>
+          </div>
+        )}
+        <p className="world__hint">
+          Regions go one at a time and each waits for the last — a world is a queue, not a send.
+          Place the first one in game yourself; the rest are measured from where it lands.
         </p>
 
         <ul className="world__regions">
@@ -204,12 +238,17 @@ export function WorldPanel(props: WorldPanelProps) {
                 <span className="world__region-time">{formatDuration(entry.blocks / BLOCKS_PER_SECOND)}</span>
                 {entry.placements > 0 && <span className="world__region-places">{entry.placements} placed</span>}
                 {!entry.withinSizeCap && <span className="world__region-warn">too tall</span>}
+                {/* The cap that will actually refuse the send. Only the size cap was warned
+                    about, so the one a big region really trips said nothing at all. */}
+                {entry.withinSizeCap && !entry.withinBlockCap && (
+                  <span className="world__region-warn">too many blocks</span>
+                )}
               </button>
               <button
                 type="button"
                 className="world__mini"
                 disabled={props.sending}
-                onClick={() => props.onSendRegion(region.rx, region.rz)}
+                onClick={() => props.onSendRegion(region)}
               >
                 Send
               </button>

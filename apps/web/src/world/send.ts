@@ -70,6 +70,9 @@ export async function sendRegion(
     program: built.program,
     detached: false,
     kind: 'structure',
+    // Not in the library. It has to exist as a row so the mod can fetch it, but a region is
+    // a unit of shipping, not a thing anybody saved.
+    library: false,
   });
 
   const response = await fetch('/api/agent/jobs', {

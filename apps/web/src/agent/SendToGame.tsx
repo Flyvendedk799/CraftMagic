@@ -45,6 +45,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
     forget,
     sendToGame,
     resetSend,
+    cancelSend,
   } = useAgents();
   const [copied, setCopied] = useState(false);
 
@@ -163,7 +164,14 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
       )}
 
       {send.kind === 'saving' && <p className="agent__status">Saving the build…</p>}
-      {send.kind === 'queued' && <p className="agent__status">Sent — waiting for the world…</p>}
+      {send.kind === 'queued' && (
+        <p className="agent__status">
+          Sent — waiting for the world…{' '}
+          <button type="button" className="tools__inline" onClick={() => void cancelSend()}>
+            stop
+          </button>
+        </p>
+      )}
 
       {send.kind === 'progress' && (
         <div className="agent__status">
@@ -176,7 +184,12 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
                 <span style={{ width: `${send.total ? Math.round((send.placed / send.total) * 100) : 0}%` }} />
               </span>
             </>
-          )}
+          )}{' '}
+          {/* Stopping matters most here, once blocks are actually going down. It is a stop, not
+              an undo — what is placed stays placed — and the wording has to say so. */}
+          <button type="button" className="tools__inline" onClick={() => void cancelSend()}>
+            stop building
+          </button>
         </div>
       )}
 

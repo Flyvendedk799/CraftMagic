@@ -134,12 +134,22 @@ export function saveToLibrary(input: {
   plan?: unknown;
   /** Defaults to a structure — the thing you place, and what the editor makes. */
   kind?: BuildKind;
+  /**
+   * Whether it belongs in the library, or only needs to exist server-side.
+   *
+   * Defaults true, because saving is what this function is for. A world send is the exception:
+   * the mod fetches a build over HTTPS and the browser is not reachable from a Minecraft
+   * server, so every region has to become a row — but a sixteen-tile map would then leave
+   * sixteen permanent "— region 2,1" entries in the library, and on the component shelves as
+   * placeable structures. The `in_library` column already exists to keep exactly this out.
+   */
+  library?: boolean;
 }): Promise<{ id: string; blockCount: number }> {
   return request(
     '/api/builds',
     json('POST', {
       name: input.name,
-      library: true,
+      library: input.library ?? true,
       kind: input.kind ?? 'structure',
       detached: input.detached,
       program: input.program ?? undefined,

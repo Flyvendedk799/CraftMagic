@@ -45,6 +45,7 @@ function job(id: string, buildId: string): JobRow {
  */
 function fakeStore(blockCounts: Record<string, number>, pending: JobRow[] = []) {
 	const failures = new Map<string, string | null>();
+	let reaped = 0;
 	const store = {
 		async getBuildForAgent(id: string) {
 			if (!(id in blockCounts)) return null;
@@ -64,9 +65,15 @@ function fakeStore(blockCounts: Record<string, number>, pending: JobRow[] = []) 
 		async pendingJobsFor() {
 			return pending;
 		},
+		// A reconnect closes the books on anything that went quiet mid-build. Counted rather than
+		// stubbed away, so a test can assert the hub actually asks.
+		async reapStaleJobs() {
+			reaped++;
+			return 0;
+		},
 	} as unknown as AgentStore;
 
-	return { store, failures };
+	return { store, failures, reaped: () => reaped };
 }
 
 function fakeConnection(maxVolume = AGENT_LIMITS.maxVolume) {
@@ -216,6 +223,22 @@ describe('a world arrives in order', () => {
 
 		hub.noteJobState('job-r1', 'done');
 		expect(hub.worldAnchor('world-1')).toBeUndefined();
+	});
+});
+
+describe('a reconnect closes the books on what went quiet', () => {
+	it('reaps jobs left mid-build by a dropped socket', async () => {
+		// Nothing ever moved a job out of `building` when the connection went, so the row kept
+		// its status forever — and since that row is what answers "is this agent busy", one
+		// dropped socket made a Minecraft world permanently un-buildable with a 409. The mod has
+		// just told us what it is really doing, which is the moment the stale row is knowably
+		// stale.
+		const { store, reaped } = fakeStore({ 'build-a': 10 }, []);
+		const hub = new AgentHub(store);
+
+		expect(reaped()).toBe(0);
+		await hub.attach(fakeConnection().connection);
+		expect(reaped()).toBe(1);
 	});
 });
 

@@ -670,6 +670,10 @@ export function ArchitecturePage() {
               <button
                 key={spec.id}
                 type="button"
+                // The same stable hook the editor gives its tools, and for the reason written
+                // there: a driver that matches on the label breaks the moment the label gains a
+                // shortcut digit, which is exactly what this button already renders.
+                data-tool={spec.id}
                 aria-pressed={tool === spec.id}
                 title={`${spec.hint}  (${spec.key})`}
                 onClick={() => {

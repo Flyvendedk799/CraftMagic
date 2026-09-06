@@ -678,15 +678,61 @@ export class AgentStore {
 		return { id: rows[0]!.id };
 	}
 
+	/**
+	 * How long a job may sit in an active status without a word from the mod before it is
+	 * treated as dead.
+	 *
+	 * Generous: the mod reports progress every second while building, so a minute of silence
+	 * means the socket is gone, not that the build is slow. It has to exceed the WebSocket
+	 * heartbeat (30 s) by enough that a single missed pong does not reap a live job.
+	 */
+	private static readonly STALE_JOB_MS = 5 * 60_000;
+
+	/**
+	 * The job currently occupying an agent, if there really is one.
+	 *
+	 * Nothing ever moved a job out of `building` when the socket dropped: the row kept its
+	 * status and its last progress count forever, and because this query is what answers
+	 * "is this agent busy", the agent was then permanently 409 `agent_busy` — one dropped
+	 * connection and that Minecraft world could never be built to again. There was no timeout
+	 * and no reaper anywhere.
+	 *
+	 * So staleness is decided here, against `updated_at`, which every progress report already
+	 * touches. Reaping on read rather than on a timer is the same discipline the session table
+	 * uses for expiry: no sweep to schedule, no sweep to forget, and the check happens exactly
+	 * where the answer matters.
+	 */
 	async activeJob(agentId: string): Promise<JobRow | null> {
 		const { rows } = await this.db.query(
 			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error
 			 FROM agent_jobs
 			 WHERE agent_id = $1 AND status = ANY($2)
+			   AND updated_at > now() - ($3 || ' milliseconds')::interval
 			 ORDER BY created_at DESC LIMIT 1`,
-			[agentId, ACTIVE_JOB_STATUSES],
+			[agentId, ACTIVE_JOB_STATUSES, String(AgentStore.STALE_JOB_MS)],
 		);
 		return rows[0] ? toJob(rows[0]) : null;
+	}
+
+	/**
+	 * Mark every job that has gone quiet as failed, and say how many.
+	 *
+	 * `activeJob` already declines to count a stale row, so this is not what unblocks an agent
+	 * — it is what stops the row lying to the dashboard and the job list about a build that is
+	 * not happening. Called on reconnect, when the mod has just told us what it is really
+	 * doing.
+	 */
+	async reapStaleJobs(agentId: string): Promise<number> {
+		const { rowCount } = await this.db.query(
+			`UPDATE agent_jobs
+			    SET status = 'failed',
+			        error = COALESCE(error, 'the connection dropped while building'),
+			        updated_at = now()
+			  WHERE agent_id = $1 AND status = ANY($2)
+			    AND updated_at <= now() - ($3 || ' milliseconds')::interval`,
+			[agentId, ACTIVE_JOB_STATUSES, String(AgentStore.STALE_JOB_MS)],
+		);
+		return rowCount ?? 0;
 	}
 
 	/**

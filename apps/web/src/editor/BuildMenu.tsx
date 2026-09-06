@@ -23,6 +23,8 @@ export interface BuildOption {
   /** Shown as a group heading; options keep the order they are given within a group. */
   group: string;
   title?: string;
+  /** Samples are code, not data; everything this browser made can be forgotten. */
+  removable?: boolean;
 }
 
 export interface BuildMenuProps {
@@ -32,6 +34,7 @@ export interface BuildMenuProps {
   summary: string;
   options: readonly BuildOption[];
   onPick: (id: string) => void;
+  onForget?: (id: string) => void;
   /** Rendered inside the menu under its own heading — the file input cannot be a plain option. */
   importControl: React.ReactNode;
 }
@@ -101,17 +104,34 @@ export function BuildMenu(props: BuildMenuProps) {
             <div className="buildmenu__group" key={group.name}>
               <p className="buildmenu__grouplabel">{group.name}</p>
               {group.items.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  role="menuitem"
-                  className="buildmenu__item"
-                  aria-pressed={option.id === props.current}
-                  title={option.title ?? option.name}
-                  onClick={() => pick(option.id)}
-                >
-                  {option.name}
-                </button>
+                <div className="buildmenu__row" key={option.id}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="buildmenu__item"
+                    aria-pressed={option.id === props.current}
+                    title={option.title ?? option.name}
+                    onClick={() => pick(option.id)}
+                  >
+                    {option.name}
+                  </button>
+                  {option.removable && props.onForget && (
+                    <button
+                      type="button"
+                      className="buildmenu__forget"
+                      // Not `pick`: forgetting must not also close the menu, because the
+                      // whole point of tidying is doing it several times in a row.
+                      title={`Forget ${option.name}`}
+                      aria-label={`Forget ${option.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        props.onForget?.(option.id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           ))}

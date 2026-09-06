@@ -42,9 +42,12 @@ import { ExportBar } from '../editor/ExportBar.js';
 import { isTextEntry, useUndoKeys } from '../studio/undoKeys.js';
 import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild } from '../editor/builds.js';
+import { openGuide, openInBuild } from '../studio/handoff.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
 import { AccountPanel } from '../library/AccountPanel.js';
+import { useAuth } from '../library/auth.js';
+import { saveToLibrary } from '../library/library.js';
 import { AppNav } from '../shell/AppNav.js';
 import { alignOffsets, distributeOffsets, type Offsets } from './arrange.js';
 import { ArrangePanel } from './ArrangePanel.js';
@@ -70,7 +73,7 @@ import {
   type LayoutPlan,
   type PlanItem,
 } from './plan.js';
-import { downloadPlan, parsePlanFile } from './storage.js';
+import { downloadPlan, parsePlanFile, type SavedPlan } from './storage.js';
 import { TEMPLATES, templateById } from './templates.js';
 import { LAYOUT_TOOLS, LAYOUT_TOOL_BY_ID, layoutToolForKey, type LayoutToolId } from './toolset.js';
 import { usePlanSession } from './usePlanSession.js';
@@ -550,19 +553,21 @@ export function ArchitecturePage() {
   const handOff = useCallback(
     (where: 'editor' | 'guide') => {
       const id = registerGeneratedBuild(built.program);
-      if (where === 'editor') navigate(`/editor?build=${encodeURIComponent(id)}`);
-      else window.open(`/guide?build=${encodeURIComponent(id)}`, '_blank', 'noreferrer');
+      if (where === 'editor') navigate(openInBuild(id));
+      else window.open(openGuide(id), '_blank', 'noreferrer');
     },
     [built.program, navigate],
   );
 
-  // A finished AI pass lands in the editor, exactly like the hand-off button: the result is
-  // a generated build, not a plan, and the editor is where a generated build lives. The plan
-  // here is left untouched — it remains the drawing the refine started from.
+  // A finished AI pass lands in Build, exactly like the hand-off button: the result is a
+  // generated build, not a plan, and Build is where a generated build lives. The plan here is
+  // left untouched — it remains the drawing the refine started from. Deliberately not written
+  // back into the plan: a voxel refine cannot say which room it changed, and pretending it
+  // rewrote the drawing would be a lossy guess dressed up as a round trip.
   const onGenerated = useCallback(
     (result: GenerationResult) => {
       const id = registerGeneratedBuild(result.program);
-      navigate(`/editor?build=${encodeURIComponent(id)}`);
+      navigate(openInBuild(id));
     },
     [navigate],
   );
@@ -580,6 +585,59 @@ export function ArchitecturePage() {
     },
     [load],
   );
+
+  /**
+   * Move a browser draft into the library.
+   *
+   * Named plans live in localStorage and always have — a plan is the thing you are still
+   * working on, and the library stores finished builds. That was right until the library grew
+   * a `plan` column and the product grew a second device: a signed-in user with six named
+   * plans on a laptop has six drawings that exist nowhere else and a library that looks
+   * empty from the phone. This compiles a draft exactly as the Export bar would and saves it
+   * with its drawing, one click per plan or all at once, and never silently — an upload
+   * somebody did not ask for is how a library fills with things they cannot explain.
+   */
+  const auth = useAuth();
+  const [uploads, setUploads] = useState<Record<string, 'saving' | 'saved' | 'error'>>({});
+  const [uploadNote, setUploadNote] = useState<string | null>(null);
+
+  const saveDraftToLibrary = useCallback(
+    async (entry: SavedPlan) => {
+      setUploads((prev) => ({ ...prev, [entry.id]: 'saving' }));
+      try {
+        const compiled = compilePlan(entry.plan, library.catalogue);
+        const result = expand(compiled.program);
+        if (result.blockCount === 0) throw new Error(`"${entry.plan.name}" compiles to no blocks, so there is nothing to save.`);
+        await saveToLibrary({
+          name: entry.plan.name,
+          grid: result.grid,
+          program: compiled.program,
+          detached: false,
+          plan: entry.plan,
+          kind: 'interior',
+        });
+        setUploads((prev) => ({ ...prev, [entry.id]: 'saved' }));
+        setUploadNote(
+          compiled.warnings.length > 0
+            ? `Saved "${entry.plan.name}" to your library — with ${compiled.warnings.length} compile warning${compiled.warnings.length === 1 ? '' : 's'}; open it to check.`
+            : `Saved "${entry.plan.name}" to your library.`,
+        );
+      } catch (error) {
+        setUploads((prev) => ({ ...prev, [entry.id]: 'error' }));
+        setUploadNote((error as Error).message);
+      }
+    },
+    [library.catalogue],
+  );
+
+  const saveAllDraftsToLibrary = useCallback(async () => {
+    for (const entry of session.saved) {
+      if (uploads[entry.id] === 'saved') continue;
+      // One at a time: each is a compile, an expand and a multi-hundred-kilobyte upload, and
+      // firing six at once would only make the failures harder to attribute.
+      await saveDraftToLibrary(entry);
+    }
+  }, [session.saved, uploads, saveDraftToLibrary]);
 
   /**
    * Click a wall in the model, select the item that drew it on the plan.
@@ -864,17 +922,29 @@ export function ArchitecturePage() {
           plan={plan}
           // Everything Architecture mode compiles is the inside of a building.
           kind="interior"
-          // The guide is offered as a button below rather than as a link: it needs the compiled
-          // program registered under an id first, and doing that on every keystroke would fill
-          // the generated-build store with a hundred drafts of the same building.
+          // The guide is a verb rather than a link: it needs the compiled program registered
+          // under an id first, and doing that on every keystroke would fill the generated-build
+          // store with a hundred drafts of the same building. It used to be a button in a
+          // separate "Hand off" section, which left the Export section looking complete with
+          // the guide missing from it.
           guideHref={null}
+          onGuide={() => handOff('guide')}
           blockCount={built.blockCount}
         />
 
-        <Section id="layouter-plans" title="Plans" summary={session.dirty ? 'unsaved' : 'saved'} defaultOpen={false}>
+        {/* Titled for what these are. "Plans" with a "Save plan" button looked like account
+            storage next to a panel that really is account storage, and the difference —
+            this browser only, no sync — was one sentence in the hint. It is in the title now,
+            and the way out of a draft is a button on the draft. */}
+        <Section
+          id="layouter-plans"
+          title="Drafts (this browser only)"
+          summary={session.dirty ? 'unsaved' : 'draft saved'}
+          defaultOpen={false}
+        >
           <div className="plans__actions">
             <button type="button" onClick={session.save}>
-              Save plan
+              Save draft
             </button>
             <button type="button" onClick={() => downloadPlan(plan)}>
               Download .layout.json
@@ -897,21 +967,55 @@ export function ArchitecturePage() {
             </p>
           )}
           <p className="site-panel__hint">
-            A plan is the drawing; a schematic is the finished building. Saved plans live in this
-            browser — download one to keep it or pass it on.
+            Drafts are kept in this browser only — they do not follow your account to another
+            device. To keep a plan for good, use <strong>Save to library</strong> under Save
+            above{auth.status === 'signedIn' ? '' : ' (needs an account)'}: it stores the
+            drawing beside the compiled building, and the library&rsquo;s “Plan” button reopens
+            it here, walls still walls.
           </p>
+          {auth.status === 'signedIn' && session.saved.some((entry) => uploads[entry.id] !== 'saved') && (
+            <div className="plans__actions">
+              <button
+                type="button"
+                onClick={() => void saveAllDraftsToLibrary()}
+                disabled={Object.values(uploads).includes('saving')}
+              >
+                Save all {session.saved.length} draft{session.saved.length === 1 ? '' : 's'} to library
+              </button>
+            </div>
+          )}
+          {uploadNote && <p className="tool-rail__notice">{uploadNote}</p>}
           <ul className="plans__list">
             {session.saved.map((entry) => (
               <li key={entry.id}>
                 <button type="button" onClick={() => load(entry.plan)}>
                   {entry.name}
                 </button>
+                {auth.status === 'signedIn' && (
+                  <button
+                    type="button"
+                    className="plans__upload"
+                    title={
+                      uploads[entry.id] === 'saved'
+                        ? 'Saved to your library'
+                        : 'Compile this draft and save it to your library, drawing included'
+                    }
+                    disabled={uploads[entry.id] === 'saving' || uploads[entry.id] === 'saved'}
+                    onClick={() => void saveDraftToLibrary(entry)}
+                  >
+                    {uploads[entry.id] === 'saved'
+                      ? 'In library'
+                      : uploads[entry.id] === 'saving'
+                        ? 'Saving…'
+                        : '→ Library'}
+                  </button>
+                )}
                 <button type="button" className="plans__delete" onClick={() => session.remove(entry.id)}>
                   ×
                 </button>
               </li>
             ))}
-            {session.saved.length === 0 && <li className="plans__empty">Nothing saved yet.</li>}
+            {session.saved.length === 0 && <li className="plans__empty">No drafts yet.</li>}
           </ul>
         </Section>
 
@@ -933,23 +1037,22 @@ export function ArchitecturePage() {
             }
           />
           <p className="site-panel__hint">
-            Sends the compiled building, not the drawing — the result opens in the editor as a
-            new build, and the plan here stays exactly as you drew it.
+            Sends the compiled building, not the drawing. The refined result opens in Build as a
+            new generated build; your plan stays here exactly as you drew it, and the Architecture
+            pill brings you back to it. Save the result from Build if you want to keep it.
           </p>
         </Section>
 
         <Section id="layouter-handoff" title="Hand off" defaultOpen={false}>
           <div className="plans__actions">
             <button type="button" onClick={() => handOff('editor')} disabled={built.blockCount === 0}>
-              Open in the editor
-            </button>
-            <button type="button" onClick={() => handOff('guide')} disabled={built.blockCount === 0}>
-              Build guide
+              Open in Build
             </button>
           </div>
           <p className="site-panel__hint">
-            The editor takes the compiled building block by block — good for detailing, and a
-            one-way trip: it edits voxels, not the plan.
+            Build takes the compiled building block by block — good for detailing. It is a copy:
+            Build edits voxels, not rooms, so your drawing stays here untouched and the Architecture
+            pill brings you back to it.
           </p>
         </Section>
 

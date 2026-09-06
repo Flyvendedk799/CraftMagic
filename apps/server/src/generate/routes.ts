@@ -441,6 +441,9 @@ export function generateRoutes(options: GenerateRoutesOptions): FastifyPluginAsy
 						costUsd: result.usage.costUsd,
 						spentThisMonthUsd: spend.spentThisMonthUsd,
 						remainingUsd: spend.remainingUsd,
+						// The audit row's id, so a later "Save to library" can point the row at the
+						// build it became. `generations.build_id` sat unused for six migrations.
+						...(recordId ? { generationId: recordId } : {}),
 					});
 				} catch (err) {
 					// A provider failure is described in terms of the credential that was used, not

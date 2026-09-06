@@ -3,9 +3,12 @@
  *
  * A utility surface, not a landing page: it lives inside an existing dark panel, opens only
  * when asked for, and closes itself once it has done its job. Signed out is a supported state
- * throughout the app — the editor, generation and "send to game" all work without an account
- * — so this never blocks anything. It says what an account *adds*, which is builds that are
- * still there tomorrow.
+ * for everything that runs in the browser — the samples, the editing tools, the `.schem` and
+ * program downloads and the printable guide — so this never blocks any of that. What it must
+ * not do is imply more: generation, the library, pairing Minecraft and sending a build all
+ * need an account (see the ownership policy in the server's `auth/routes.ts`), and for a long
+ * time this file's own header claimed the opposite. The line below is the honest version, and
+ * it is on screen *before* the 401 rather than left for the console.
  */
 
 import { useCallback, useState } from 'react';
@@ -26,6 +29,17 @@ export interface AccountPanelProps {
 }
 
 type Mode = 'login' | 'register';
+
+/**
+ * What an account is for, said once and truthfully.
+ *
+ * Shown wherever a caller does not supply its own invitation. It draws the same line the
+ * server draws: everything in the browser is free to use, everything that owns server state,
+ * spends money or reaches a Minecraft world needs to belong to someone.
+ */
+export const ACCOUNT_LINE =
+  'Samples, editing, the schematic download and the printed guide work without an account. ' +
+  'Generating, saving to the library, pairing Minecraft and sending a build need one.';
 
 export function AccountPanel({
   invitation,
@@ -93,8 +107,9 @@ export function AccountPanel({
   return (
     <div className="account" data-state="anonymous">
       {/* Outside the collapsed branch: the invitation is the reason to have an account and the
-          form is only the mechanism, so it stays on screen while the form is open. */}
-      {invitation && <p className="account__note">{invitation}</p>}
+          form is only the mechanism, so it stays on screen while the form is open. A caller
+          with nothing particular to say gets the honest default rather than nothing. */}
+      <p className="account__note">{invitation ?? ACCOUNT_LINE}</p>
 
       {!open && (
         <button type="button" className="account__open" onClick={() => setOpen(true)}>

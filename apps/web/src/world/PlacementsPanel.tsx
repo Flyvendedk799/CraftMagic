@@ -12,11 +12,13 @@
  */
 
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { WorldDoc, WorldPlacement } from '@craftmagic/core';
 import { anchorY } from '@craftmagic/core';
 import { Section } from '../editor/Section.js';
 import type { BuildKind } from '../library/library.js';
 import type { ComponentLibrary, ShelfEntry } from '../library/components.js';
+import { libRef, openInBuild } from '../studio/handoff.js';
 import { placementFootprint } from './toolset.js';
 
 export interface PlacementsPanelProps {
@@ -86,8 +88,15 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
           onChange={(event) => setFilter(event.target.value)}
         />
 
+        {/* Sculpting works signed out; placing does not, because a component is a saved build
+            and the library needs an account. Both halves of that are said here, with the door,
+            rather than leaving an empty shelf to explain itself. */}
         {library.status === 'signedOut' && (
-          <p className="world__hint">Sign in to place the builds you have saved.</p>
+          <p className="world__hint">
+            The terrain tools work without an account. Placing a building needs one — components
+            are your saved builds. <Link to="/dashboard">Sign in</Link>, then save something from
+            Build or Architecture and it appears here.
+          </p>
         )}
         {library.status === 'loading' && <p className="world__hint">Loading your library…</p>}
         {library.status === 'error' && <p className="world__hint">The library could not be reached.</p>}
@@ -97,7 +106,9 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
 
         {library.status === 'ready' && shelf.length === 0 && (
           <p className="world__hint">
-            Nothing here yet. Save a build from Build or Architecture and it becomes a component.
+            Nothing saved yet. Make something in <Link to="/studio?build=empty">Build</Link> or
+            draw one in <Link to="/studio?mode=arch">Architecture</Link>, press “Save to
+            library”, and it becomes a component you can place here.
           </p>
         )}
 
@@ -227,6 +238,20 @@ function PlacementInspector({
         <div><dt>Height</dt><dd>{placement.h}</dd></div>
         <div><dt>Blocks</dt><dd>{loaded ? 'loaded' : 'not fetched yet'}</dd></div>
       </dl>
+
+      {/* The way back: a placement is a reference to a library row, and that row is what Build
+          edits. A placement whose row is gone says so rather than offering a link to a 404. */}
+      {library.failed.has(placement.buildId) ? (
+        <p className="world__hint">
+          The build this was placed from is no longer in your library, so it cannot be edited or
+          materialised — only removed.
+        </p>
+      ) : (
+        <p className="world__hint">
+          <Link to={openInBuild(libRef(placement.buildId))}>Edit the source build in Build →</Link>{' '}
+          Changes there save as a new build; re-place it here to use the new one.
+        </p>
+      )}
 
       <div className="world__row">
         <button type="button" className="world__mini" onClick={() => onDuplicate(placement.id)}>

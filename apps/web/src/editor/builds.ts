@@ -472,6 +472,17 @@ restoreMurals();
 // --- imported schematics ------------------------------------------------
 
 /**
+ * Where a voxel-only build in the import store came from.
+ *
+ * `schematic` is a `.schem` somebody opened. `region` is one materialised region of a World
+ * mode map, registered so the guide — which is reached by URL and rebuilt from a build id —
+ * has an id to name. Both are finished voxels with no recipe and share a store; the source is
+ * kept so the build menu can say which is which instead of calling a map region "imported
+ * from a schematic".
+ */
+export type ImportSource = 'schematic' | 'region';
+
+/**
  * Builds imported from `.schem` files, keyed by `schem:<n>`.
  *
  * Voxels, not a program — a schematic is a finished object with no recipe — stored exactly
@@ -479,7 +490,7 @@ restoreMurals();
  * durable home for one worth keeping. A separate store rather than a flag on murals because
  * the picker labels them differently and the caps should not fight each other.
  */
-const imports = new Map<string, { name: string; grid: VoxelGrid }>();
+const imports = new Map<string, { name: string; grid: VoxelGrid; source: ImportSource }>();
 
 export const IMPORT_PREFIX = 'schem:';
 
@@ -497,11 +508,13 @@ function persistImports(): void {
     imports.delete(oldest.value);
   }
   try {
-    const stored = [...imports.entries()].map(([id, entry]) => [
-      id,
-      entry.name,
-      base64FromBytes(encodeVoxels(entry.grid)),
-    ]);
+    // A fourth element only where the source is not the default, so entries written before
+    // regions existed stay byte-identical and an older tab reads the newer ones fine.
+    const stored = [...imports.entries()].map(([id, entry]) => {
+      const row: unknown[] = [id, entry.name, base64FromBytes(encodeVoxels(entry.grid))];
+      if (entry.source !== 'schematic') row.push(entry.source);
+      return row;
+    });
     localStorage.setItem(IMPORT_STORAGE_KEY, JSON.stringify(stored));
   } catch {
     // Out of quota, or storage blocked. The import still works for this page view.
@@ -512,16 +525,24 @@ function restoreImports(): void {
   try {
     const raw = localStorage.getItem(IMPORT_STORAGE_KEY);
     if (!raw) return;
-    for (const [id, name, encoded] of JSON.parse(raw) as [string, string, string][]) {
-      imports.set(id, { name, grid: decodeVoxels(bytesFromBase64(encoded)) });
+    for (const [id, name, encoded, source] of JSON.parse(raw) as [string, string, string, string?][]) {
+      imports.set(id, {
+        name,
+        grid: decodeVoxels(bytesFromBase64(encoded)),
+        source: source === 'region' ? 'region' : 'schematic',
+      });
     }
   } catch {
     // One unreadable file must not stop the editor from loading.
   }
 }
 
-/** Remember an imported schematic, and return the id that selects it. */
-export function registerImportedBuild(name: string, grid: VoxelGrid): string {
+/** Remember an imported schematic (or a materialised map region), and return the id that selects it. */
+export function registerImportedBuild(
+  name: string,
+  grid: VoxelGrid,
+  source: ImportSource = 'schematic',
+): string {
   restoreImports();
   let highest = 0;
   for (const id of imports.keys()) {
@@ -529,7 +550,7 @@ export function registerImportedBuild(name: string, grid: VoxelGrid): string {
     if (Number.isFinite(n) && n > highest) highest = n;
   }
   const id = `${IMPORT_PREFIX}${highest + 1}`;
-  imports.set(id, { name, grid });
+  imports.set(id, { name, grid, source });
   persistImports();
   return id;
 }
@@ -569,8 +590,8 @@ export function forgetLocalBuild(id: string): boolean {
   return removed;
 }
 
-export function importedBuilds(): { id: string; name: string }[] {
-  return [...imports.entries()].map(([id, entry]) => ({ id, name: entry.name }));
+export function importedBuilds(): { id: string; name: string; source: ImportSource }[] {
+  return [...imports.entries()].map(([id, entry]) => ({ id, name: entry.name, source: entry.source }));
 }
 
 restoreImports();

@@ -25,3 +25,4 @@ export * from './world/overlay.js';
 export * from './world/codec.js';
 export * from './world/normalize.js';
 export * from './world/region.js';
+export * from './world/delivery.js';

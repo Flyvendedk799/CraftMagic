@@ -19,6 +19,7 @@
  */
 
 import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { isBuildAnchor, type BuildAnchor, type JobRegion } from '@craftmagic/core';
 import type { Db } from '../db/pool.js';
 import type { OwnerScope } from '../auth/session.js';
 
@@ -158,6 +159,22 @@ export interface JobRow {
 	progressTotal: number;
 	anchor: unknown;
 	error: string | null;
+	/**
+	 * Which region of which world this job is, or null for a lone build.
+	 *
+	 * Persisted since migration 009 so the hub can re-learn a run after a restart rather
+	 * than refusing its remaining regions with "region 0 has not reported" — which the
+	 * database knew to be false. Stored without the anchor: that is the server's to attach
+	 * when the region is offered, from whatever region 0 reported.
+	 */
+	region: JobRegion | null;
+}
+
+/** Where region 0 of a world was built from, and how big region 0 was. */
+export interface WorldAnchorRecord {
+	anchor: BuildAnchor;
+	/** The unrotated footprint of region 0's build, for the edge-region correction. */
+	footprint: { x: number; z: number } | null;
 }
 
 export const ACTIVE_JOB_STATUSES = ['pending', 'offered', 'previewing', 'building'] as const;
@@ -233,6 +250,24 @@ export class AgentStore {
 			],
 		);
 		return rows[0]!.id;
+	}
+
+	/**
+	 * Record which saved build a generation became.
+	 *
+	 * `generations.build_id` has been in the schema since the first migration and nothing
+	 * wrote to it. The caller's ownership of both rows is in the predicate: a generation id
+	 * somebody else paid for, or a made-up one, updates zero rows and is not an error — the
+	 * save already succeeded and the link is a courtesy for support, not a condition.
+	 */
+	async linkGeneration(generationId: string, buildId: string, userId: string): Promise<boolean> {
+		const { rowCount } = await this.db.query(
+			`UPDATE generations SET build_id = $2
+			 WHERE id = $1 AND user_id = $3::uuid
+			   AND EXISTS (SELECT 1 FROM builds WHERE id = $2 AND user_id = $3::uuid)`,
+			[generationId, buildId, userId],
+		);
+		return (rowCount ?? 0) > 0;
 	}
 
 	/**
@@ -665,17 +700,55 @@ export class AgentStore {
 		buildId: string;
 		userId?: string | null;
 		total: number;
+		/** The region this job is one tile of, written down so a restart can find the run. */
+		region?: JobRegion | null;
 	}): Promise<{ id: string } | { conflict: JobRow }> {
 		const active = await this.activeJob(input.agentId);
 		if (active) return { conflict: active };
 
 		const { rows } = await this.db.query<{ id: string }>(
-			`INSERT INTO agent_jobs (agent_id, build_id, user_id, status, progress_total)
-			 VALUES ($1, $2, $3, 'pending', $4)
+			`INSERT INTO agent_jobs (agent_id, build_id, user_id, status, progress_total, region)
+			 VALUES ($1, $2, $3, 'pending', $4, $5)
 			 RETURNING id`,
-			[input.agentId, input.buildId, input.userId ?? null, input.total],
+			[
+				input.agentId,
+				input.buildId,
+				input.userId ?? null,
+				input.total,
+				// Never the anchor: the client is not trusted to say where region 0 landed
+				// (`readRegion` strips it), and the server learns it from the mod.
+				input.region ? JSON.stringify({ ...input.region, anchor: undefined }) : null,
+			],
 		);
 		return { id: rows[0]!.id };
+	}
+
+	/**
+	 * Where the latest region 0 of a world was built from, from the row rather than from memory.
+	 *
+	 * The *latest* region 0, whatever its state, and not the latest one with an anchor: a map
+	 * sent twice has two runs, and a second run's region 1 must wait for the second run's
+	 * region 0 rather than be measured from the first run's corner. A latest region 0 that has
+	 * not reported yet answers null, which is the honest "not yet".
+	 *
+	 * Joined to the build for its footprint, because a truncated edge region under a quarter
+	 * turn has to be corrected by the difference between its own extent and region 0's.
+	 */
+	async worldAnchor(worldId: string): Promise<WorldAnchorRecord | null> {
+		const { rows } = await this.db.query<{ anchor: unknown; size_x: number | null; size_z: number | null }>(
+			`SELECT j.anchor, b.size_x, b.size_z
+			 FROM agent_jobs j
+			 LEFT JOIN builds b ON b.id = j.build_id
+			 WHERE j.region->>'worldId' = $1 AND (j.region->>'index')::int = 0
+			 ORDER BY j.created_at DESC LIMIT 1`,
+			[worldId],
+		);
+		const row = rows[0];
+		if (!row || !isBuildAnchor(row.anchor)) return null;
+		return {
+			anchor: row.anchor,
+			footprint: row.size_x !== null && row.size_z !== null ? { x: row.size_x, z: row.size_z } : null,
+		};
 	}
 
 	/**
@@ -704,7 +777,7 @@ export class AgentStore {
 	 */
 	async activeJob(agentId: string): Promise<JobRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error
+			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error, region
 			 FROM agent_jobs
 			 WHERE agent_id = $1 AND status = ANY($2)
 			   AND updated_at > now() - ($3 || ' milliseconds')::interval
@@ -744,7 +817,7 @@ export class AgentStore {
 	 */
 	async getJobForAgent(id: string): Promise<JobRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error
+			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error, region
 			 FROM agent_jobs WHERE id = $1`,
 			[id],
 		);
@@ -753,7 +826,7 @@ export class AgentStore {
 
 	async getJob(id: string, userId: string): Promise<JobRow | null> {
 		const { rows } = await this.db.query(
-			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error
+			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error, region
 			 FROM agent_jobs WHERE id = $1 AND user_id = $2::uuid`,
 			[id, userId],
 		);
@@ -773,7 +846,7 @@ export class AgentStore {
 			     error           = COALESCE($6, error),
 			     updated_at      = now()
 			 WHERE id = $1
-			 RETURNING id, agent_id, build_id, status, progress_placed, progress_total, anchor, error`,
+			 RETURNING id, agent_id, build_id, status, progress_placed, progress_total, anchor, error, region`,
 			[
 				id,
 				patch.status ?? null,
@@ -786,10 +859,31 @@ export class AgentStore {
 		return rows[0] ? toJob(rows[0]) : null;
 	}
 
+	/**
+	 * How many of this account's sends actually finished, and when the last one did.
+	 *
+	 * The dashboard's onboarding finale — "send a build to Minecraft" — needs a fact that can
+	 * only be true once a bot has placed the last block, and `done` is the one status the mod
+	 * reports exactly then. Counted in SQL rather than by listing jobs: the number is all the
+	 * checklist wants, and a job list is a page this product does not have.
+	 */
+	async jobSummary(userId: string): Promise<{ successful: number; lastSuccessAt: Date | null }> {
+		const { rows } = await this.db.query<{ successful: string; last: Date | null }>(
+			`SELECT count(*) AS successful, max(updated_at) AS last
+			 FROM agent_jobs
+			 WHERE user_id = $1::uuid AND status = 'done'`,
+			[userId],
+		);
+		return {
+			successful: Number(rows[0]?.successful ?? 0),
+			lastSuccessAt: rows[0]?.last ?? null,
+		};
+	}
+
 	/** Jobs still marked in-flight from a previous process lifetime. */
 	async pendingJobsFor(agentId: string): Promise<JobRow[]> {
 		const { rows } = await this.db.query(
-			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error
+			`SELECT id, agent_id, build_id, status, progress_placed, progress_total, anchor, error, region
 			 FROM agent_jobs
 			 WHERE agent_id = $1 AND status IN ('pending','offered')
 			 ORDER BY created_at`,
@@ -845,5 +939,8 @@ function toJob(row: Record<string, unknown>): JobRow {
 		progressTotal: row.progress_total as number,
 		anchor: row.anchor,
 		error: (row.error as string | null) ?? null,
+		// jsonb comes back parsed. Ferried rather than re-validated: `readRegion` checked it on
+		// the way in, and the hub treats an unexpected shape as "not a region".
+		region: (row.region as JobRegion | null | undefined) ?? null,
 	};
 }

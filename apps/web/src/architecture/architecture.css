@@ -1167,3 +1167,16 @@
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+
+/* The way out of a browser draft: one button per plan that compiles it into the library.
+   Kept narrow so a list of six names does not become a list of six buttons. */
+.plans__list li .plans__upload {
+  flex: none;
+  white-space: nowrap;
+  color: var(--accent);
+}
+
+.plans__list li .plans__upload:disabled {
+  color: var(--muted);
+  cursor: default;
+}

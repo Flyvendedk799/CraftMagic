@@ -157,8 +157,10 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 						// no other way to learn, so it is handed to the hub before anything else
 						// happens to this frame — and only when it survives validation, since an
 						// anchor is now arithmetic the server does rather than a string it shows.
+						// The row's own region rides along so that a hub which has restarted since the
+						// job was offered still knows this frame is about region 0 of a world.
 						const anchor = isBuildAnchor(message.anchor) ? message.anchor : undefined;
-						options.hub.noteJobState(message.jobId, message.state, anchor);
+						options.hub.noteJobState(message.jobId, message.state, anchor, job.region);
 
 						const updated = await options.store.updateJob(message.jobId, {
 							status: message.state,

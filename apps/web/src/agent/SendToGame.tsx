@@ -1,14 +1,19 @@
 /**
- * "Send to game" — pair a world, then build in it.
+ * "Send to game" — pair Minecraft, then build in it.
  *
  * The pairing code is the security boundary of this whole feature, so it is shown large and
- * with the exact command to type. Anyone who can read it can attach a world to this account
- * for ten minutes; nobody who cannot read it can attach anything at all.
+ * with the exact command to type. Anyone who can read it can attach a Minecraft world to this
+ * account for ten minutes; nobody who cannot read it can attach anything at all.
+ *
+ * On the words: a paired game instance is "Minecraft" or "a Minecraft world" everywhere in the
+ * UI, never a bare "world". The studio has a World mode — a map you sculpt and place builds
+ * on — and a dashboard card called "Your worlds" that meant paired game servers was the single
+ * most frequent way for the two to be confused.
  */
 
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
+import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 import { useAgents, type PairedAgent } from './useAgents.js';
 import './agent.css';
 
@@ -20,6 +25,16 @@ export interface SendToGameProps {
    * not programs — so this only decides whether the saved row keeps its recipe.
    */
   program: BuildProgram | null;
+  /**
+   * Whether hand edits are in the grid, and the layer they live in.
+   *
+   * The transport row a send writes used to carry the composited voxels and the program but
+   * never the edit layer, so a row reopened from the database — support looking into a send,
+   * say — showed a program that no longer described its own voxels with nothing to explain the
+   * gap. "Save to library" has always sent all three; the send now does too.
+   */
+  detached?: boolean;
+  getEdits?: () => EditLayer | null;
 }
 
 function lastSeen(agent: PairedAgent): string {
@@ -32,7 +47,7 @@ function lastSeen(agent: PairedAgent): string {
   return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
 }
 
-export function SendToGame({ name, grid, program }: SendToGameProps) {
+export function SendToGame({ name, grid, program, detached = false, getEdits }: SendToGameProps) {
   const {
     agents,
     available,
@@ -46,6 +61,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
     sendToGame,
     resetSend,
     cancelSend,
+    cancelJob,
   } = useAgents();
   const [copied, setCopied] = useState(false);
 
@@ -64,23 +80,24 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
     return (
       <div className="agent">
         <p className="agent__note">
-          Unavailable — this server has no database configured, so worlds cannot be paired.
+          Unavailable — this server has no database configured, so Minecraft cannot be paired.
         </p>
       </div>
     );
   }
 
-  // A paired world is a door into somebody's real game, so it has to belong to an account.
-  // Said plainly here rather than left as a 401 in the console.
+  // A paired game is a door into somebody's real Minecraft world, so it has to belong to an
+  // account. Said plainly here rather than left as a 401 in the console.
   if (needsAccount) {
     return (
       <div className="agent">
         <p className="agent__note">
-          Pairing a world attaches it to your account, so a stranger cannot build in it.{' '}
+          Sending a build needs an account: pairing attaches your Minecraft world to it, so a
+          stranger cannot build there.{' '}
           <Link className="agent__link" to="/dashboard">
             Sign in
           </Link>{' '}
-          to pair one.
+          to pair Minecraft.
         </p>
       </div>
     );
@@ -91,11 +108,11 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
   return (
     <div className="agent">
 
-      {loading && <p className="agent__note">Looking for paired worlds…</p>}
+      {loading && <p className="agent__note">Looking for paired Minecraft…</p>}
 
       {!loading && agents.length === 0 && !pairCode && (
         <p className="agent__note">
-          No worlds paired yet. You’ll need the{' '}
+          Nothing paired yet. You’ll need the{' '}
           {/* The pairing command below does not exist until the mod is installed, so the
               first-run state has to say where to get it rather than assuming they know. */}
           <Link className="agent__link" to="/mod" target="_blank">
@@ -119,7 +136,9 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
                 className="agent__send"
                 disabled={!agent.online || busy}
                 title={agent.online ? `Build "${name}" here` : 'That world is offline — start Minecraft first'}
-                onClick={() => void sendToGame(agent.id, { name, grid, program })}
+                onClick={() =>
+                  void sendToGame(agent.id, { name, grid, program, detached, edits: getEdits?.() ?? null })
+                }
               >
                 Build here
               </button>
@@ -149,8 +168,8 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
             </button>
           </div>
           <p className="agent__note agent__note--dim">
-            Expires in 10 minutes. The world appears above once it connects. Command not
-            recognised?{' '}
+            Expires in 10 minutes. Your Minecraft world appears above once it connects. Command
+            not recognised?{' '}
             <Link className="agent__link" to="/mod" target="_blank">
               Install the mod
             </Link>
@@ -159,7 +178,7 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
         </div>
       ) : (
         <button type="button" className="agent__pair" onClick={() => void createPairCode()}>
-          Pair a world…
+          Pair Minecraft…
         </button>
       )}
 
@@ -205,6 +224,19 @@ export function SendToGame({ name, grid, program }: SendToGameProps) {
       {send.kind === 'error' && (
         <p className="agent__status agent__status--error" role="alert">
           {send.message}{' '}
+          {/* A 409 names the job in the way, and the cancel route has always been able to stop
+              it — so the honest answer to "already building something" is a button, not a
+              shrug. Stopping is not undoing: what is placed stays placed, and the label says
+              stop. */}
+          {send.conflictJobId && (
+            <button
+              type="button"
+              className="agent__link"
+              onClick={() => void cancelJob(send.conflictJobId!)}
+            >
+              Stop that build
+            </button>
+          )}{' '}
           <button type="button" className="agent__link" onClick={resetSend}>
             Dismiss
           </button>

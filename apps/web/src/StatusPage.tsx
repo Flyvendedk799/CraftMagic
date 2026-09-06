@@ -7,9 +7,10 @@ type Check = { status: 'pending' | 'ok' | 'fail'; detail: string };
 const pending: Check = { status: 'pending', detail: 'checking…' };
 
 /**
- * M0 status page. It is not a placeholder: the WebSocket round-trip here is the same
+ * The deployment checks. Not a placeholder: the WebSocket round-trip here is the same
  * upgrade path the mod uses, so loading this page against the deployed server is the
- * deployment smoke test.
+ * deployment smoke test. It is ops, not product — nothing in the app's navigation points at
+ * it, and it stopped calling itself "Milestone 0" once the product had outgrown milestones.
  */
 export function StatusPage() {
   const [api, setApi] = useState<Check>(pending);
@@ -65,13 +66,13 @@ export function StatusPage() {
       <header>
         <h1>CraftMagic</h1>
         <p className="tagline">
-          Describe a build. Get a schematic, an instruction booklet, or a bot that builds it in
-          your world.
+          Deployment checks. This page is the smoke test a deploy is judged by — the same API
+          and WebSocket round-trips the mod depends on — and nothing in the product links here.
         </p>
       </header>
 
       <section className="panel">
-        <h2>Milestone 0 — scaffold</h2>
+        <h2>Deployment checks</h2>
         <ul className="checks">
           <CheckRow label="API" check={api} />
           <CheckRow label="Agent WebSocket" check={ws} />
@@ -86,7 +87,7 @@ export function StatusPage() {
       </section>
 
       <p className="tagline" style={{ marginTop: '2rem' }}>
-        <Link to="/editor">← Back to the editor</Link>
+        <Link to="/studio">← Back to the studio</Link>
       </p>
     </main>
   );

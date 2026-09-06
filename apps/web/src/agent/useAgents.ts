@@ -1,14 +1,25 @@
 /**
- * Paired worlds, pairing codes, and sending a build into a game.
+ * Paired Minecraft worlds (agents), pairing codes, and sending a build into a game.
  *
- * The website never reaches into a Minecraft world. A world dials out, authenticates with a
+ * The website never reaches into a Minecraft world. The game dials out, authenticates with a
  * token it obtained by claiming a code the player typed, and only then can a build be queued
  * for it — which is why this hook deals in codes and job ids rather than addresses.
+ *
+ * ## What a send writes
+ *
+ * Every send POSTs a *transport row* to `/api/builds`: the mod fetches the build by id over
+ * HTTPS, and the browser is not reachable from a Minecraft server, so the build has to exist
+ * server-side first. That row is deliberately **not in the library** (`in_library` false —
+ * migration 002 exists for exactly this), because a build sent five times would otherwise be
+ * five library entries and five placeable components. So sending never clutters the library,
+ * and it also never *saves*: someone who wants the build tomorrow presses Save to library,
+ * which is a separate row with `in_library` true. The two policies are intentional and this
+ * paragraph is where they are written down.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { encodeVoxels, toBase64 } from '@craftmagic/core';
-import type { BuildProgram, VoxelGrid } from '@craftmagic/core';
+import type { BuildProgram, EditLayer, VoxelGrid } from '@craftmagic/core';
 
 export interface PairedAgent {
   id: string;
@@ -38,7 +49,17 @@ export type SendState =
   | { kind: 'queued'; jobId: string }
   | { kind: 'progress'; jobId: string; status: string; placed: number; total: number }
   | { kind: 'done'; placed: number }
-  | { kind: 'error'; message: string };
+  | {
+      kind: 'error';
+      message: string;
+      /**
+       * The job already occupying the world, when that is what refused this send.
+       *
+       * A 409 `agent_busy` names it, and the cancel route can stop it — so the UI can offer
+       * to, instead of telling someone to wait for a build they may not even have sent.
+       */
+      conflictJobId?: string;
+    };
 
 export interface UseAgents {
   agents: PairedAgent[];
@@ -61,9 +82,24 @@ export interface UseAgents {
   forget: (agentId: string) => Promise<void>;
   sendToGame: (
     agentId: string,
-    build: { name: string; grid: VoxelGrid; program: BuildProgram | null },
+    build: {
+      name: string;
+      grid: VoxelGrid;
+      program: BuildProgram | null;
+      /** True once hand edits are in the grid; carried so the transport row tells the truth. */
+      detached?: boolean;
+      /** The hand-edit layer, stored beside the program exactly as a library save stores it. */
+      edits?: EditLayer | null;
+    },
   ) => Promise<void>;
   resetSend: () => void;
+  /**
+   * Stop a job that is not this panel's own — the one a 409 said was in the way.
+   *
+   * Clears the error afterwards so the send can be tried again; the world is free the moment
+   * the mod hears the cancel, which is faster than the stale-job reaper would ever be.
+   */
+  cancelJob: (jobId: string) => Promise<void>;
   /**
    * Stop a build that is already running in the game.
    *
@@ -178,19 +214,32 @@ export function useAgents(): UseAgents {
     }
   }, [send]);
 
+  const cancelJob = useCallback(async (jobId: string) => {
+    try {
+      await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
+    } catch {
+      // The mod hears the cancel over the socket, or the reaper catches it; either way the
+      // next send is the real test.
+    }
+    setSend({ kind: 'idle' });
+  }, []);
+
   const sendToGame = useCallback<UseAgents['sendToGame']>(async (agentId, build) => {
     sourceRef.current?.close();
     setSend({ kind: 'saving' });
 
     try {
       // The build has to exist server-side before it can be sent: the mod fetches it by id
-      // over HTTPS, and the browser is not reachable from a Minecraft server.
+      // over HTTPS, and the browser is not reachable from a Minecraft server. `library` is
+      // omitted on purpose, which the server reads as false — see the module header.
       const saved = await fetch('/api/builds', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: build.name,
           program: build.program ?? undefined,
+          detached: build.detached === true,
+          edits: build.edits ?? undefined,
           grid: {
             size: build.grid.size,
             palette: build.grid.palette,
@@ -216,7 +265,18 @@ export function useAgents(): UseAgents {
       const body = await queued.json().catch(() => ({}));
 
       if (queued.status === 409) {
-        setSend({ kind: 'error', message: 'that world is already building something' });
+        // Two refusals share the status and are told apart by the body. `agent_busy` names the
+        // job in the way and can be stopped; a `refused` offer (over the ceiling, or a map
+        // region whose first region has not landed) carries the server's own sentence, which
+        // is the useful one.
+        const busy = body.error === 'agent_busy';
+        setSend({
+          kind: 'error',
+          message: busy
+            ? 'Minecraft is still building an earlier send. Wait for it to finish, or stop it and send again.'
+            : body.message ?? 'that world will not take this build right now',
+          ...(busy && typeof body.jobId === 'string' ? { conflictJobId: body.jobId } : {}),
+        });
         return;
       }
       if (!queued.ok) {
@@ -277,6 +337,7 @@ export function useAgents(): UseAgents {
     pairCode,
     send,
     cancelSend,
+    cancelJob,
     refresh,
     createPairCode,
     clearPairCode,

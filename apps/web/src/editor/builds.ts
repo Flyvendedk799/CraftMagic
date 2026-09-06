@@ -209,10 +209,25 @@ const MAX_STORED = 40;
  * Hand edits, per build id, as the overlay's storage form.
  *
  * In memory for every build — switching between samples and back keeps the edits — and
- * persisted alongside the program for generated builds, so a refresh no longer eats an
- * hour of detailing on a build that cost real money to make.
+ * persisted for every build this browser owns, so a refresh no longer eats an hour of
+ * detailing.
+ *
+ * Two stores, because the two cases have different lifetimes. A generated build's edits ride
+ * inside its own `craftmagic.generated` entry as a third tuple element, which keeps the
+ * program and the edits made against it atomic — trim one and the other goes with it. Every
+ * other local id (a sample, a mural, an imported schematic) has no such carrier, and used to
+ * have no persistence at all: `rememberEdits` wrote to the Map and then only called
+ * `persist()` `if (isGeneratedId(id))`. So the build survived a refresh and the work done to
+ * it did not, which is the worst of the two possible bugs.
+ *
+ * Library builds are excluded on purpose: the server round-trips their layer in the `edits`
+ * column, and a second local copy would be a second answer to the same question.
  */
 const edits = new Map<string, EditLayer>();
+
+const EDITS_KEY = 'craftmagic.edits';
+/** Samples are five, murals cap at four and imports at six; this is headroom, not a budget. */
+const MAX_STORED_EDITS = 24;
 
 export function editsOf(id: string): EditLayer | null {
   return edits.get(id) ?? null;
@@ -225,7 +240,51 @@ export function rememberEdits(id: string, layer: EditLayer | null): void {
   else if (had) edits.delete(id);
   else return; // Nothing stored and nothing to store — skip the localStorage write.
   if (isGeneratedId(id)) persist();
+  else if (!isLibraryId(id)) persistEdits();
 }
+
+/** The edits for ids that have no program entry of their own to ride in. */
+function persistEdits(): void {
+  try {
+    const entries: [string, EditLayer][] = [];
+    for (const [id, layer] of edits) {
+      if (isGeneratedId(id) || isLibraryId(id)) continue;
+      entries.push([id, layer]);
+    }
+    // Newest last, so the slice keeps what was touched most recently.
+    localStorage.setItem(EDITS_KEY, JSON.stringify(entries.slice(-MAX_STORED_EDITS)));
+  } catch {
+    // Storage full or blocked; the edits still work for this page view.
+  }
+}
+
+/**
+ * Read them back, tolerantly.
+ *
+ * The same rule every persisted shape in this codebase follows: a malformed entry is skipped
+ * rather than thrown on. Losing one build's edits to a corrupt record is bad; refusing to
+ * open the editor over it is worse.
+ */
+function restoreEdits(): void {
+  try {
+    const raw = localStorage.getItem(EDITS_KEY);
+    if (!raw) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+    for (const entry of parsed) {
+      if (!Array.isArray(entry) || entry.length < 2) continue;
+      const [id, layer] = entry as [unknown, unknown];
+      if (typeof id !== 'string' || typeof layer !== 'object' || layer === null) continue;
+      const blocks = (layer as { blocks?: unknown }).blocks;
+      if (!Array.isArray(blocks) || blocks.length === 0) continue;
+      edits.set(id, layer as EditLayer);
+    }
+  } catch {
+    // Unreadable storage is the same as none.
+  }
+}
+
+restoreEdits();
 
 function persist(): void {
   // Oldest first, so trimming to the cap drops the ones least likely to still be open.
@@ -476,6 +535,40 @@ export function registerImportedBuild(name: string, grid: VoxelGrid): string {
 }
 
 /** Imported schematics this browser still remembers, oldest first. */
+/**
+ * Forget a build this browser owns, and the edits made to it.
+ *
+ * Plans, worlds and library builds have all had a delete since they were written; generated
+ * builds, murals and imports only ever aged out by cap. So the one place a user accumulates
+ * work fastest — the build menu — was the one place they could not tidy. One function for all
+ * three because the caller has an id and no reason to know which store it came from.
+ *
+ * Returns whether anything was actually removed, so a caller can avoid a pointless re-render.
+ */
+export function forgetLocalBuild(id: string): boolean {
+  let removed = false;
+  if (generated.delete(id)) {
+    removed = true;
+    edits.delete(id);
+    persist();
+  }
+  if (murals.delete(id)) {
+    removed = true;
+    persistMurals();
+  }
+  if (imports.delete(id)) {
+    removed = true;
+    persistImports();
+  }
+  // A sample cannot be deleted — it is code, not data — but its edits can be, and clearing
+  // them is the only "undo everything" a sample has.
+  if (!removed && edits.delete(id)) {
+    removed = true;
+    persistEdits();
+  }
+  return removed;
+}
+
 export function importedBuilds(): { id: string; name: string }[] {
   return [...imports.entries()].map(([id, entry]) => ({ id, name: entry.name }));
 }

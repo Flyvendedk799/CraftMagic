@@ -63,6 +63,15 @@ export interface UseAgents {
     build: { name: string; grid: VoxelGrid; program: BuildProgram | null },
   ) => Promise<void>;
   resetSend: () => void;
+  /**
+   * Stop a build that is already running in the game.
+   *
+   * The route has existed since jobs did (`POST /api/agent/jobs/:id/cancel`) and nothing in
+   * this app has ever called it — so a build sent by mistake ran to completion and the only
+   * way to stop it was a command typed in Minecraft. Blocks already placed stay placed;
+   * cancelling is a stop, not an undo, and nothing here can pretend otherwise.
+   */
+  cancelSend: () => Promise<void>;
 }
 
 /** Poll while a pairing code is on screen, so the list flips to "online" without a refresh. */
@@ -144,6 +153,29 @@ export function useAgents(): UseAgents {
     sourceRef.current = null;
     setSend({ kind: 'idle' });
   }, []);
+
+  /**
+   * Stop a running build.
+   *
+   * The stream is closed first and the state cleared regardless of what the server says: a
+   * cancel that fails still means the user asked to stop watching, and leaving a progress
+   * bar creeping upward after they pressed Stop is worse than losing the last few percent
+   * of a count. The server has its own copy of the truth and the mod hears it over the
+   * socket, so nothing depends on this response.
+   */
+  const cancelSend = useCallback(async () => {
+    const jobId =
+      send.kind === 'queued' || send.kind === 'progress' ? send.jobId : null;
+    sourceRef.current?.close();
+    sourceRef.current = null;
+    setSend({ kind: 'idle' });
+    if (!jobId) return;
+    try {
+      await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
+    } catch {
+      // Already stopped watching; the mod finds out over the socket either way.
+    }
+  }, [send]);
 
   const sendToGame = useCallback<UseAgents['sendToGame']>(async (agentId, build) => {
     sourceRef.current?.close();
@@ -239,6 +271,7 @@ export function useAgents(): UseAgents {
     loading,
     pairCode,
     send,
+    cancelSend,
     refresh,
     createPairCode,
     clearPairCode,

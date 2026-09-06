@@ -46,6 +46,12 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
   // The autosave is read once, at mount. Re-reading it later would let another tab's plan
   // replace the one being edited here mid-sentence.
   const [plan, setPlan] = useState<LayoutPlan>(() => loadAutosave() ?? normalizePlan(initial()));
+  // Tracked so the unmount flush below writes the plan as it stands, not as it was when the
+  // effect was created. Assigned during render rather than in an effect: a cleanup that ran
+  // before the effect updating it would write one edit behind.
+  const planRef = useRef(plan);
+  planRef.current = plan;
+
   const historyRef = useRef<PlanHistory | null>(null);
   const history = (historyRef.current ??= new PlanHistory());
 
@@ -108,12 +114,32 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
     setSaved(deleteSaved(id));
   }, []);
 
-  // Debounced autosave. Written on the trailing edge so a drag costs one write, and cleared on
-  // unmount so a page that is navigated away from mid-drag still gets its last state out.
+  // Debounced autosave, written on the trailing edge so a drag costs one write.
   useEffect(() => {
     const timer = setTimeout(() => saveAutosave(plan), AUTOSAVE_DELAY);
     return () => clearTimeout(timer);
   }, [plan]);
+
+  /**
+   * And flush on the way out.
+   *
+   * The effect above used to carry a comment saying it did this — "cleared on unmount so a
+   * page that is navigated away from mid-drag still gets its last state out" — but
+   * `clearTimeout` is a cancel, not a flush. It threw the pending write away. The studio
+   * mounts a mode through `MODE_PAGES[mode]`, so flipping the mode pill *unmounts* this
+   * page: anything drawn in the last 500 ms before a switch was silently discarded.
+   *
+   * Its own effect with an empty dep list, not the debounce's cleanup, because that
+   * cleanup runs on every keystroke and writing there would defeat the debounce entirely.
+   * The ref is what makes it correct — a cleanup closing over `plan` would capture the
+   * value from the render that mounted, which is the empty document.
+   */
+  useEffect(
+    () => () => {
+      saveAutosave(planRef.current);
+    },
+    [],
+  );
 
   const dirty = useMemo(() => savedRevision !== fingerprint(plan), [savedRevision, plan]);
 

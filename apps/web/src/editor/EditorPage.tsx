@@ -40,6 +40,7 @@ import { chunkCounts } from './mesher.js';
 import {
   BLANK_BUILD,
   BUILD_IDS,
+  forgetLocalBuild,
   expandBuild,
   generatedBuilds,
   importedBuilds,
@@ -977,7 +978,7 @@ export function EditorPage() {
       name: BUILD_LABELS[id] ?? id,
     }));
     for (const entry of saved) {
-      options.push({ id: entry.id, group: 'Generated', name: entry.name, title: entry.name });
+      options.push({ id: entry.id, group: 'Generated', name: entry.name, title: entry.name, removable: true });
     }
     // Murals are listed apart because a picture behaves differently from a program: there is
     // nothing to resize and nothing to refine.
@@ -987,6 +988,7 @@ export function EditorPage() {
         group: 'From a picture',
         name: entry.name,
         title: `${entry.name} — built from a picture`,
+        removable: true,
       });
     }
     for (const entry of imported) {
@@ -995,6 +997,7 @@ export function EditorPage() {
         group: 'Imported',
         name: entry.name,
         title: `${entry.name} — imported from a schematic`,
+        removable: true,
       });
     }
     return options;
@@ -1210,6 +1213,15 @@ export function EditorPage() {
           summary={`${session.grid.size.x}×${session.grid.size.y}×${session.grid.size.z}`}
           options={buildOptions}
           onPick={(id) => guard({ kind: 'build', build: id })}
+          onForget={(id) => {
+            if (!forgetLocalBuild(id)) return;
+            setSaved(generatedBuilds());
+            setMurals(muralBuilds());
+            setImported(importedBuilds());
+            // Forgetting what is open would leave the editor showing a build nothing can
+            // name any more, so it falls back to the blank plot the way a bad id does.
+            if (id === buildId) guard({ kind: 'build', build: BLANK_BUILD });
+          }}
           importControl={
             <label className="plans__import" title="Open a .schem or a program .json">
               Import…

@@ -78,6 +78,12 @@ export class AgentHub {
 
 		this.connections.set(connection.agentId, connection);
 
+		// Close the books on anything that was mid-build when the socket went. The mod has just
+		// reconnected and told us what it is actually doing, so a row still claiming to be
+		// building is describing a build that stopped happening — and it would otherwise sit
+		// there forever, since nothing else ever moved a job out of an active status.
+		await this.store.reapStaleJobs(connection.agentId);
+
 		// Deliver anything queued while this agent was offline.
 		const waiting = await this.store.pendingJobsFor(connection.agentId);
 		for (const job of waiting) await this.offer(job, this.regionJobs.get(job.id));

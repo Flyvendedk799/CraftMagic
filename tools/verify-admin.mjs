@@ -57,7 +57,14 @@ try {
 
   const read = await api('GET', '/api/admin/settings', admin.cookie);
   check('an admin can read settings', read.status === 200, `HTTP ${read.status}`);
-  check('providers are offered', Array.isArray(read.body.providers) && read.body.providers.length === 2,
+  // Named rather than counted. This asserted `length === 2` and had been failing since the
+  // subscription providers were added — a count is a fact about how many things exist, which
+  // is exactly the fact that changes when someone adds one, so the check went red for the one
+  // reason that is never a bug.
+  const EXPECTED_PROVIDERS = ['anthropic', 'openai', 'claude-code', 'codex'];
+  check('every provider the settings page can choose is offered',
+    Array.isArray(read.body.providers) &&
+      EXPECTED_PROVIDERS.every((id) => read.body.providers.includes(id)),
     JSON.stringify(read.body.providers));
 
   const denied = await api('GET', '/api/admin/settings', plain.cookie);

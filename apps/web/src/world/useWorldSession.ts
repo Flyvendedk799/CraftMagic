@@ -153,6 +153,23 @@ export function useWorldSession(
     return () => clearTimeout(timer);
   }, [revision, loading]);
 
+  /**
+   * And flush on the way out, for the reason Architecture now does.
+   *
+   * `clearTimeout` cancels the pending write; it does not perform it. Switching modes
+   * within the debounce window — the studio unmounts the page to do it — dropped the last
+   * 600 ms of sculpting. Reading `docRef` at cleanup is right here where it would be wrong
+   * in the editor: the document is mutated in place and the ref points at the live one, so
+   * there is no stale-identity problem to avoid.
+   */
+  useEffect(
+    () => () => {
+      const doc = docRef.current;
+      if (doc) void saveDraft(doc);
+    },
+    [],
+  );
+
   const stamp = useCallback(() => {
     const doc = docRef.current;
     if (doc) doc.updatedAt = new Date().toISOString();

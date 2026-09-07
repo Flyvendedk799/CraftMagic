@@ -77,6 +77,78 @@ export interface Slab {
 	maxY: number;
 }
 
+/**
+ * A rectangle of regions, inclusive at both ends.
+ *
+ * A region is the unit a world is *delivered* in, and that is a fact about the block cap
+ * rather than about what anyone wants to look at: the seam between two regions is exactly
+ * where the walls of a hub's big builds fall, and a boundary you can only ever see one side of
+ * is a boundary you cannot check. So materialising takes an area, of which a single region is
+ * the 1×1 case, and every caller that wanted one region still gets one.
+ *
+ * Nothing about delivery changes. `regionsOf` still cuts the world the same way and the send
+ * run still walks it region by region; an area is a view, and an area wider than
+ * `LIMITS.maxSizeX` says so in its stats rather than being forbidden.
+ */
+export interface RegionArea {
+	rx0: number;
+	rz0: number;
+	rx1: number;
+	rz1: number;
+}
+
+/** The 1×1 area over one region — how every single-region caller reaches the area functions. */
+export function regionArea(rx: number, rz: number): RegionArea {
+	return { rx0: rx, rz0: rz, rx1: rx, rz1: rz };
+}
+
+/**
+ * An area put in order and clipped to the region grid.
+ *
+ * Both halves matter. A drag from bottom-right to top-left produces a reversed rectangle, and
+ * an area that runs off the edge of the map would otherwise materialise a strip of nothing —
+ * or, worse, quietly index columns that are not there.
+ */
+export function clampArea(settings: WorldSettings, area: RegionArea): RegionArea {
+	const counts = regionCount(settings);
+	const clamp = (value: number, max: number) => Math.max(0, Math.min(max, Math.trunc(value)));
+	const rx0 = clamp(Math.min(area.rx0, area.rx1), counts.x - 1);
+	const rx1 = clamp(Math.max(area.rx0, area.rx1), counts.x - 1);
+	const rz0 = clamp(Math.min(area.rz0, area.rz1), counts.z - 1);
+	const rz1 = clamp(Math.max(area.rz0, area.rz1), counts.z - 1);
+	return { rx0, rz0, rx1, rz1 };
+}
+
+/** How many regions an area covers. */
+export function areaCount(area: RegionArea): number {
+	return (area.rx1 - area.rx0 + 1) * (area.rz1 - area.rz0 + 1);
+}
+
+/**
+ * An area of `span` regions a side, anchored at a region and pushed back off the map's edge.
+ *
+ * Anchored rather than centred: the anchor is the region you asked for, the span grows east and
+ * south from it, and only a map edge moves it — which is a rule you can predict while clicking
+ * around a grid. Centring would make the same click mean a different rectangle depending on
+ * how close to the edge it was.
+ */
+export function spanFrom(settings: WorldSettings, rx: number, rz: number, span: number): RegionArea {
+	const counts = regionCount(settings);
+	const size = Math.max(1, Math.trunc(span));
+	const wide = Math.min(size, counts.x);
+	const deep = Math.min(size, counts.z);
+	const x0 = Math.max(0, Math.min(rx, counts.x - wide));
+	const z0 = Math.max(0, Math.min(rz, counts.z - deep));
+	return { rx0: x0, rz0: z0, rx1: x0 + wide - 1, rz1: z0 + deep - 1 };
+}
+
+/** How an area names itself: one region as `2,3`, several as `1,1–2,3`. */
+export function areaLabel(area: RegionArea): string {
+	return area.rx0 === area.rx1 && area.rz0 === area.rz1
+		? `${area.rx0},${area.rz0}`
+		: `${area.rx0},${area.rz0}\u2013${area.rx1},${area.rz1}`;
+}
+
 /** How many regions across and down. The last one in each axis is short when the map is not a
  * whole number of regions wide, which is the common case and not worth forbidding. */
 export function regionCount(settings: WorldSettings): { x: number; z: number } {
@@ -104,6 +176,31 @@ export function regionBox(
 		z,
 		w: Math.max(0, Math.min(settings.regionSize, settings.size.x - x)),
 		d: Math.max(0, Math.min(settings.regionSize, settings.size.z - z)),
+		minY: settings.minY,
+		maxY: settings.maxY,
+	};
+}
+
+/**
+ * The footprint of a whole area, clipped to the map.
+ *
+ * The union of its regions' boxes, which for a rectangle of regions is just the min corner of
+ * the first and the far edge of the last — and the far edge is the one that has to be clipped,
+ * because the last region in a row is short whenever the map is not a whole number of regions
+ * wide.
+ */
+export function areaBox(
+	settings: WorldSettings,
+	area: RegionArea,
+): { x: number; z: number; w: number; d: number; minY: number; maxY: number } {
+	const box = clampArea(settings, area);
+	const first = regionBox(settings, box.rx0, box.rz0);
+	const last = regionBox(settings, box.rx1, box.rz1);
+	return {
+		x: first.x,
+		z: first.z,
+		w: Math.max(0, last.x + last.w - first.x),
+		d: Math.max(0, last.z + last.d - first.z),
 		minY: settings.minY,
 		maxY: settings.maxY,
 	};
@@ -157,8 +254,12 @@ export function regionsOf(settings: WorldSettings): Region[] {
 }
 
 export interface RegionStats {
+	/** The min-corner region. For a single region, the region itself. */
 	rx: number;
 	rz: number;
+	/** Every region these stats cover, and how many that is. `regions` is 1 for one region. */
+	area: RegionArea;
+	regions: number;
 	/** World position of grid cell (0,0,0) — where to stand the materialised grid. */
 	origin: Vec3;
 	w: number;
@@ -203,9 +304,26 @@ export function regionStats(
 	slab?: Slab,
 	catalogue?: ReadonlyMap<string, Prefab>,
 ): RegionStats {
+	return areaStats(doc, regionArea(rx, rz), slab, catalogue);
+}
+
+/**
+ * The same reading over a rectangle of regions.
+ *
+ * Worth having on its own rather than summing the regions' stats: the y extent of an area is
+ * the union of its parts', so a quad containing one tall tower is that much taller everywhere,
+ * and `cells` — the number the viewer budgets against — is not the sum of the four.
+ */
+export function areaStats(
+	doc: WorldDoc,
+	area: RegionArea,
+	slab?: Slab,
+	catalogue?: ReadonlyMap<string, Prefab>,
+): RegionStats {
 	const { settings } = doc;
-	const box = regionBox(settings, rx, rz);
-	const extent = regionExtent(doc, rx, rz, slab, catalogue);
+	const bounds = clampArea(settings, area);
+	const box = areaBox(settings, bounds);
+	const extent = boxExtent(doc, box, slab, catalogue);
 	const sizeY = extent.maxY - extent.minY + 1;
 
 	let blocks = 0;
@@ -229,8 +347,10 @@ export function regionStats(
 	blocks += placements.blocks;
 
 	return {
-		rx,
-		rz,
+		rx: bounds.rx0,
+		rz: bounds.rz0,
+		area: bounds,
+		regions: areaCount(bounds),
 		origin: [box.x, extent.minY, box.z],
 		w: box.w,
 		d: box.d,
@@ -278,9 +398,33 @@ export function materializeRegion(
 	catalogue: ReadonlyMap<string, Prefab>,
 	slab?: Slab,
 ): MaterializedRegion {
+	return materializeArea(doc, regionArea(rx, rz), catalogue, slab);
+}
+
+/**
+ * Build a rectangle of regions into one grid.
+ *
+ * The same three passes in the same order over a wider box — which is the whole reason this is
+ * one function taking an area rather than four grids stitched together afterwards. Stitching
+ * would get the terrain right and everything interesting wrong: a building straddling a seam
+ * is written into both regions clipped, so two adjacent grids butted together draw its shared
+ * wall twice, and an overlay chunk spanning a boundary would be applied against two different
+ * y extents. Materialising the union once means the seam is not a seam.
+ *
+ * An area bigger than a legal build is allowed and reports itself as such. Nothing here is the
+ * delivery path: the send run still walks `regionsOf` one region at a time, and this is what
+ * you look at while deciding whether the run is worth starting.
+ */
+export function materializeArea(
+	doc: WorldDoc,
+	area: RegionArea,
+	catalogue: ReadonlyMap<string, Prefab>,
+	slab?: Slab,
+): MaterializedRegion {
 	const { settings } = doc;
-	const box = regionBox(settings, rx, rz);
-	const extent = regionExtent(doc, rx, rz, slab, catalogue);
+	const bounds = clampArea(settings, area);
+	const box = areaBox(settings, bounds);
+	const extent = boxExtent(doc, box, slab, catalogue);
 	const sizeY = extent.maxY - extent.minY + 1;
 	const size = { x: Math.max(box.w, 1), y: Math.max(sizeY, 1), z: Math.max(box.d, 1) };
 
@@ -288,7 +432,7 @@ export function materializeRegion(
 	const slotOf = new Map<string, number>([[AIR_BLOCK, 0]]);
 	const voxels = new Uint16Array(size.x * size.y * size.z);
 
-	/** Write in *world* coordinates; out-of-region writes are dropped, never wrapped. */
+	/** Write in *world* coordinates; out-of-area writes are dropped, never wrapped. */
 	const set = (wx: number, wy: number, wz: number, ref: string): void => {
 		const lx = wx - box.x;
 		const ly = wy - extent.minY;
@@ -423,7 +567,7 @@ export function materializeRegion(
 	const program: BuildProgram | null = components.length
 		? {
 			version: 1,
-			meta: { name: `${doc.name} — region ${rx},${rz}` },
+			meta: { name: `${doc.name} \u2014 region${areaCount(bounds) === 1 ? "" : "s"} ${areaLabel(bounds)}` },
 			size,
 			palette: {},
 			prefabs,
@@ -435,8 +579,10 @@ export function materializeRegion(
 		grid: { size, palette, voxels },
 		program,
 		stats: {
-			rx,
-			rz,
+			rx: bounds.rx0,
+			rz: bounds.rz0,
+			area: bounds,
+			regions: areaCount(bounds),
 			origin: [box.x, extent.minY, box.z],
 			w: box.w,
 			d: box.d,
@@ -504,26 +650,29 @@ interface Box {
 }
 
 /**
- * The y range a region actually needs.
+ * The y range an area actually needs.
  *
  * Computed from content — the highest ground, the highest overlay cell, the top of the tallest
  * building — rather than from the world's own bounds, because a hub sitting at y 60 in a world
  * that runs to 192 would otherwise materialise 130 layers of air per region and pay for them
  * in cells, in mesh work and in every byte that grid is ever sent over.
  *
+ * Over an area this is the union of its regions', not the maximum of their heights taken
+ * separately: one tower in the north-west corner makes the whole quad that tall, because a
+ * grid has one height. That is a real cost of viewing regions together and the stats report
+ * it, which is why the viewer budgets against `cells` rather than against region count.
+ *
  * The bottom is the world floor whenever any ground exists, since filler goes all the way
  * down; that is why the clamp when content exceeds 160 drops the *bottom*. The surface is what
  * anyone is looking at, and the deep filler is the part nobody misses.
  */
-function regionExtent(
+function boxExtent(
 	doc: WorldDoc,
-	rx: number,
-	rz: number,
+	box: Box,
 	slab: Slab | undefined,
 	catalogue: ReadonlyMap<string, Prefab> | undefined,
 ): Extent {
 	const { settings } = doc;
-	const box = regionBox(settings, rx, rz);
 	const floor = slab ? Math.max(slab.minY, settings.minY) : settings.minY;
 	const ceiling = slab ? Math.min(slab.maxY, settings.maxY) : settings.maxY;
 

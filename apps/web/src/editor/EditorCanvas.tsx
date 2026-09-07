@@ -478,9 +478,20 @@ function frameCamera(
           ? new THREE.Vector3(2.0, 0.15, 0)
           : new THREE.Vector3(1.15, 0.8, 1.35);
 
-  camera.position.copy(target).addScaledVector(offset, radius);
+  // Pushed back when the panel is narrower than it is tall, and not otherwise.
+  //
+  // `frameBox` already solves its distance against the *narrower* field of view, for the
+  // reason written on it: in a tall column the horizontal field is barely half the vertical
+  // one, so a distance chosen from the vertical alone puts the sides of the build off both
+  // edges. The automatic framing was still taking a flat multiple of the radius, which was
+  // survivable while every grid was roughly as deep as it was wide — and stopped being
+  // survivable the moment World could show three regions side by side in a portrait panel.
+  //
+  // Only ever a push back: at an aspect of 1 or wider this is 1 and the framing every page
+  // already had is untouched.
+  camera.position.copy(target).addScaledVector(offset, radius * narrowing(camera));
   if (camera instanceof THREE.PerspectiveCamera) {
-    camera.far = Math.max(2000, radius * 12);
+    camera.far = Math.max(2000, radius * 12 * narrowing(camera));
     camera.updateProjectionMatrix();
   } else if (camera instanceof THREE.OrthographicCamera) {
     frameOrtho(camera, radius * 1.35);
@@ -491,6 +502,21 @@ function frameCamera(
   } else {
     camera.lookAt(target);
   }
+}
+
+/**
+ * How much further back a camera has to sit because its viewport is narrow.
+ *
+ * One for a square or landscape panel, and greater than one as it gets taller than it is
+ * wide — the ratio of what the vertical field can see to what the horizontal field can, which
+ * is exactly the factor by which a distance solved from the vertical alone falls short.
+ * Orthographic cameras solve their own extents in `frameOrtho` and need none of this.
+ */
+function narrowing(camera: THREE.Camera): number {
+  if (!(camera instanceof THREE.PerspectiveCamera) || camera.aspect >= 1) return 1;
+  const vertical = THREE.MathUtils.degToRad(camera.fov);
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
+  return Math.tan(vertical / 2) / Math.max(1e-3, Math.tan(horizontal / 2));
 }
 
 /**

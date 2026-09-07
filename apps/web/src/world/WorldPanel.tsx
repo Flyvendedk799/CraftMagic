@@ -18,19 +18,32 @@ import { useMemo, useState } from 'react';
 import {
   WORLD_LIMITS,
   regionCount,
-  regionStats,
-  regionsOf,
+  regionSlabs,
   resizeWorld,
   type Region,
+  type RegionArea,
+  type RegionStats,
   type WorldDoc,
 } from '@craftmagic/core';
 import { Section } from '../editor/Section.js';
+import { areaHolds } from './viewArea.js';
 import type { SavedWorld } from './storage.js';
 
 export interface WorldPanelProps {
   doc: WorldDoc;
   /** Region stats are an O(columns) walk each; recomputed when this changes, not per render. */
   revision: number;
+  /**
+   * Every region, and its reading.
+   *
+   * Computed by the page rather than here, because the navigator over the map shades its cells
+   * from exactly these numbers — and two independent walks over a million columns per revision
+   * is the kind of duplication that only shows up as the map getting bigger.
+   */
+  regions: readonly Region[];
+  stats: readonly RegionStats[];
+  /** What the 3D view is showing, so the list can mark the rows that are on screen. */
+  view: RegionArea;
   saved: SavedWorld[];
   dirty: boolean;
   onRename: (name: string) => void;
@@ -91,14 +104,13 @@ export function WorldPanel(props: WorldPanelProps) {
   );
 
   const counts = regionCount(settings);
-  const regions = useMemo(() => regionsOf(settings), [settings]);
-
-  const stats = useMemo(
-    () => regions.map((region) => ({ region, stats: regionStats(doc, region.rx, region.rz, region) })),
-    [doc, props.revision, regions],
+  const slabs = useMemo(() => regionSlabs(settings), [settings]).length;
+  const rows = useMemo(
+    () => props.regions.map((region, index) => ({ region, stats: props.stats[index] })),
+    [props.regions, props.stats],
   );
 
-  const totalBlocks = stats.reduce((sum, entry) => sum + entry.stats.blocks, 0);
+  const totalBlocks = props.stats.reduce((sum, entry) => sum + entry.blocks, 0);
 
   return (
     <>
@@ -214,7 +226,7 @@ export function WorldPanel(props: WorldPanelProps) {
         defaultOpen={false}
       >
         <p className="world__hint">
-          {stats.length} region{stats.length === 1 ? '' : 's'}, {totalBlocks.toLocaleString()} blocks —
+          {rows.length} region{rows.length === 1 ? '' : 's'}, {totalBlocks.toLocaleString()} blocks —
           about {formatDuration(totalBlocks / BLOCKS_PER_SECOND)} of building at{' '}
           {BLOCKS_PER_SECOND.toLocaleString()} blocks a second.
         </p>
@@ -237,19 +249,32 @@ export function WorldPanel(props: WorldPanelProps) {
         </p>
 
         <ul className="world__regions">
-          {stats.map(({ region, stats: entry }) => (
-            <li key={region.key}>
+          {rows.map(({ region, stats: entry }) => (
+            <li
+              key={region.key}
+              /* The rows the 3D view is currently showing. The navigator over the map is where
+                 you pick an area; this is where you read the numbers for one, and without the
+                 mark the two panels describe the same world with no way to line them up. */
+              data-inview={areaHolds(props.view, region.rx, region.rz) ? 'true' : undefined}
+            >
               <button type="button" className="world__region-row" onClick={() => props.onFrameRegion(region.rx, region.rz)}>
+                {/* The slab index only when there is more than one, which is any world taller
+                    than a build may be — the default 32..192 among them. Two rows both
+                    labelled "0,0" describe different halves of the same column and give the
+                    reader nothing to tell them apart. */}
                 <span className="world__region-id">
                   {region.rx},{region.rz}
+                  {slabs > 1 && <span className="world__region-slab">·{region.ry}</span>}
                 </span>
-                <span className="world__region-blocks">{entry.blocks.toLocaleString()}</span>
-                <span className="world__region-time">{formatDuration(entry.blocks / BLOCKS_PER_SECOND)}</span>
-                {entry.placements > 0 && <span className="world__region-places">{entry.placements} placed</span>}
-                {!entry.withinSizeCap && <span className="world__region-warn">too tall</span>}
+                <span className="world__region-blocks">{entry ? entry.blocks.toLocaleString() : '—'}</span>
+                <span className="world__region-time">
+                  {entry ? formatDuration(entry.blocks / BLOCKS_PER_SECOND) : ''}
+                </span>
+                {entry && entry.placements > 0 && <span className="world__region-places">{entry.placements} placed</span>}
+                {entry && !entry.withinSizeCap && <span className="world__region-warn">too tall</span>}
                 {/* The cap that will actually refuse the send. Only the size cap was warned
                     about, so the one a big region really trips said nothing at all. */}
-                {entry.withinSizeCap && !entry.withinBlockCap && (
+                {entry && entry.withinSizeCap && !entry.withinBlockCap && (
                   <span className="world__region-warn">too many blocks</span>
                 )}
               </button>

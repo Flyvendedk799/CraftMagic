@@ -30,6 +30,7 @@ import {
   raiseDisc,
   regionCount,
   stampDisc,
+  type RegionArea,
   type TerrainBrush,
   type WorldDoc,
   type WorldPlacement,
@@ -49,6 +50,14 @@ export interface WorldMapProps {
   targetY: number;
   showRegions: boolean;
   showPlacements: boolean;
+  /**
+   * The regions the 3D view is showing.
+   *
+   * Drawn on the map because the navigator's grid and the map are the same rectangle at two
+   * scales, and a selection that exists only in the small one leaves you working out where on
+   * the big one you are actually looking. Absent draws nothing.
+   */
+  view?: RegionArea;
   selected: string | null;
   onSelect: (id: string | null) => void;
   /** A drag on a placement, live; committed by the page on release. */
@@ -432,6 +441,19 @@ export function WorldMap(props: WorldMapProps) {
             width={settings.size.x} height={settings.size.z}
             vectorEffect="non-scaling-stroke"
           />
+
+          {/* Under the region grid and over the raster: it is a claim about the map, not part
+              of it, and it must not hide the boundaries it is aligned to. */}
+          {props.view && (
+            <rect
+              className="worldmap__view"
+              x={props.view.rx0 * settings.regionSize}
+              y={props.view.rz0 * settings.regionSize}
+              width={Math.min((props.view.rx1 + 1) * settings.regionSize, settings.size.x) - props.view.rx0 * settings.regionSize}
+              height={Math.min((props.view.rz1 + 1) * settings.regionSize, settings.size.z) - props.view.rz0 * settings.regionSize}
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
 
           {regions && (
             <g className="worldmap__regions">

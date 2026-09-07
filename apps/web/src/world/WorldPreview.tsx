@@ -16,29 +16,34 @@
  */
 
 import { useMemo } from 'react';
-import { paletteColors, paletteFlags, type MaterializedRegion } from '@craftmagic/core';
+import { areaLabel, paletteColors, paletteFlags, type MaterializedRegion, type RegionArea } from '@craftmagic/core';
 import { EditorCanvas } from '../editor/EditorCanvas.js';
 
 export interface WorldPreviewProps {
   /**
-   * The region, already materialised.
+   * The area, already materialised.
    *
    * Handed in rather than computed here, because the export bar needs the same grid and two
-   * materialisations could differ — letting somebody download a region that is not the one
-   * they are looking at.
+   * materialisations could differ — letting somebody download something that is not what they
+   * are looking at.
    */
   built: MaterializedRegion;
-  region: { rx: number; rz: number };
+  /** Which regions this is. One is the ordinary case; several is the point of the feature. */
+  area: RegionArea;
+  /** Regions the cell budget refused. Said here as well as in the navigator, because this is
+      the panel that is visibly missing them. */
+  trimmed?: number;
 }
 
-export function WorldPreview({ built, region }: WorldPreviewProps) {
+export function WorldPreview({ built, area, trimmed = 0 }: WorldPreviewProps) {
   const colors = useMemo(() => paletteColors(built.grid.palette), [built.grid.palette]);
   const flags = useMemo(() => paletteFlags(built.grid.palette), [built.grid.palette]);
 
   return (
     <div
       className="world__preview"
-      data-region={`${region.rx},${region.rz}`}
+      data-region={areaLabel(area)}
+      data-regions={built.stats.regions}
       data-blocks={built.stats.blocks}
       data-unresolved={built.stats.unresolved}
       /* Placements whose box reaches into this region — the honest answer to "did that
@@ -48,9 +53,17 @@ export function WorldPreview({ built, region }: WorldPreviewProps) {
       <EditorCanvas grid={built.grid} paletteColors={colors} paletteFlags={flags} />
       <div className="world__preview-bar">
         <span>
-          Region {region.rx},{region.rz}
+          {built.stats.regions === 1 ? 'Region' : `${built.stats.regions} regions`} {areaLabel(area)}
         </span>
         <span>{built.stats.blocks.toLocaleString()} blocks</span>
+        <span className="world__preview-size">
+          {built.grid.size.x}×{built.grid.size.y}×{built.grid.size.z}
+        </span>
+        {trimmed > 0 && (
+          <span className="world__warn-inline" title="Materialising every region asked for would not fit in memory">
+            {trimmed} more asked for
+          </span>
+        )}
         {built.stats.unresolved > 0 && (
           <span className="world__warn-inline">
             {built.stats.unresolved} placement{built.stats.unresolved === 1 ? '' : 's'} still loading

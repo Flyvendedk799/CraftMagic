@@ -1,7 +1,8 @@
 /* World mode.
 
    Three columns: sculpting on the left, the map and its 3D check in the middle, the parts bin
-   and the world's own settings on the right. Architecture mode's layout with the roles swapped
+   and the world's own settings on the right. The map carries the region navigator, which is
+   what decides how much of the world the 3D check is showing. Architecture mode's layout with the roles swapped
    — a world is shaped by brushes rather than drawn by items, so the tools get the near hand
    and the document settings move across.
 
@@ -137,6 +138,15 @@
 
 /* --- the map --------------------------------------------------------------------------- */
 
+/* The map's positioning context. The navigator is anchored to the map's own corner rather
+   than to the stage's, and a bare grid item is not a containing block for it. */
+.world__mapwrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+}
+
 .worldmap {
   position: relative;
   min-width: 0;
@@ -181,6 +191,19 @@
   fill: none;
   stroke: var(--border);
   stroke-width: 2;
+}
+
+/* The rectangle the 3D view is showing. Unfilled and dashed: it is a claim about the map
+   rather than a thing on it, and a filled box over a quarter of a heightfield would wash out
+   the ground it is describing. */
+.worldmap__view {
+  fill: color-mix(in srgb, var(--accent) 10%, transparent);
+  stroke: var(--accent);
+  /* Solid where the region grid is dashed. Both are mint and both are rectangles on the same
+     lines, so line style is the only thing left to tell "the regions" from "the ones you are
+     looking at". */
+  stroke-width: 2.5;
+  pointer-events: none;
 }
 
 .worldmap__regions line {
@@ -240,7 +263,8 @@
   right: 0;
   bottom: 0;
   display: flex;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
   padding: 0.35rem 0.6rem;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -581,8 +605,14 @@
 }
 
 .world__region-id {
-  width: 3rem;
+  width: 3.6rem;
   flex: 0 0 auto;
+}
+
+/* Which y slab of the column, when a world is tall enough to have more than one. Subordinate
+   to the coordinates: it distinguishes two rows, it is not what you scan the list for. */
+.world__region-slab {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
 }
 
 .world__region-warn {
@@ -682,4 +712,203 @@
 .shelf__item[aria-pressed='true'] {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+
+/* --- the region navigator -----------------------------------------------------------------
+
+   A map of the map, floating on the top-right of the map itself. It goes here rather than on
+   the 3D view it drives because the cells *are* the map: a navigator beside the thing it
+   indexes is a legend, and one floating on the render it controls is a remote for a screen you
+   cannot see.
+
+   The grid is sized by its container rather than by its cells, so a 2×2 map and a 16×16 map
+   both fill the panel instead of one of them being a stamp in the corner. */
+
+.regionnav {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 3;
+  width: 12.5rem;
+  max-width: calc(100% - 1.2rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0.4rem;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.35);
+}
+
+/* Collapsed, it is a title bar and nothing else — the map is the thing being worked in, and a
+   navigator that cannot get out of the way is a navigator people close by resizing the window. */
+.regionnav[data-open='false'] {
+  width: auto;
+}
+
+.regionnav__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.regionnav__toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.regionnav__toggle:hover {
+  color: var(--text);
+  filter: none;
+}
+
+.regionnav__chevron {
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 120ms ease;
+}
+
+.regionnav[data-open='true'] .regionnav__chevron {
+  transform: rotate(90deg);
+}
+
+.regionnav__at {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.regionnav__grid {
+  display: grid;
+  gap: 1px;
+  /* Square cells whatever the map's aspect: a region is square, and a grid that stretched them
+     would be lying about the shape of the thing it indexes. */
+  aspect-ratio: 1;
+  padding: 2px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.regionnav__grid:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 80%, transparent);
+  outline-offset: 2px;
+}
+
+.regionnav__cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background: var(--raised);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* How much is in the region, as ink. Sixty-four cells of digits is a table, and the question a
+   grid answers is "where is the busy part" — the exact count is the tooltip's job, and the
+   Regions list's.
+
+   Neutral rather than mint, and that is the whole reason it reads: the accent is spoken for by
+   the selection, and shading the cells in it too made a grid of sixteen regions look like
+   sixteen selected ones. */
+.regionnav__fill {
+  position: absolute;
+  inset: 0;
+  background: var(--text);
+}
+
+.regionnav__cell:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  filter: none;
+}
+
+.regionnav__cell[data-view='true'] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 30%, var(--raised));
+}
+
+/* The corner a span grows from, the cell the arrows move, and the region a single-region
+   export covers. Three jobs, one cell, so it is marked apart from the rest of the selection. */
+.regionnav__cell[data-anchor='true'] {
+  box-shadow: inset 0 0 0 2px var(--bg), inset 0 0 0 3px var(--accent);
+}
+
+/* Asked for, and past the viewer's budget. Without this the panel silently disagrees with the
+   button that was just pressed. */
+.regionnav__cell[data-trimmed='true'] {
+  border-color: color-mix(in srgb, var(--pending) 70%, transparent);
+  border-style: dashed;
+}
+
+/* Too big to deliver as one build. The same fact the Regions list prints in words — and on an
+   ordinary map that is every region, so it is a mark rather than a badge: sixteen loud dots
+   would be telling you sixteen times about one property of the region size. */
+.regionnav__over {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pending) 75%, transparent);
+}
+
+.regionnav__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+}
+
+.regionnav__foot .ui-seg {
+  padding: 1px;
+}
+
+.regionnav__foot .ui-seg button {
+  padding: 0.15rem 0.35rem;
+  font-size: 0.625rem;
+}
+
+.regionnav__follow {
+  font-size: var(--text-2xs);
+}
+
+/* The rows of the Regions list that are on screen, so the list and the navigator can be read
+   against each other rather than as two unrelated accounts of the same world. */
+.world__regions li[data-inview='true'] .world__region-row {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.world__preview-size {
+  margin-left: auto;
+}
+
+@media (max-width: 900px) {
+  .regionnav {
+    width: 9.5rem;
+  }
 }

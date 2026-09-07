@@ -7,14 +7,25 @@
  * The layout is a split, and the split is the design. Terrain is sculpted from above, in the
  * map, because a brush in perspective paints an ellipse that changes size with distance and
  * hides whatever is behind the hill you are raising. The result is checked in 3D, in the same
- * renderer the editor uses, one region at a time. That is the same division of labour
- * Architecture mode draws between its plan and its model, and for the same reason.
+ * renderer the editor uses. That is the same division of labour Architecture mode draws
+ * between its plan and its model, and for the same reason.
+ *
+ * What the 3D shows is an *area* — a rectangle of regions, of which one region is the ordinary
+ * case. A region is the unit a world is delivered in, which is a fact about the engine's block
+ * cap and not about what anyone wants to look at: the seam between two regions is exactly
+ * where a hub's big builds fall, so a view that could only ever hold one was a view in which a
+ * boundary could never be checked. `materializeArea` builds the union in one pass, so a
+ * building on a seam is drawn once and whole rather than twice and clipped, and the navigator
+ * over the map is how you say which rectangle. Delivery is untouched: the send run still walks
+ * `regionsOf` one region at a time and knows nothing about any of this.
  *
  * A world can never be one `VoxelGrid` — 1024×160×1024 is 320 MB and 40,960 mesh chunks — so
  * what this page edits is a *description*: a heightfield, a sparse overlay for the caves and
- * overhangs a heightfield cannot express, and a list of placements. `materializeRegion` turns
+ * overhangs a heightfield cannot express, and a list of placements. `materializeArea` turns
  * any piece of it into an ordinary grid on demand, which is both what the preview renders and
- * what the mod will be sent.
+ * what the mod will be sent. That same arithmetic is why the viewer has a cell budget rather
+ * than a region limit: the y extent of an area is the union of its parts', so one spire makes
+ * a whole rectangle tall, and four flat regions genuinely are cheaper than one containing it.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -29,11 +40,18 @@ import {
   overlayCellIndex,
   overlayChunkFor,
   overlayChunkKey,
+  areaCount,
+  areaLabel,
+  clampArea,
   regionCount,
+  regionStats,
+  regionsOf,
   resizeWorld,
+  spanFrom,
   worldId,
   type Overlay,
   type Region,
+  type RegionArea,
   type TerrainBrush,
   type WorldPlacement,
 } from '@craftmagic/core';
@@ -41,6 +59,8 @@ import { AppNav } from '../shell/AppNav.js';
 import { useAuth } from '../library/auth.js';
 import { useComponents, type ShelfEntry } from '../library/components.js';
 import { localStore, remoteStore } from './api.js';
+import { RegionNavigator, type RegionCell } from './RegionNavigator.js';
+import { MAX_VIEW_CELLS, areaHolds, fitArea, regionOfColumn, spanOf } from './viewArea.js';
 import { useAgents } from '../agent/useAgents.js';
 import { runOf, sendRegion, waitForJob } from './send.js';
 import { WorldMap } from './WorldMap.js';
@@ -78,14 +98,21 @@ export function WorldPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<{ x: number; z: number; height: number; stratum: number } | null>(null);
   /**
-   * Which region the 3D check shows.
+   * Which regions the 3D check shows.
+   *
+   * A rectangle, not a region. A region is the unit a world is *delivered* in — a size the
+   * block cap decides — and the seam between two of them is exactly where a hub's big builds
+   * fall, so a view that could only ever hold one was a view that could never show a boundary
+   * being got right. `materializeArea` builds the union in one pass, which is what makes a
+   * building on a seam draw once and whole rather than twice and clipped.
    *
    * It follows the work by default. Sculpting at the middle of a 512² map while the viewport
    * renders the corner region is exactly the disconnection this mode exists to avoid — you get
-   * a 3D view that is technically correct and never shows what you just did. Choosing a region
-   * from the list pins it, because at that point the user has said which one they mean.
+   * a 3D view that is technically correct and never shows what you just did. Naming an area in
+   * the navigator stops the following, because at that point the user has said which one they
+   * mean.
    */
-  const [region, setRegion] = useState({ rx: 0, rz: 0 });
+  const [requestedView, setRequestedView] = useState<RegionArea>({ rx0: 0, rz0: 0, rx1: 0, rz1: 0 });
   const [pinned, setPinned] = useState(false);
   const [showRegions, setShowRegions] = useState(true);
   const [showPreview, setShowPreview] = useState(true);
@@ -487,26 +514,141 @@ export function WorldPage() {
   );
 
   /**
-   * The region on screen, materialised once and shared.
+   * Every region's own reading, computed once for the two panels that want it.
    *
-   * World had no export at all: `materializeRegion` could turn any part of a map into an
-   * ordinary grid, and `send.ts` proved it, but the only way to reach that grid was the send
-   * path — which returns early unless a paired Minecraft world is online. So a world was the
-   * one thing in the studio you could not get blocks out of without a running game server.
+   * The navigator shades its cells by block count and marks the ones past a cap; the Regions
+   * list prints the same numbers as rows. They used to be two walks over the same map, which
+   * on a 1024² world is two passes over a million columns per revision.
+   */
+  const regions = useMemo(() => regionsOf(doc.settings), [doc.settings, session.revision]);
+  const regionTable = useMemo(
+    () => regions.map((entry) => regionStats(doc, entry.rx, entry.rz, entry)),
+    // The document is mutated in place, so `revision` is the honest dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [doc, session.revision, regions],
+  );
+
+  /**
+   * The same numbers folded down to one per region *column*.
+   *
+   * A world taller than a build is cut into stacked y-slabs, so `regionsOf` returns two or
+   * more entries for every `rx,rz` — which the delivery run needs and a grid of cells does
+   * not. Reading the first of them would shade a region by its bottom 160 blocks and miss
+   * whatever stands in the slab above, so the slabs are summed and the caps OR-ed.
+   */
+  const regionCells = useMemo<RegionCell[]>(() => {
+    const byColumn = new Map<string, RegionCell>();
+    for (const entry of regionTable) {
+      const key = `${entry.rx},${entry.rz}`;
+      const cell = byColumn.get(key);
+      const over = !entry.withinSizeCap || !entry.withinBlockCap;
+      if (cell) {
+        cell.blocks += entry.blocks;
+        cell.placements = Math.max(cell.placements, entry.placements);
+        cell.overCap ||= over;
+      } else {
+        byColumn.set(key, {
+          rx: entry.rx,
+          rz: entry.rz,
+          blocks: entry.blocks,
+          placements: entry.placements,
+          overCap: over,
+        });
+      }
+    }
+    return [...byColumn.values()];
+  }, [regionTable]);
+
+  /**
+   * The area on screen, materialised once and shared.
+   *
+   * Two areas, not one, and the difference is the whole of the budget. `requestedView` is the
+   * rectangle the user asked for; `view` is what fits. A 3×3 of tall regions is 40 million
+   * cells and an 80 MB allocation, so a request that big is answered with the largest
+   * rectangle inside it that fits rather than with an error — and the navigator marks the
+   * regions that were dropped, so the panel never silently disagrees with the button just
+   * pressed.
+   *
+   * World had no export at all before this grid existed: `materializeRegion` could turn any
+   * part of a map into an ordinary grid, and `send.ts` proved it, but the only way to reach
+   * that grid was the send path — which returns early unless a paired Minecraft world is
+   * online. So a world was the one thing in the studio you could not get blocks out of without
+   * a running game server.
    */
   const counts = regionCount(doc.settings);
-  const clampedRegion = {
-    rx: Math.min(region.rx, counts.x - 1),
-    rz: Math.min(region.rz, counts.z - 1),
-  };
+  const fitted = useMemo(
+    () => fitArea(doc, requestedView),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [doc, session.revision, requestedView],
+  );
+  const view = fitted.area;
+  const inViewCount = areaCount(view);
 
   const built = useRegionGrid({
     doc,
     revision: session.revision,
-    region: clampedRegion,
+    area: view,
     catalogue: library.catalogue,
     live: !sculpting,
   });
+
+  /**
+   * Name an area and stop following.
+   *
+   * Every way into the view goes through here — the navigator, a placement's Find, a region's
+   * Find, a Send. Clamped rather than trusted: a resize can leave a stored rectangle hanging
+   * off the edge of a map that just got smaller.
+   */
+  const showArea = useCallback(
+    (area: RegionArea) => {
+      setPinned(true);
+      setRequestedView(clampArea(doc.settings, area));
+    },
+    [doc.settings],
+  );
+
+  /**
+   * Pull the request back onto the map when the map gets smaller.
+   *
+   * `fitArea` clamps what is *shown*, so the 3D view is never wrong — but the request is what
+   * the navigator draws its anchor from and what the span buttons grow from, and a shrink from
+   * 1024² to 256² leaves a rectangle sitting off the edge of a grid that no longer has those
+   * cells. Corrected here rather than inside the clamp, because the request is state and the
+   * fit is a derivation of it.
+   */
+  useEffect(() => {
+    const clamped = clampArea(doc.settings, requestedView);
+    if (
+      clamped.rx0 !== requestedView.rx0 || clamped.rz0 !== requestedView.rz0 ||
+      clamped.rx1 !== requestedView.rx1 || clamped.rz1 !== requestedView.rz1
+    ) {
+      setRequestedView(clamped);
+    }
+  }, [doc.settings, session.revision, requestedView]);
+
+  /**
+   * What the export controls say they cover.
+   *
+   * Three separate facts, and leaving any of them out has bitten before: which regions, that
+   * it is not the whole map, and whether the result is small enough to be a legal build. The
+   * last one is not hypothetical even for a single region — a full 128² region of ordinary
+   * ground is over half a million blocks, which is already past the cap.
+   */
+  const exportName = `${doc.name} — region${inViewCount === 1 ? '' : 's'} ${areaLabel(view)}`;
+  const scopeNote =
+    `Covers the ${inViewCount === 1 ? 'region' : `${inViewCount} regions`} on screen ` +
+    `(${areaLabel(view)}) — not the whole map. ` +
+    (built.stats.withinSizeCap && built.stats.withinBlockCap
+      ? ''
+      : 'This area is past what one build may hold, so a schematic or a send may be refused; ' +
+        'view a single region to export it on its own. ') +
+    'To deliver every region in order, use “Send the whole map” under Regions.';
+
+  /** Frame one region, keeping whatever span is in use. */
+  const showRegion = useCallback(
+    (rx: number, rz: number) => showArea(spanFrom(doc.settings, rx, rz, spanOf(requestedView))),
+    [showArea, doc.settings, requestedView],
+  );
 
   return (
     /* The `data-` attributes are the same affordance `.editor` uses for `data-remaining`: a
@@ -520,6 +662,8 @@ export function WorldPage() {
       data-revision={session.revision}
       data-draft={session.draftRevision}
       data-tool={tool}
+      data-view={areaLabel(view)}
+      data-view-regions={inViewCount}
       data-hover-x={hover?.x}
       data-hover-z={hover?.z}
       data-hover-height={hover?.height}
@@ -596,9 +740,9 @@ export function WorldPage() {
                     type="button"
                     className="ui-btn"
                     onClick={() => setPinned(false)}
-                    title="Let the 3D view follow where you are working"
+                    title="Let the 3D view follow where you are working again"
                   >
-                    Unpin {region.rx},{region.rz}
+                    Following off · {areaLabel(view)}
                   </button>
                 </>
               )}
@@ -617,6 +761,9 @@ export function WorldPage() {
           </div>
 
           <div className="world__split" data-preview={showPreview ? 'true' : 'false'}>
+            {/* The map and the navigator share a positioning context, because the navigator is
+                anchored to the map's own top-right corner and not to the stage's. */}
+            <div className="world__mapwrap">
             <WorldMap
               doc={doc}
               revision={session.revision}
@@ -649,16 +796,33 @@ export function WorldPage() {
               }}
               onEdited={(x, z) => {
                 if (pinned) return;
-                setRegion({
-                  rx: Math.floor(x / doc.settings.regionSize),
-                  rz: Math.floor(z / doc.settings.regionSize),
-                });
+                const at = regionOfColumn(doc.settings.regionSize, x, z);
+                // Only when the work has left the rectangle. Re-anchoring on every stroke would
+                // make a 2×2 view slide sideways the moment a brush crossed a boundary, which
+                // is the opposite of what viewing regions together is for.
+                if (areaHolds(requestedView, at.rx, at.rz)) return;
+                setRequestedView(spanFrom(doc.settings, at.rx, at.rz, spanOf(requestedView)));
               }}
               onHover={setHover}
+              view={view}
             />
 
+            {/* Over the map rather than over the 3D view, because the cells *are* the map: a
+                navigator beside the thing it indexes is a legend, and one floating on the
+                render it drives is a remote control for a screen you cannot see. */}
+            <RegionNavigator
+              settings={doc.settings}
+              cells={regionCells}
+              view={view}
+              requested={requestedView}
+              onView={showArea}
+              following={!pinned}
+              onFollowing={(follow) => setPinned(!follow)}
+            />
+            </div>
+
             {showPreview && (
-              <WorldPreview built={built} region={clampedRegion} />
+              <WorldPreview built={built} area={view} trimmed={fitted.dropped} />
             )}
           </div>
         </main>
@@ -691,11 +855,8 @@ export function WorldPage() {
               setSelected(copy.id);
             }}
             onFrame={(placement) => {
-              setPinned(true);
-              setRegion({
-                rx: Math.floor(placement.x / doc.settings.regionSize),
-                rz: Math.floor(placement.z / doc.settings.regionSize),
-              });
+              const at = regionOfColumn(doc.settings.regionSize, placement.x, placement.z);
+              showRegion(at.rx, at.rz);
               setSelected(placement.id);
             }}
           />
@@ -703,6 +864,9 @@ export function WorldPage() {
           <WorldPanel
             doc={doc}
             revision={session.revision}
+            regions={regions}
+            stats={regionTable}
+            view={view}
             saved={session.saved}
             dirty={session.dirty}
             onRename={session.rename}
@@ -716,51 +880,47 @@ export function WorldPage() {
             }}
             onRemove={session.remove}
             onNew={() => session.open(createWorld())}
-            onFrameRegion={(rx, rz) => {
-              setPinned(true);
-              setRegion({ rx, rz });
-            }}
+            onFrameRegion={(rx, rz) => showRegion(rx, rz)}
             onSendRegion={(region) => {
-              setPinned(true);
-              setRegion({ rx: region.rx, rz: region.rz });
+              // Named exactly, not framed with whatever span is in use: a send is about one
+              // region, and the list row you pressed is the one it is about.
+              showArea({ rx0: region.rx, rz0: region.rz, rx1: region.rx, rz1: region.rz });
               void send(region);
             }}
             onSendAll={() => void sendAll()}
             sending={sending}
           />
 
-          {/* The same export bar Build and Architecture use, over the region on screen.
+          {/* The same export bar Build and Architecture use, over exactly what is on screen.
 
               A world had no way out except a paired, online Minecraft server — the one thing in
-              the studio you could not get blocks out of. It is scoped to a region rather than
-              the whole map on purpose: a region *is* an ordinary build, which is why the
-              schematic writer, the guide and the library all take one without knowing worlds
-              exist, and a whole map is not a thing any of those formats can hold. That scope
-              used to live only in this comment; `scopeNote` puts it where the buttons are. */}
+              the studio you could not get blocks out of. It is scoped to what the 3D view shows
+              rather than to the whole map on purpose: that grid *is* an ordinary build, which is
+              why the schematic writer, the guide and the library all take one without knowing
+              worlds exist, and a whole map is not a thing any of those formats can hold.
+
+              What you see is what you get, spans included: exporting the view rather than a
+              region means a 2×2 downloads as the quad you were looking at, seams and all. The
+              note says which regions that is, and says so again when the area is past what a
+              single build may hold — the same warning the Regions list already gives a region
+              that is too big on its own. */}
           <ExportBar
             grid={built.grid}
             program={built.program}
-            name={`${doc.name} — region ${clampedRegion.rx},${clampedRegion.rz}`}
+            name={exportName}
             detached={false}
-            // The guide is reached by URL and rebuilt from a build id, and a materialised region
-            // has none until asked for. Asking registers the region's blocks the way an opened
-            // `.schem` is registered — a voxel build this browser remembers — and opens the guide
-            // on that id. Done on click rather than on every stroke, or the store would fill with
+            // The guide is reached by URL and rebuilt from a build id, and a materialised area
+            // has none until asked for. Asking registers its blocks the way an opened `.schem`
+            // is registered — a voxel build this browser remembers — and opens the guide on that
+            // id. Done on click rather than on every stroke, or the store would fill with
             // drafts of the same hill.
             guideHref={null}
             onGuide={() => {
-              const id = registerImportedBuild(
-                `${doc.name} — region ${clampedRegion.rx},${clampedRegion.rz}`,
-                built.grid,
-                'region',
-              );
+              const id = registerImportedBuild(exportName, built.grid, 'region');
               window.open(openGuide(id), '_blank', 'noreferrer');
             }}
-            scopeNote={
-              `Covers the region on screen (${clampedRegion.rx},${clampedRegion.rz}) only — not the whole map. ` +
-              'To deliver every region in order, use “Send the whole map” under Regions.'
-            }
-            sendTitle="Send this region to game"
+            scopeNote={scopeNote}
+            sendTitle={inViewCount === 1 ? 'Send this region to game' : 'Send this view to game'}
             blockCount={built.stats.blocks}
           />
           </div>

@@ -23,12 +23,19 @@ import { AIR_BLOCK, LIMITS, voxelIndex, type VoxelGrid } from '../ir/types.js';
 import { OverlayEditor } from './overlay.js';
 import {
 	anchorY,
+	areaBox,
+	areaCount,
+	areaLabel,
+	areaStats,
+	clampArea,
+	materializeArea,
 	materializeRegion,
 	regionBox,
 	regionCount,
 	regionSlabs,
 	regionStats,
 	regionsOf,
+	spanFrom,
 } from './region.js';
 import { WORLD_WATER } from './strata.js';
 import { columnIndex, createTerrain } from './terrain.js';
@@ -477,6 +484,135 @@ describe('an overlay chunk straddling a boundary', () => {
 		expect(blockAt(east.grid, 0, 4, 2)).toBe(AIR_BLOCK);
 		expect(blockAt(east.grid, 1, 4, 2)).toBe(AIR_BLOCK);
 		expect(blockAt(east.grid, 2, 4, 2)).toBe('minecraft:stone');
+	});
+});
+
+describe('an area of regions', () => {
+	/**
+	 * The same 32×16 world the seam tests use: region size 16, a four-wide prefab at x=14 on
+	 * flat ground, so it covers x 14..17 and falls across the boundary between region 0 and
+	 * region 1. Materialising the two separately is what the tests above assert. Materialising
+	 * the *area* has to put the building back together — that is the entire point of the
+	 * feature, and it is the one thing stitching two grids side by side could not do.
+	 */
+	const row = rowPrefab([
+		'minecraft:stone', 'minecraft:dirt', 'minecraft:sand', 'minecraft:bricks',
+	]);
+	const catalogue = new Map([['row', row]]);
+
+	const world = worldOf({ size: { x: 32, z: 16 }, seaLevel: 0, maxY: 32, regionSize: 16 });
+	world.terrain.height.fill(2);
+	world.placements = [placement({ x: 14, z: 4, w: 4 })];
+
+	it('spans both regions in one grid', () => {
+		const { grid, stats } = materializeArea(world, { rx0: 0, rz0: 0, rx1: 1, rz1: 0 }, catalogue);
+		expect(grid.size.x).toBe(32);
+		expect(stats.regions).toBe(2);
+		expect(stats.origin[0]).toBe(0);
+		expect(stats.area).toEqual({ rx0: 0, rz0: 0, rx1: 1, rz1: 0 });
+	});
+
+	it('draws a build across the seam whole, and counts it once', () => {
+		const { grid, stats } = materializeArea(world, { rx0: 0, rz0: 0, rx1: 1, rz1: 0 }, catalogue);
+		// All four cells in a row, in world coordinates, with no repeat at the boundary.
+		expect(blockAt(grid, 14, 3, 4)).toBe('minecraft:stone');
+		expect(blockAt(grid, 15, 3, 4)).toBe('minecraft:dirt');
+		expect(blockAt(grid, 16, 3, 4)).toBe('minecraft:sand');
+		expect(blockAt(grid, 17, 3, 4)).toBe('minecraft:bricks');
+		expect(blockAt(grid, 18, 3, 4)).toBe(AIR_BLOCK);
+		// One placement, not the two that summing the regions' stats would report.
+		expect(stats.placements).toBe(1);
+	});
+
+	it('carves a tunnel across the seam in one pass', () => {
+		const bored = worldOf({ size: { x: 32, z: 16 }, seaLevel: 0, maxY: 32, regionSize: 16 });
+		bored.terrain.height.fill(8);
+		const editor = new OverlayEditor();
+		editor.fill({ x: 14, y: 4, z: 2 }, { x: 17, y: 4, z: 2 }, AIR_BLOCK);
+		bored.overlay = editor.commit();
+
+		const { grid, stats } = materializeArea(bored, { rx0: 0, rz0: 0, rx1: 1, rz1: 0 }, new Map());
+		expect(stats.carves).toBe(4);
+		for (let x = 14; x <= 17; x++) expect(blockAt(grid, x, 4, 2)).toBe(AIR_BLOCK);
+		expect(blockAt(grid, 13, 4, 2)).toBe('minecraft:stone');
+		expect(blockAt(grid, 18, 4, 2)).toBe('minecraft:stone');
+	});
+
+	it('is the same grid as the region when the area is one region', () => {
+		const one = materializeArea(world, { rx0: 1, rz0: 0, rx1: 1, rz1: 0 }, catalogue);
+		const region = materializeRegion(world, 1, 0, catalogue);
+		expect(one.grid.size).toEqual(region.grid.size);
+		expect(one.grid.voxels).toEqual(region.grid.voxels);
+		expect(one.stats.blocks).toBe(region.stats.blocks);
+		expect(one.stats.regions).toBe(1);
+	});
+
+	it('takes the union of its regions\' heights, not their maximum apart', () => {
+		// A tower in the west only. The eastern region alone is short; the pair is as tall as
+		// the tower, because a grid has one height — which is the cost the viewer budgets for.
+		const tall = worldOf({ size: { x: 32, z: 16 }, seaLevel: 0, maxY: 60, regionSize: 16 });
+		tall.terrain.height.fill(2);
+		tall.terrain.height[columnIndex(tall.settings, 4, 4)] = 40;
+
+		const east = materializeRegion(tall, 1, 0, new Map());
+		const both = materializeArea(tall, { rx0: 0, rz0: 0, rx1: 1, rz1: 0 }, new Map());
+		expect(east.grid.size.y).toBe(3);
+		expect(both.grid.size.y).toBe(41);
+		expect(both.stats.cells).toBe(32 * 41 * 16);
+	});
+
+	it('reports an area too wide to be a legal build rather than refusing it', () => {
+		// 32 wide is fine; the point is that the flag tracks the area's own size, so the caller
+		// can say "this is a view, not an export" instead of the materialiser deciding.
+		const wide = worldOf({ size: { x: 640, z: 16 }, seaLevel: 0, maxY: 32, regionSize: 128 });
+		wide.terrain.height.fill(2);
+		const area = { rx0: 0, rz0: 0, rx1: 4, rz1: 0 };
+		expect(materializeArea(wide, area, new Map()).stats.withinSizeCap).toBe(false);
+		expect(materializeRegion(wide, 0, 0, new Map()).stats.withinSizeCap).toBe(true);
+	});
+
+	it('agrees with the materialised grid about how many cells it is', () => {
+		const area = { rx0: 0, rz0: 0, rx1: 1, rz1: 0 };
+		const built = materializeArea(world, area, catalogue);
+		expect(areaStats(world, area, undefined, catalogue).cells).toBe(built.stats.cells);
+		expect(areaStats(world, area, undefined, catalogue).sizeY).toBe(built.grid.size.y);
+	});
+});
+
+describe('area arithmetic', () => {
+	const settings = worldOf({ size: { x: 40, z: 20 }, regionSize: 16 }).settings; // 3×2 regions
+
+	it('orders a backwards drag and clips it to the map', () => {
+		expect(clampArea(settings, { rx0: 2, rz0: 1, rx1: 0, rz1: 0 })).toEqual({
+			rx0: 0, rz0: 0, rx1: 2, rz1: 1,
+		});
+		expect(clampArea(settings, { rx0: -4, rz0: -1, rx1: 9, rz1: 7 })).toEqual({
+			rx0: 0, rz0: 0, rx1: 2, rz1: 1,
+		});
+	});
+
+	it('clips the far edge of an area to the map, like a single region', () => {
+		// The last column is 40 - 32 = 8 wide, so a 3-wide area is 40 across and not 48.
+		expect(areaBox(settings, { rx0: 0, rz0: 0, rx1: 2, rz1: 1 })).toMatchObject({
+			x: 0, z: 0, w: 40, d: 20,
+		});
+		expect(areaBox(settings, { rx0: 1, rz0: 1, rx1: 2, rz1: 1 })).toMatchObject({
+			x: 16, z: 16, w: 24, d: 4,
+		});
+	});
+
+	it('anchors a span and pushes it back off the edge rather than off the map', () => {
+		expect(spanFrom(settings, 0, 0, 2)).toEqual({ rx0: 0, rz0: 0, rx1: 1, rz1: 1 });
+		// Anchored at the last column, a 2-wide span shifts west instead of hanging over.
+		expect(spanFrom(settings, 2, 1, 2)).toEqual({ rx0: 1, rz0: 0, rx1: 2, rz1: 1 });
+		// A span larger than the map is the whole map, not a clipped rectangle off one corner.
+		expect(spanFrom(settings, 2, 1, 9)).toEqual({ rx0: 0, rz0: 0, rx1: 2, rz1: 1 });
+		expect(areaCount(spanFrom(settings, 0, 0, 3))).toBe(6);
+	});
+
+	it('names one region plainly and several as a range', () => {
+		expect(areaLabel({ rx0: 2, rz0: 3, rx1: 2, rz1: 3 })).toBe('2,3');
+		expect(areaLabel({ rx0: 0, rz0: 1, rx1: 2, rz1: 3 })).toBe('0,1\u20132,3');
 	});
 });
 

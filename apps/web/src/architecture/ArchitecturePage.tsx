@@ -698,14 +698,25 @@ export function ArchitecturePage() {
       <AppNav current="architecture" />
 
       <section className="hud arch__panel">
-        <h1 className="hud__title">Architecture</h1>
-        <p className="hud__sub">Rooms, storeys and what goes in them</p>
+        {/* The title stays put while the column scrolls. Nine sections is a long way past a
+            heading, and this column and World's look alike enough that losing the name of the
+            one you are in is a real cost. */}
+        <header className="arch__head">
+          <h1 className="ui-dock__title">Architecture</h1>
+          <p className="ui-dock__sub">Rooms, storeys and what goes in them</p>
+        </header>
 
-        <div className="hud__actions">
+        <div className="arch__body">
+        {/* Templates. They were a bare row of buttons above the tool rail, which read as five
+            more tools — and each one silently replaces everything drawn. The eyebrow says
+            what they are, and the hover says what each one contains. */}
+        <p className="ui-eyebrow">Start from</p>
+        <div className="arch__templates">
           {TEMPLATES.map((template) => (
             <button
               key={template.id}
               type="button"
+              className="ui-btn"
               title={template.description}
               onClick={() => load(template.build())}
             >
@@ -750,10 +761,10 @@ export function ArchitecturePage() {
           </p>
 
           <div className="tool-rail__history">
-            <button type="button" onClick={session.undo} disabled={!session.canUndo}>
+            <button type="button" className="ui-btn" onClick={session.undo} disabled={!session.canUndo}>
               Undo
             </button>
-            <button type="button" onClick={session.redo} disabled={!session.canRedo}>
+            <button type="button" className="ui-btn" onClick={session.redo} disabled={!session.canRedo}>
               Redo
             </button>
           </div>
@@ -1062,6 +1073,7 @@ export function ArchitecturePage() {
 
         {/* The editor and the dashboard were listed here. Both are one click away in the bar
             above now, and a link that repeats one already on screen is furniture. */}
+        </div>
       </section>
 
       <div className="arch__plan">
@@ -1083,6 +1095,19 @@ export function ArchitecturePage() {
           onNotice={setNotice}
           onHover={setHover}
         />
+
+        {/* An empty plan used to be an empty grey rectangle with a grid on it, which says
+            nothing about what the rectangle is for. Pointer-transparent, so it never gets in
+            the way of the first drag — which is also what dismisses it. */}
+        {countItems(plan) === 0 && (
+          <div className="arch__plan-empty">
+            <p className="arch__plan-empty__title">Nothing drawn yet</p>
+            <p className="arch__plan-empty__body">
+              Pick <strong>Room</strong> and drag out a rectangle, or start from one of the
+              templates on the left.
+            </p>
+          </div>
+        )}
 
         <aside className="hover-readout arch__readout">
           {hover ? (
@@ -1126,7 +1151,7 @@ export function ArchitecturePage() {
           {/* Three ways to look at the same building, not a checkbox: "cut at this storey"
               only ever answered one of the three questions people actually have, and the two
               it did not answer are the ones a plan with more than one room raises. */}
-          <span className="model-modes" role="group" aria-label="How much of the building to show">
+          <span className="ui-seg model-modes" role="group" aria-label="How much of the building to show">
             {MODEL_MODES.map((entry) => (
               <button
                 key={entry.id}

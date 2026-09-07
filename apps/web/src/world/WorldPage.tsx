@@ -528,11 +528,16 @@ export function WorldPage() {
       <AppNav current="world" />
 
       <div className="world__body">
+        {/* Two docks, each a card with its own sticky title. They used to be bare columns of
+            sections sitting straight on the page background, which is what made this mode
+            read as a different application from the two it shares a switcher with — every
+            other surface in the studio puts its controls on a panel. */}
         <aside className="world__dock world__dock--left">
           <header className="world__dock-head">
-            <h1 className="hud__title">World</h1>
-            <p className="hud__sub">Sculpt the ground, then place what you have built</p>
+            <h1 className="ui-dock__title">World</h1>
+            <p className="ui-dock__sub">Sculpt the ground, then place what you have built</p>
           </header>
+          <div className="world__dock-body">
           <TerrainPanel
             settings={doc.settings}
             tool={tool}
@@ -546,32 +551,67 @@ export function WorldPage() {
             hover={hover}
             onShowHelp={() => setHelp(true)}
           />
+          </div>
         </aside>
 
         <main className="world__stage">
+          {/* The stage's own strip of chrome. One `ui-bar` group rather than five loose
+              controls wearing whatever the global button rule gave them: history, then what
+              the map draws, then what the 3D view is following. The notice is a chip beside
+              them rather than a run of text in the middle of the row, because it comes and
+              goes and a row that reflows every time something is saved is unusable. */}
           <div className="world__stage-bar">
-            <button type="button" className="world__mini" onClick={session.undo} disabled={!session.canUndo}>
-              Undo
-            </button>
-            <button type="button" className="world__mini" onClick={session.redo} disabled={!session.canRedo}>
-              Redo
-            </button>
-            <label className="world__toggle">
-              <input type="checkbox" checked={showRegions} onChange={(e) => setShowRegions(e.target.checked)} />
-              Regions
-            </label>
-            <label className="world__toggle">
-              <input type="checkbox" checked={showPreview} onChange={(e) => setShowPreview(e.target.checked)} />
-              3D
-            </label>
-            {pinned && (
-              <button type="button" className="world__mini" onClick={() => setPinned(false)} title="Let the 3D view follow where you are working">
-                Unpin region {region.rx},{region.rz}
+            <div className="ui-bar">
+              <button
+                type="button"
+                className="ui-btn"
+                onClick={session.undo}
+                disabled={!session.canUndo}
+                title="Undo  (Ctrl+Z)"
+              >
+                Undo
               </button>
+              <button
+                type="button"
+                className="ui-btn"
+                onClick={session.redo}
+                disabled={!session.canRedo}
+                title="Redo  (Ctrl+Shift+Z)"
+              >
+                Redo
+              </button>
+              <span className="ui-bar__sep" aria-hidden="true" />
+              <label className="ui-check" title="Draw the region grid the map ships in">
+                <input type="checkbox" checked={showRegions} onChange={(e) => setShowRegions(e.target.checked)} />
+                Regions
+              </label>
+              <label className="ui-check" title="Check the region you are working in, in 3D">
+                <input type="checkbox" checked={showPreview} onChange={(e) => setShowPreview(e.target.checked)} />
+                3D
+              </label>
+              {pinned && (
+                <>
+                  <span className="ui-bar__sep" aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="ui-btn"
+                    onClick={() => setPinned(false)}
+                    title="Let the 3D view follow where you are working"
+                  >
+                    Unpin {region.rx},{region.rz}
+                  </button>
+                </>
+              )}
+            </div>
+
+            {notice && (
+              <p className="world__notice" role="status">
+                {notice}
+              </p>
             )}
+
             <span className="world__stage-spacer" />
-            {notice && <span className="world__notice">{notice}</span>}
-            <span className="world__stage-size">
+            <span className="world__stage-size" title="Map extent, in blocks">
               {doc.settings.size.x}×{doc.settings.size.z}
             </span>
           </div>
@@ -624,6 +664,11 @@ export function WorldPage() {
         </main>
 
         <aside className="world__dock world__dock--right">
+          <header className="world__dock-head">
+            <h2 className="ui-dock__title">Contents</h2>
+            <p className="ui-dock__sub">What stands on the map, and how it reaches the game</p>
+          </header>
+          <div className="world__dock-body">
           <PlacementsPanel
             doc={doc}
             library={library}
@@ -718,6 +763,7 @@ export function WorldPage() {
             sendTitle="Send this region to game"
             blockCount={built.stats.blocks}
           />
+          </div>
         </aside>
       </div>
 

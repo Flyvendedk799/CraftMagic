@@ -25,6 +25,7 @@
 import { NavLink, Link } from 'react-router-dom';
 import { Logo } from '../brand/Logo.js';
 import { logout, useAuth } from '../library/auth.js';
+import { useNavCenter } from './NavCenter.js';
 import './shell.css';
 
 export interface AppNavProps {
@@ -87,6 +88,8 @@ function entryFor(current: AppNavProps['current']): Destination['key'] | undefin
 export function AppNav({ current }: AppNavProps) {
   const auth = useAuth();
   const account = auth.status === 'signedIn' ? auth.account : null;
+  // Whatever the shell wants in the middle of the bar — in the studio, the mode switch.
+  const center = useNavCenter();
 
   return (
     <header className="nav">
@@ -117,6 +120,8 @@ export function AppNav({ current }: AppNavProps) {
             </NavLink>
           )}
         </nav>
+
+        {center && <div className="nav__center">{center}</div>}
 
         {account ? (
           <div className="nav__account">

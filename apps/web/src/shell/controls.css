@@ -1,0 +1,474 @@
+/* The studio's control kit.
+ *
+ * Build, Architecture and World are three tools that share one product, and until this file
+ * existed they shared it only by accident: each page restyled the same five widgets — a
+ * button, a segmented control, a number field, a slider, a scrolling dock — under its own
+ * class names, with its own paddings, and whatever it forgot fell through to the global
+ * `button` rule in `styles.css` and came out as a full-strength mint call-to-action. That is
+ * how a "Structures / Interiors" filter ended up shouting louder than "Generate".
+ *
+ * So this is the shared layer: element-level defaults for the things a form control does
+ * badly on a dark surface (range thumbs, checkboxes, focus rings, scrollbars), plus a small
+ * set of `ui-` classes for the widgets all three modes build out of. Everything is expressed
+ * in the tokens from `styles.css`, so a brand revision still lands in one place.
+ *
+ * Loaded after `styles.css` and before any page stylesheet, so a mode can still override a
+ * rule here for a genuinely local reason — and has to say so by name when it does.
+ */
+
+/* --- focus ---------------------------------------------------------------
+   One ring, everywhere. The browser default is a thin blue outline that reads as a rendering
+   artefact against Void, and half the pages had turned it off rather than restyled it —
+   which makes a keyboard pass through a tool panel invisible. */
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 80%, transparent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* --- scrolling docks ------------------------------------------------------
+   A tool panel is a column that scrolls, and the platform scrollbar is either a fat grey slab
+   (Windows) or invisible until it moves (macOS). Neither says "there is more below", which is
+   the one thing the panel needs it to say. */
+
+.ui-scroll,
+.world__dock,
+.hud--top,
+.arch__panel,
+.shelf__list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--raised) transparent;
+}
+
+.ui-scroll::-webkit-scrollbar,
+.world__dock::-webkit-scrollbar,
+.hud--top::-webkit-scrollbar,
+.arch__panel::-webkit-scrollbar,
+.shelf__list::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ui-scroll::-webkit-scrollbar-track,
+.world__dock::-webkit-scrollbar-track,
+.hud--top::-webkit-scrollbar-track,
+.arch__panel::-webkit-scrollbar-track,
+.shelf__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ui-scroll::-webkit-scrollbar-thumb,
+.world__dock::-webkit-scrollbar-thumb,
+.hud--top::-webkit-scrollbar-thumb,
+.arch__panel::-webkit-scrollbar-thumb,
+.shelf__list::-webkit-scrollbar-thumb {
+  background: var(--raised);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+
+.ui-scroll:hover::-webkit-scrollbar-thumb,
+.world__dock:hover::-webkit-scrollbar-thumb,
+.hud--top:hover::-webkit-scrollbar-thumb,
+.arch__panel:hover::-webkit-scrollbar-thumb,
+.shelf__list:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  background-clip: content-box;
+}
+
+/* --- sliders --------------------------------------------------------------
+   Every terrain brush, layer cut and shape parameter in the product is a range input, and
+   every one of them was rendering as the platform's default: a blue capsule on a grey rail,
+   the only saturated blue anywhere in a mint-and-void interface. */
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 1rem;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+}
+
+input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  transition: box-shadow 120ms ease;
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+input[type='range']:hover::-webkit-slider-thumb,
+input[type='range']:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+input[type='range']:disabled {
+  cursor: default;
+}
+
+input[type='range']:disabled::-webkit-slider-thumb {
+  background: var(--muted);
+  box-shadow: none;
+}
+
+/* --- checkboxes -----------------------------------------------------------
+   `accent-color` alone still leaves the platform's own box shape and its white ground, which
+   on Void reads as a hole punched in the panel — and the product had five of these, in three
+   modes, all of them the system default. Drawn from scratch instead, at the element level so
+   a page never has to remember a class: a token-coloured square that fills mint and stamps a
+   tick when checked. */
+
+input[type='checkbox'] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  width: 0.95rem;
+  height: 0.95rem;
+  margin: 0;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+input[type='checkbox']::after {
+  content: '';
+  width: 0.5rem;
+  height: 0.28rem;
+  border: 2px solid var(--bg);
+  border-top: 0;
+  border-right: 0;
+  transform: rotate(-45deg) translate(0.5px, -1px);
+  opacity: 0;
+}
+
+input[type='checkbox']:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:checked::after {
+  opacity: 1;
+}
+
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The label that goes with one. */
+.ui-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ui-check:hover {
+  color: var(--text);
+}
+
+/* A checked toggle names a live state, so the label goes to full strength with the box. */
+.ui-check:has(input:checked) {
+  color: var(--text);
+}
+
+/* --- buttons --------------------------------------------------------------
+   Three weights and no more. Plain `ui-btn` is the default for anything in a tool panel: a
+   panel of twelve buttons has no primary. `--primary` is the one action a panel exists for.
+   `--danger` is for the two or three that destroy work. */
+
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.7rem;
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.ui-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--raised));
+  filter: none;
+}
+
+.ui-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ui-btn[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ui-btn--primary {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, #fff);
+  border-color: transparent;
+}
+
+.ui-btn--danger:hover:not(:disabled) {
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 60%, transparent);
+  background: color-mix(in srgb, var(--fail) 10%, var(--raised));
+}
+
+.ui-btn--wide {
+  width: 100%;
+}
+
+/* An icon-only button still needs to be square, or a lone glyph sits in a wide slab. */
+.ui-btn--icon {
+  min-width: 1.85rem;
+  padding: 0.35rem;
+}
+
+/* --- segmented controls ---------------------------------------------------
+   Mutually exclusive states drawn as one object. The pressed segment is filled rather than
+   outlined: at these sizes an outline is one pixel of difference and reads as noise. */
+
+.ui-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ui-seg button {
+  padding: 0.22rem 0.55rem;
+  font: inherit;
+  font-size: var(--text-2xs);
+  line-height: 1.3;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.ui-seg button:hover {
+  color: var(--text);
+  background: var(--raised);
+  filter: none;
+}
+
+.ui-seg button[aria-pressed='true'] {
+  color: var(--bg);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+.ui-seg--grow {
+  display: flex;
+}
+
+.ui-seg--grow button {
+  flex: 1;
+}
+
+/* --- text and number fields ----------------------------------------------- */
+
+.ui-input,
+.ui-field input,
+.ui-field select,
+.ui-field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: border-color 120ms ease;
+}
+
+.ui-input:hover,
+.ui-field input:hover,
+.ui-field select:hover {
+  border-color: color-mix(in srgb, var(--muted) 50%, var(--border));
+}
+
+.ui-input:focus,
+.ui-field input:focus,
+.ui-field select:focus,
+.ui-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ui-field {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.ui-field > span {
+  font-size: var(--text-2xs);
+  color: var(--muted);
+}
+
+/* Numbers in a tool panel are read in columns, so they line up. */
+.ui-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- dock cards -----------------------------------------------------------
+   The panel a tool column lives in. Architecture had one, World had none — its sections sat
+   directly on the page background, which is what made the same three panels read as two
+   different applications. */
+
+.ui-dock {
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(8px);
+}
+
+/* The title block at the top of a dock. Sticky so the mode you are in stays named while the
+   column under it scrolls past nine sections. */
+.ui-dock__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.ui-dock__title {
+  margin: 0;
+  font-family: var(--font-display, system-ui);
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ui-dock__sub {
+  margin: 0.15rem 0 0;
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.ui-dock__body {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+/* --- eyebrows and hints ---------------------------------------------------- */
+
+.ui-eyebrow {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--muted);
+}
+
+.ui-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-2xs);
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* --- floating toolbars over a canvas ---------------------------------------
+   The plan's zoom bar, the map's toolbar, the model's view switch: all the same object, a
+   strip of controls sitting on top of a drawing. It has to be legible over both a dark
+   background and a bright green heightfield, hence the blur and the border. */
+
+.ui-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.3rem 0.4rem;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
+}
+
+.ui-bar__sep {
+  flex: none;
+  width: 1px;
+  align-self: stretch;
+  margin: 0.1rem 0.1rem;
+  background: var(--border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-btn,
+  .ui-seg button,
+  .ui-input,
+  input[type='checkbox'],
+  input[type='range']::-webkit-slider-thumb {
+    transition: none;
+  }
+}

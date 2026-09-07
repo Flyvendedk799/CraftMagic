@@ -131,6 +131,7 @@ export function ToolPalette(props: ToolPaletteProps) {
       <div className="tools__row">
         <button
           type="button"
+          className="tools__toggle"
           aria-pressed={props.symmetry}
           title="Draw both halves at once — every place, erase, fill and line is mirrored across the build's middle."
           onClick={() => props.onSymmetry(!props.symmetry)}

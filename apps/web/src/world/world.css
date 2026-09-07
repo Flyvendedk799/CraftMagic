@@ -5,9 +5,10 @@
    — a world is shaped by brushes rather than drawn by items, so the tools get the near hand
    and the document settings move across.
 
-   Borrows `.hud`, `.section`, `.shelf` and `.hud__title` from editor.css and architecture.css
-   so the three modes read as one product rather than three. What is defined here is only what
-   a world has and the other two do not: the map raster, the brush ring, the region list. */
+   Borrows `.section` and `.shelf` from editor.css and architecture.css, and every button,
+   segmented control, checkbox, slider and input from `shell/controls.css`, so the three modes
+   read as one product rather than three. What is defined here is only what a world has and
+   the other two do not: the map raster, the brush ring, the region list. */
 
 .world {
   position: fixed;
@@ -27,30 +28,46 @@
   padding: 0 0.75rem 0.75rem;
 }
 
-/* --- the docks ------------------------------------------------------------------------- */
+/* --- the docks -------------------------------------------------------------------------
+
+   Each dock is one card, not a bare column. Architecture puts its controls on a panel and the
+   editor floats its HUD on one; World was the odd mode out, with its sections sitting straight
+   on the page background — no edge, no ground, nothing separating the tools from the map. The
+   card is the same surface `.hud` and `.arch__panel` use, so the three modes are one product.
+
+   The title stays put while the column scrolls: nine sections is a long way to scroll past,
+   and the sticky head is also what stops "Contents" and "World" being indistinguishable once
+   you are halfway down either of them. */
 
 .world__dock {
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 0.25rem;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.world__dock-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  background: color-mix(in srgb, var(--panel) 97%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.world__dock-body {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4) var(--space-4);
 }
 
 /* Sections are content-sized. Without this they share the dock's height equally, which is what
    turned Export and Save into empty bars in the editor before the same fix landed there. */
-.world__dock > * {
+.world__dock-body > * {
   flex: 0 0 auto;
-}
-
-.world__dock-head {
-  padding: 0.25rem 0 0.5rem;
-}
-
-.world__dock-head .hud__sub {
-  margin: 0.25rem 0 0;
 }
 
 /* --- the stage ------------------------------------------------------------------------- */
@@ -66,9 +83,10 @@
 .world__stage-bar {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   flex-wrap: wrap;
-  font-size: 0.75rem;
+  min-height: 2.1rem;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 
@@ -77,11 +95,30 @@
 }
 
 .world__stage-size {
+  padding: 0.2rem 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
 }
 
+/* What just happened, as a chip. It used to be loose accent-coloured text in the middle of
+   the row, so every save and every opened map shoved the size readout sideways. */
 .world__notice {
+  margin: 0;
+  padding: 0.2rem 0.6rem;
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs);
   color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--radius-pill);
 }
 
 .world__split {
@@ -105,9 +142,17 @@
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  background: var(--sunken);
+  /* A checked ground rather than a flat one, so the extent of the map is legible before a
+     single column has been raised and the panel does not read as a failed render. */
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--panel) 55%, transparent) 25%, transparent 25% 75%, color-mix(in srgb, var(--panel) 55%, transparent) 75%)
+      0 0 / 24px 24px,
+    linear-gradient(45deg, color-mix(in srgb, var(--panel) 55%, transparent) 25%, transparent 25% 75%, color-mix(in srgb, var(--panel) 55%, transparent) 75%)
+      12px 12px / 24px 24px,
+    var(--sunken);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
   /* The map owns every gesture on it, including two-finger scroll — the wheel is zoom. */
   touch-action: none;
   cursor: crosshair;
@@ -179,9 +224,10 @@
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   background: var(--sunken);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
 }
 
 .world__preview canvas {
@@ -194,17 +240,19 @@
   right: 0;
   bottom: 0;
   display: flex;
-  gap: 0.75rem;
-  padding: 0.4rem 0.6rem;
-  font-size: 0.7rem;
+  gap: var(--space-3);
+  padding: 0.35rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
   border-top: 1px solid var(--border);
 }
 
 .world__warn-inline {
-  color: #e0b341;
+  color: var(--pending);
 }
 
 /* --- tools ----------------------------------------------------------------------------- */
@@ -220,30 +268,39 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.45rem 0.25rem;
-  font-size: 0.7rem;
+  padding: 0.5rem 0.3rem;
+  font-size: var(--text-2xs);
   color: var(--text);
-  background: var(--panel);
+  background: var(--raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .world__tool:hover {
-  border-color: var(--muted);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--raised));
 }
 
 .world__tool[aria-pressed='true'] {
+  color: var(--accent);
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
+/* The shortcut digit. Top-left rather than in the label, so nine tools stay one word wide. */
 .world__tool-key {
   position: absolute;
   top: 2px;
   left: 4px;
+  font-family: var(--font-mono);
   font-size: 0.55rem;
   color: var(--muted);
+}
+
+.world__tool[aria-pressed='true'] .world__tool-key {
+  color: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 /* --- shared controls -------------------------------------------------------------------- */
@@ -256,6 +313,12 @@
   flex-wrap: wrap;
 }
 
+/* A row of verbs, sharing the width evenly. Two buttons of different text lengths sitting at
+   their natural widths read as a primary and an afterthought whether or not they are. */
+.world__row--actions > .ui-btn {
+  flex: 1 1 0;
+}
+
 .world__grid2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -264,25 +327,39 @@
 }
 
 .world__label {
-  font-size: 0.7rem;
+  font-size: var(--text-2xs);
   color: var(--muted);
 }
 
 .world__hint {
   margin: 0.5rem 0 0;
-  font-size: 0.7rem;
-  line-height: 1.5;
+  font-size: var(--text-2xs);
+  line-height: 1.55;
   color: var(--muted);
+}
+
+/* The armed component. A live instruction, not a hint — it says what the very next click on
+   the map will do, and it goes away the moment nothing is armed. */
+.world__armed {
+  margin: 0.5rem 0 0;
+  padding: 0.35rem 0.55rem;
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--radius-sm);
 }
 
 .world__warn {
   margin: 0.5rem 0 0;
-  padding: 0.4rem 0.5rem;
-  font-size: 0.7rem;
+  padding: 0.4rem 0.55rem;
+  font-size: var(--text-2xs);
   line-height: 1.5;
-  color: #e0b341;
-  background: color-mix(in srgb, #e0b341 12%, transparent);
-  border-radius: 6px;
+  color: var(--pending);
+  background: color-mix(in srgb, var(--pending) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pending) 30%, transparent);
+  border-radius: var(--radius-sm);
 }
 
 .world__slider {
@@ -309,13 +386,27 @@
 .world__search {
   width: 100%;
   min-width: 0;
-  padding: 0.3rem 0.4rem;
+  padding: 0.35rem 0.5rem;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   color: var(--text);
   background: var(--sunken);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  transition: border-color 120ms ease;
+}
+
+.world__number:hover,
+.world__field input:hover,
+.world__search:hover {
+  border-color: color-mix(in srgb, var(--muted) 50%, var(--border));
+}
+
+.world__number:focus,
+.world__field input:focus,
+.world__search:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .world__number {
@@ -340,71 +431,20 @@
   margin-top: 0.5rem;
 }
 
-.world__segmented {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.world__segmented button {
-  padding: 0.25rem 0.5rem;
-  font-size: 0.7rem;
-  color: var(--muted);
-  background: var(--panel);
-  border: 0;
-  cursor: pointer;
-}
-
-.world__segmented button + button {
-  border-left: 1px solid var(--border);
-}
-
-.world__segmented button[aria-pressed='true'] {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent) 22%, var(--panel));
-}
-
-.world__action,
-.world__mini {
-  padding: 0.35rem 0.6rem;
-  font: inherit;
-  font-size: 0.7rem;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.world__action {
-  flex: 1;
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
-}
-
-.world__mini:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.world__mini--danger:hover {
-  border-color: #d9534f;
-  color: #ff9b98;
-}
-
-.world__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  cursor: pointer;
-}
+/* `world__segmented`, `world__action`, `world__mini` and `world__toggle` used to live here:
+   four local redraws of controls the other two modes already had, each a shade off the
+   others. They are `ui-seg`, `ui-btn--primary`, `ui-btn` and `ui-check` now, defined once in
+   `shell/controls.css`. Nothing in this mode draws its own button any more. */
 
 .world__facts {
   display: grid;
-  gap: 0.2rem;
+  gap: 0.25rem;
   margin: 0.5rem 0 0;
-  font-size: 0.7rem;
+  padding: 0.45rem 0.55rem;
+  font-size: var(--text-2xs);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 .world__facts > div {
@@ -419,6 +459,7 @@
 
 .world__facts dd {
   margin: 0;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -433,27 +474,37 @@
 .world__stratum {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.3rem 0.4rem;
-  font-size: 0.7rem;
+  gap: 0.4rem;
+  padding: 0.35rem 0.45rem;
+  font-size: var(--text-2xs);
   text-align: left;
   color: var(--text);
-  background: var(--panel);
+  background: var(--raised);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.world__stratum:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 
 .world__stratum[aria-pressed='true'] {
   border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .world__swatch {
-  width: 0.85rem;
-  height: 0.85rem;
+  width: 0.9rem;
+  height: 0.9rem;
   flex: 0 0 auto;
   border-radius: 3px;
-  border: 1px solid rgb(0 0 0 / 0.35);
+  border: 1px solid rgb(0 0 0 / 0.4);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.15);
 }
 
 /* --- lists (placed, saved, regions) ------------------------------------------------------ */
@@ -484,22 +535,23 @@
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  padding: 0.3rem 0.4rem;
+  padding: 0.35rem 0.5rem;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   text-align: left;
   color: var(--text);
-  background: transparent;
+  background: var(--sunken);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .world__placed-row:hover,
 .world__saved-row:hover,
 .world__region-row:hover {
-  background: var(--panel);
+  background: var(--raised);
   border-color: var(--border);
+  filter: none;
 }
 
 .world__placed li[data-selected='true'] .world__placed-row {
@@ -522,7 +574,8 @@
 .world__region-id,
 .world__region-time,
 .world__region-places {
-  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -533,8 +586,11 @@
 }
 
 .world__region-warn {
-  font-size: 0.65rem;
-  color: #e0b341;
+  padding: 0 0.35rem;
+  font-size: var(--text-2xs);
+  color: var(--pending);
+  background: color-mix(in srgb, var(--pending) 14%, transparent);
+  border-radius: var(--radius-pill);
 }
 
 /* --- responsive --------------------------------------------------------------------------- */
@@ -552,15 +608,74 @@
   }
 }
 
+/* One column, and a page that scrolls.
+ *
+   Three docked columns inside a fixed-height viewport works down to about a tablet; below
+   that every one of them is too narrow to use, and squeezing them into thirds of a viewport
+   height gave the map a sliver about forty pixels tall. So the mode stops being a fixed
+   layout and becomes an ordinary document: tools, then the map at a usable height, then the
+   contents dock — the same thing Architecture does at its own breakpoint, and for the same
+   reason. */
 @media (max-width: 900px) {
+  .world {
+    position: static;
+    overflow: visible;
+  }
+
   .world__body {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto auto;
+    padding-bottom: var(--space-4);
   }
 
   .world__dock {
-    max-height: 32vh;
+    max-height: 60vh;
   }
+
+  /* Tall enough to sculpt in. `min-height` rather than a fraction of the viewport, because
+     the page scrolls now and the map no longer has to share a fixed height with two docks. */
+  .world__stage {
+    min-height: 70vh;
+  }
+
+  /* Side by side needs width neither of them has here. */
+  .world__split[data-preview='true'] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(20rem, 1fr) minmax(14rem, auto);
+  }
+}
+
+/* --- the shelf, as World lays it out ------------------------------------------------------
+
+   `shelf__item` is Architecture's — same padding, same hover, same pressed state, so a saved
+   build looks like the same object in both modes. What differs is the third column: over
+   there it is how many of the thing are on the plan, here it is whether the build is a
+   structure or an interior. */
+
+.shelf__item--world {
+  grid-template-areas:
+    'name badge'
+    'meta badge';
+}
+
+.shelf__badge {
+  grid-area: badge;
+  align-self: center;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.625rem;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+/* An interior is the one that is not obvious from a name, so it is the one that gets a hue. */
+.shelf__badge[data-kind='interior'] {
+  color: var(--brand-violet);
+  border-color: color-mix(in srgb, var(--brand-violet) 40%, transparent);
+  background: color-mix(in srgb, var(--brand-violet) 12%, transparent);
 }
 
 /* The armed component, so the shelf shows what the next click on the map will drop. */

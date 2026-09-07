@@ -24,6 +24,16 @@
   max-width: none;
 }
 
+/* The bar wraps onto a second row once the viewport is narrower than its contents, and every
+   floating panel measures its top from `--chrome`. The comment above promised the bar could
+   change height without any of them being re-tuned; it could not, because the value was a
+   constant — so on a phone the tool panel started underneath the bar it was meant to clear. */
+@media (max-width: 44rem) {
+  .editor {
+    --chrome: 7.5rem;
+  }
+}
+
 .editor__canvas {
   position: absolute;
   inset: var(--chrome) 0 0 0;
@@ -56,6 +66,12 @@
   max-width: calc(100vw - 2rem);
   max-height: calc(100vh - var(--chrome) - 6.5rem);
   overflow-y: auto;
+  /* This panel is taller than a laptop viewport, so it always ends mid-something — and a row
+     of buttons sliced cleanly through its middle by a rounded corner reads as a rendering
+     fault rather than as a scroll. Fading the last few pixels says "there is more below"
+     with no widget and no measurement. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent);
 }
 
 .hud__issues li,
@@ -149,7 +165,6 @@
 
 .layers__slider {
   flex: 1;
-  accent-color: var(--accent);
   min-width: 8rem;
 }
 
@@ -191,7 +206,6 @@
 .param__slider {
   grid-column: 1 / -1;
   width: 100%;
-  accent-color: var(--accent);
 }
 
 .hud__issues {
@@ -299,6 +313,10 @@
   gap: 0.75rem;
   align-content: start;
   pointer-events: none;
+  /* The same bottom fade the tool panel opposite has, for the same reason: this column ends
+     wherever the viewport does, and a card cut through by a straight edge reads as broken. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.25rem), transparent);
 }
 
 .hud-right > * {
@@ -450,10 +468,16 @@
 }
 
 .prompt__actions .prompt__primary {
+  flex: 1 1 8rem;
   background: var(--accent);
   color: var(--bg);
   border-color: transparent;
   font-weight: 600;
+}
+
+.prompt__actions .prompt__primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, #fff);
+  border-color: transparent;
 }
 
 .prompt__actions button:disabled {
@@ -633,8 +657,9 @@
   color: var(--muted);
 }
 
+/* `accent-color` was doing the work here; the shared kit draws the box itself now, so all
+   this owes the row is the nudge that lines a 15px box up with a 11px cap-height. */
 .tools__check input {
-  accent-color: var(--accent);
   margin: 0.1rem 0 0;
 }
 
@@ -808,6 +833,17 @@
   border-top: 1px solid var(--border);
 }
 
+/* In the editor's right-hand column the export controls have a card to themselves, and the
+   separator meant for a run of panels inside one HUD became a rule across the top of an
+   otherwise empty box — which is exactly what it looked like. */
+.hud > .export:first-child,
+.params + .export,
+.hud > .params:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .export__actions {
   display: flex;
   align-items: center;
@@ -874,6 +910,22 @@
 
 .export__note--error {
   color: var(--fail);
+}
+
+/* --- restyle ---------------------------------------------------------------
+   A palette swap, not an edit: same build, different materials. It shares `.params`' spacing
+   because it is the same kind of block — a titled group of controls under a rule — and had
+   no rule of its own at all, so its heading sat directly on the scale readout above it. */
+
+.restyle {
+  margin-top: 0.875rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.restyle .hud__actions {
+  margin-top: 0;
+  gap: 0.35rem;
 }
 
 /* --- scale ---------------------------------------------------------------
@@ -1039,6 +1091,38 @@
   display: none;
 }
 
+/* --- symmetry ---------------------------------------------------------------
+   A property of the hand rather than of a tool, so it sits above the per-tool controls. It
+   carried no class, fell through to the global `button` rule, and came out as a full-width
+   mint call-to-action — louder than "Generate" on the same screen, for a setting that is off
+   by default and stays off for most builds. */
+
+.tools__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  font-size: var(--text-xs);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tools__toggle:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  filter: none;
+}
+
+.tools__toggle[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
 /* --- brush -----------------------------------------------------------------
    A row of small controls rather than a slider: the useful radii are the first four, and a
    slider for a range of nine would take the panel's whole width to express what two buttons
@@ -1173,6 +1257,7 @@
    sharing a row with it should not read as sharing a purpose. */
 .layers__views {
   display: flex;
+  align-items: center;
   gap: 0.3rem;
   margin-left: 0.5rem;
   padding-left: 0.75rem;
@@ -1192,6 +1277,22 @@
 .layers__views button:hover {
   border-color: var(--accent);
   filter: none;
+}
+
+/* The two glyph buttons at the end of the row. A padded emoji is a different height from a
+   padded word, so the row was ending on two buttons that did not line up with the four
+   before them. */
+.layers__views button:has(+ button:last-child),
+.layers__views button:last-child {
+  min-width: 1.9rem;
+  padding: 0.3rem 0.35rem;
+  text-align: center;
+}
+
+.layers__views button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .hover-readout__preview {
@@ -1693,4 +1794,72 @@
 .buildmenu__forget:hover {
   color: var(--fail);
   background: var(--raised);
+}
+
+
+/* --- narrow screens ----------------------------------------------------------
+ *
+ * Two floating columns over a full-viewport canvas is a desktop arrangement, and below about
+ * 62rem it stops being one: the tool panel is 19rem, the prompt column is 22rem, and at 26rem
+ * of viewport they simply sat on top of each other — the editor was legible on a phone only
+ * in the sense that all of it was drawn.
+ *
+ * So under that width the page stops being a fixed viewport and becomes an ordinary scrolling
+ * document: the build at the top at a height worth looking at, then the tools, then the
+ * prompt and the export controls under them. Architecture and World both do this at their own
+ * breakpoints; the editor was the last one still insisting it was a kiosk.
+ */
+
+@media (max-width: 62rem) {
+  .editor {
+    position: static;
+    overflow: visible;
+  }
+
+  .editor__canvas {
+    position: relative;
+    inset: auto;
+    height: 55vh;
+    min-height: 20rem;
+  }
+
+  .hud--top,
+  .hud-right {
+    position: static;
+    width: auto;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+    margin: 0.75rem;
+    /* The fade is a hint that a column scrolls. Nothing scrolls here but the page. */
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+
+  .hud--layers {
+    position: sticky;
+    left: auto;
+    right: auto;
+    bottom: 0;
+    z-index: 10;
+    margin: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .layers__slider {
+    flex: 1 1 8rem;
+  }
+
+  .layers__views {
+    flex-wrap: wrap;
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  /* It follows the pointer, and a touch screen has none. */
+  .hover-readout {
+    display: none;
+  }
 }

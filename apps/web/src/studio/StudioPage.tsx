@@ -34,6 +34,7 @@ import { BUILD_IDS, generatedBuilds } from '../editor/builds.js';
 import { EditorPage } from '../editor/EditorPage.js';
 import { ArchitecturePage } from '../architecture/ArchitecturePage.js';
 import { WorldPage } from '../world/WorldPage.js';
+import { NavCenterProvider } from '../shell/NavCenter.js';
 import { useAuth } from '../library/auth.js';
 import { listBuilds, type LibraryBuild } from '../library/library.js';
 import { localStore, remoteStore, type SavedWorld } from '../world/api.js';
@@ -276,9 +277,42 @@ export function StudioPage() {
     );
   }, [foreign, setSearchParams]);
 
+  /**
+   * The mode switch, handed to the app bar rather than floated over the page.
+   *
+   * Every mounted page renders `AppNav`, and `AppNav` renders whatever this provides in the
+   * middle of the bar — so the pill is a flex child of the chrome instead of a fixed overlay
+   * that used to land on Architecture's zoom controls and World's toolbar.
+   */
+  const switcher = (
+    <div className="studio__switch" role="group" aria-label="Studio mode">
+      {STUDIO_MODES.map((id) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={mode === id}
+          title={MODE_SPECS[id].hint}
+          onClick={() => setMode(id)}
+        >
+          {MODE_SPECS[id].label}
+        </button>
+      ))}
+      <button
+        type="button"
+        className="studio__palette-key"
+        title="Command palette  (Ctrl+K)"
+        onClick={() => setPalette(true)}
+      >
+        ⌘K
+      </button>
+    </div>
+  );
+
   return (
     <div className="studio">
-      <Mounted />
+      <NavCenterProvider node={switcher}>
+        <Mounted />
+      </NavCenterProvider>
 
       {foreign.length > 0 && dismissed !== foreignKey && (
         <p className="studio__notice" role="status">
@@ -300,28 +334,6 @@ export function StudioPage() {
           </button>
         </p>
       )}
-
-      <div className="studio__switch" role="group" aria-label="Studio mode">
-        {STUDIO_MODES.map((id) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={mode === id}
-            title={MODE_SPECS[id].hint}
-            onClick={() => setMode(id)}
-          >
-            {MODE_SPECS[id].label}
-          </button>
-        ))}
-        <button
-          type="button"
-          className="studio__palette-key"
-          title="Command palette  (Ctrl+K)"
-          onClick={() => setPalette(true)}
-        >
-          ⌘K
-        </button>
-      </div>
 
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
     </div>

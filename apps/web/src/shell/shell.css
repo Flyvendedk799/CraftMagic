@@ -65,6 +65,17 @@
   font-weight: 600;
 }
 
+/* The slot the studio's mode switch lands in. Auto margins on both sides keep it in the
+   middle of whatever the links and the account chip leave over, and `min-width: 0` lets it
+   be the thing that gives when the bar runs out of room rather than the thing that pushes
+   the account chip off the end. */
+.nav__center {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0 auto;
+}
+
 .nav__account {
   display: flex;
   align-items: center;
@@ -162,6 +173,19 @@
 
 /* A phone gets the links and the sign-out, and drops the two things that only repeat what is
    already a tap away on the dashboard itself. */
+/* The bar is at its tightest in the studio, where the mode switch sits between the links and
+   the account chip. Closing the gutters is what keeps "Minecraft mod" readable rather than
+   scrolled half out of its own container. */
+@media (max-width: 80rem) {
+  .nav__inner {
+    gap: var(--space-2);
+  }
+
+  .nav__link {
+    padding: var(--space-1) var(--space-2);
+  }
+}
+
 @media (max-width: 44rem) {
   .nav__inner {
     flex-wrap: wrap;
@@ -171,6 +195,13 @@
   .nav__email,
   .nav__quota-bar {
     display: none;
+  }
+
+  /* Once the bar wraps, the auto margins would give the switch a whole row to itself and make
+     a two-row bar a three-row one. It rides with the links instead, and the account chip is
+     what drops. */
+  .nav__center {
+    margin: 0;
   }
 }
 

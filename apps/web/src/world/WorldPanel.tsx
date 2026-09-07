@@ -108,11 +108,20 @@ export function WorldPanel(props: WorldPanelProps) {
           <input value={doc.name} onChange={(event) => props.onRename(event.target.value)} />
         </label>
 
-        <div className="world__row">
-          <button type="button" className="world__action" onClick={props.onSave}>
+        {/* Saving is the one verb this section exists for, so it is the one filled button —
+            and it stops being one once there is nothing to save, which is the honest way to
+            say "saved" without a second widget. */}
+        <div className="world__row world__row--actions">
+          <button
+            type="button"
+            className={`ui-btn ${dirty ? 'ui-btn--primary' : ''}`}
+            onClick={props.onSave}
+            disabled={!dirty}
+            title={dirty ? 'Keep this map' : 'No changes since the last save'}
+          >
             {dirty ? 'Save world' : 'Saved'}
           </button>
-          <button type="button" className="world__mini" onClick={props.onNew}>
+          <button type="button" className="ui-btn" onClick={props.onNew} title="Start an empty map">
             New
           </button>
         </div>
@@ -129,7 +138,7 @@ export function WorldPanel(props: WorldPanelProps) {
                 </button>
                 <button
                   type="button"
-                  className="world__mini world__mini--danger"
+                  className="ui-btn ui-btn--danger"
                   onClick={() => props.onRemove(entry.id)}
                 >
                   Delete
@@ -144,11 +153,11 @@ export function WorldPanel(props: WorldPanelProps) {
         <div className="world__grid2">
           <label className="world__field">
             <span className="world__label">Width (x)</span>
-            <input type="number" value={draftX} onChange={(event) => setDraftX(event.target.value)} />
+            <input type="number" className="ui-num" value={draftX} onChange={(event) => setDraftX(event.target.value)} />
           </label>
           <label className="world__field">
             <span className="world__label">Depth (z)</span>
-            <input type="number" value={draftZ} onChange={(event) => setDraftZ(event.target.value)} />
+            <input type="number" className="ui-num" value={draftZ} onChange={(event) => setDraftZ(event.target.value)} />
           </label>
         </div>
 
@@ -168,7 +177,7 @@ export function WorldPanel(props: WorldPanelProps) {
             )}
             <button
               type="button"
-              className="world__action"
+              className="ui-btn ui-btn--primary ui-btn--wide"
               onClick={() => props.onResize(wanted)}
             >
               Resize to {wanted.x}×{wanted.z}
@@ -211,10 +220,10 @@ export function WorldPanel(props: WorldPanelProps) {
         </p>
 
         {props.onSendAll && (
-          <div className="world__row">
+          <div className="world__row world__row--actions">
             <button
               type="button"
-              className="world__action"
+              className="ui-btn ui-btn--primary ui-btn--wide"
               disabled={props.sending}
               onClick={props.onSendAll}
             >
@@ -246,7 +255,7 @@ export function WorldPanel(props: WorldPanelProps) {
               </button>
               <button
                 type="button"
-                className="world__mini"
+                className="ui-btn"
                 disabled={props.sending}
                 onClick={() => props.onSendRegion(region)}
               >
@@ -266,6 +275,7 @@ function NumberField(props: { label: string; value: number; onChange: (value: nu
       <span className="world__label">{props.label}</span>
       <input
         type="number"
+        className="ui-num"
         value={props.value}
         onChange={(event) => {
           const next = Number(event.target.value);

@@ -6,9 +6,10 @@
  * margins, and a translucent HUD floating over it would cover the part you are working on.
  *
  * It borrows `editor.css` for the shared furniture (`.hud`, `.section`, `.export`,
- * `.hover-readout`, `.param`), so the two pages stay recognisably the same product and a
- * change to a section header lands in both. The overrides below are only where a column
- * layout and an absolutely-positioned HUD genuinely disagree. */
+ * `.hover-readout`, `.param`) and `shell/controls.css` for the control kit (`.ui-btn`,
+ * `.ui-seg`, the checkbox and the slider), so the three modes stay recognisably the same
+ * product and a change to a section header lands in all of them. The overrides below are
+ * only where a column layout and an absolutely-positioned HUD genuinely disagree. */
 
 .arch {
   position: fixed;
@@ -44,6 +45,39 @@
   width: auto;
   max-height: none;
   overflow-y: auto;
+  /* The card's own padding moves onto the head and the body, so the head can be sticky and
+     still span the full width of the panel rather than sitting in a 1rem gutter. */
+  padding: 0;
+}
+
+/* Which mode you are in, kept on screen while nine sections scroll past underneath. */
+.arch__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  background: color-mix(in srgb, var(--panel) 97%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.arch__body {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+/* Starting points. A row of unlabelled buttons above the tools read as five more tools; the
+   eyebrow says what they replace, which is everything currently drawn. */
+.arch__templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+/* Packed rather than stretched. With `flex: 1 1 auto` a row that wraps five names onto three
+   lines gives the fifth the whole width, and a full-bleed "Office bay" reads as the important
+   one. These are five equals. */
+.arch__templates .ui-btn {
+  flex: 0 1 auto;
 }
 
 .arch__plan,
@@ -318,11 +352,12 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  padding: 3px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
 }
 
 .plan-zoom button {
@@ -377,12 +412,86 @@
   pointer-events: none;
 }
 
+/* The editor parks its readout well clear of the layer bar; here the plan panel's own bottom
+   edge is the only thing under it. Kept to one line: two lines of hint under a drawing is a
+   paragraph, and it grew into one the moment it listed three gestures. */
 .arch__readout {
   bottom: 0.75rem;
+  max-width: calc(100% - 1.5rem);
+  padding: 0.35rem 0.7rem;
+  font-size: var(--text-2xs);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch__readout strong {
+  display: inline;
+  margin: 0 0.4rem 0 0;
+}
+
+/* --- the empty plan --------------------------------------------------------
+   Centred on the drawing rather than tucked in a corner: it is the only thing on the panel,
+   and it stops being there the moment the first room exists. Pointer-transparent throughout,
+   so the drag that dismisses it goes to the canvas underneath. */
+
+.arch__plan-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.35rem;
+  padding: var(--space-5);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* A soft well behind the words. Ruled paper under 12pt text is unreadable, and the grid is
+   the one thing this panel is never allowed to hide. */
+.arch__plan-empty::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  width: min(26rem, 80%);
+  height: 9rem;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--sunken) 45%, transparent);
+}
+
+.arch__plan-empty > * {
+  position: relative;
+}
+
+.arch__plan-empty__title {
+  margin: 0;
+  font-family: var(--font-display, system-ui);
+  font-size: var(--text-lg);
+  color: color-mix(in srgb, var(--text) 75%, transparent);
+}
+
+.arch__plan-empty__body {
+  margin: 0;
+  max-width: 32ch;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.arch__plan-empty__body strong {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* --- the model column --------------------------------------------------- */
 
+/* Two groups of buttons on one strip: how much of the building to show, and where to look at
+   it from. Seven buttons is more than a 26rem column holds in a row, and with `nowrap` the
+   last camera preset was simply cut off by the panel's edge — so the strip wraps, centres
+   what it wraps, and the bar grows upward into the model rather than off the side of it. */
 .arch__model-bar {
   position: absolute;
   left: 0.5rem;
@@ -390,14 +499,27 @@
   bottom: 0.5rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.4rem 0.55rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
   font-size: var(--text-xs);
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  backdrop-filter: blur(8px);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.25);
+}
+
+/* The camera presets. The rule between the two groups only reads as a division while they
+   are on the same row; once the bar wraps it would be a stray mark, so it goes. */
+.arch__model-bar .layers__views {
+  margin: 0;
+  padding: 0;
+  border-left: 0;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 /* --- tools -------------------------------------------------------------- */
@@ -410,24 +532,37 @@
 
 .tool-rail button {
   position: relative;
-  padding: 0.45rem 0.3rem;
+  padding: 0.5rem 0.3rem;
   font-size: var(--text-xs);
   background: var(--raised);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.tool-rail button:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--raised));
+  filter: none;
 }
 
 .tool-rail button[aria-pressed='true'] {
   border-color: var(--accent);
   color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.tool-rail button[aria-pressed='true'] .tool-rail__key {
+  color: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 .tool-rail__key {
   position: absolute;
   top: 2px;
   right: 4px;
+  font-family: var(--font-mono);
   font-size: 0.6rem;
   color: var(--muted);
 }
@@ -454,18 +589,6 @@
 
 .tool-rail__history button {
   flex: 1;
-  padding: 0.4rem 0.5rem;
-  font-size: var(--text-xs);
-  background: var(--raised);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.tool-rail__history button:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
 
 /* --- storeys ------------------------------------------------------------ */

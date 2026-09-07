@@ -1454,7 +1454,11 @@ export function EditorPage() {
         </Section>
         </section>
 
+          {/* In a card, like every other block in this column. Without the wrapper the outliner
+              was the one panel here with no edges and no ground under it — visible only when a
+              program had components, which is why it went unnoticed. */}
           {build.program && build.program.components.length > 0 && (
+            <section className="hud">
             <Section
               id="outline"
               title="Components"
@@ -1477,6 +1481,7 @@ export function EditorPage() {
                 onHighlight={onPartHighlight}
               />
             </Section>
+            </section>
           )}
 
         <section className="hud">

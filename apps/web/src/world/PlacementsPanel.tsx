@@ -59,11 +59,15 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
   return (
     <>
       <Section id="world-shelf" title="Components" summary={`${shelf.length}`}>
+        {/* The two filters. They carried no class at all, so they fell through to the global
+            `button` rule and rendered as two full-strength mint call-to-actions — the loudest
+            thing on a page whose actual verbs are "sculpt" and "place". */}
         <div className="shelf__kinds" role="group" aria-label="Component kind">
           {KIND_LABELS.map(({ id, label }) => (
             <button
               key={id}
               type="button"
+              className="shelf__kind"
               aria-pressed={kinds.includes(id)}
               onClick={() =>
                 setKinds((current) =>
@@ -82,7 +86,7 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
 
         <input
           type="search"
-          className="world__search"
+          className="ui-input world__search"
           placeholder="Filter by name"
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
@@ -101,7 +105,9 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
         {library.status === 'loading' && <p className="world__hint">Loading your library…</p>}
         {library.status === 'error' && <p className="world__hint">The library could not be reached.</p>}
         {props.armed && (
-          <p className="world__hint">Click the map to drop it. It stays armed for the next one.</p>
+          <p className="world__armed" role="status">
+            Click the map to drop it — it stays armed for the next one.
+          </p>
         )}
 
         {library.status === 'ready' && shelf.length === 0 && (
@@ -112,26 +118,33 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
           </p>
         )}
 
-        <ul className="shelf">
-          {shelf.map((entry) => (
-            <li key={entry.id}>
-              <button
-                type="button"
-                className="shelf__item"
-                aria-pressed={props.armed === entry.id}
-                onClick={() => props.onAdd(entry)}
-              >
-                <span className="shelf__name">{entry.name}</span>
-                <span className="shelf__size">
-                  {entry.w}×{entry.h}×{entry.d}
-                </span>
-                <span className="shelf__kind" data-kind={entry.kind}>
-                  {entry.kind === 'interior' ? 'Interior' : 'Structure'}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        {/* `shelf__list` and `shelf__item` are Architecture's, so the same saved build looks
+            the same in both modes. The badge is `shelf__badge`, not `shelf__kind`: that name
+            already belongs to the filter buttons above, and while the two shared it every
+            badge in the list was being drawn as a pressed filter. */}
+        {shelf.length > 0 && (
+          <ul className="shelf__list">
+            {shelf.map((entry) => (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  className="shelf__item shelf__item--world"
+                  aria-pressed={props.armed === entry.id}
+                  title={`Arm “${entry.name}” — then click the map to drop it`}
+                  onClick={() => props.onAdd(entry)}
+                >
+                  <span className="shelf__name">{entry.name}</span>
+                  <span className="shelf__meta">
+                    {entry.w}×{entry.h}×{entry.d}
+                  </span>
+                  <span className="shelf__badge" data-kind={entry.kind}>
+                    {entry.kind === 'interior' ? 'Interior' : 'Structure'}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
 
       <Section id="world-placed" title="Placed" summary={`${doc.placements.length}`}>
@@ -149,8 +162,8 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
                 </button>
                 <button
                   type="button"
-                  className="world__mini"
-                  title="Frame on the map"
+                  className="ui-btn"
+                  title="Frame this one on the map and in the 3D view"
                   onClick={() => props.onFrame(entry)}
                 >
                   Find
@@ -193,7 +206,7 @@ function PlacementInspector({
 
       <div className="world__row">
         <span className="world__label">Sits on</span>
-        <div className="world__segmented" role="group" aria-label="Vertical anchor">
+        <div className="ui-seg" role="group" aria-label="Vertical anchor">
           {(['surface', 'fixed', 'buried'] as const).map((anchor) => (
             <button
               key={anchor}
@@ -219,7 +232,7 @@ function PlacementInspector({
 
       <div className="world__row">
         <span className="world__label">Turn</span>
-        <div className="world__segmented" role="group" aria-label="Rotation">
+        <div className="ui-seg" role="group" aria-label="Rotation">
           {([0, 1, 2, 3] as const).map((turns) => (
             <button
               key={turns}
@@ -253,11 +266,11 @@ function PlacementInspector({
         </p>
       )}
 
-      <div className="world__row">
-        <button type="button" className="world__mini" onClick={() => onDuplicate(placement.id)}>
+      <div className="world__row world__row--actions">
+        <button type="button" className="ui-btn" onClick={() => onDuplicate(placement.id)}>
           Duplicate
         </button>
-        <button type="button" className="world__mini world__mini--danger" onClick={() => onRemove(placement.id)}>
+        <button type="button" className="ui-btn ui-btn--danger" onClick={() => onRemove(placement.id)}>
           Remove
         </button>
       </div>
@@ -271,6 +284,7 @@ function NumberField(props: { label: string; value: number; onChange: (value: nu
       <span className="world__label">{props.label}</span>
       <input
         type="number"
+        className="ui-num"
         value={props.value}
         onChange={(event) => {
           const next = Number(event.target.value);

@@ -84,7 +84,7 @@ export function TerrainPanel(props: TerrainPanelProps) {
           />
           <div className="world__row">
             <span className="world__label">Falloff</span>
-            <div className="world__segmented" role="group" aria-label="Brush falloff">
+            <div className="ui-seg ui-seg--grow" role="group" aria-label="Brush falloff">
               {(['smooth', 'flat'] as const).map((falloff) => (
                 <button
                   key={falloff}
@@ -119,13 +119,13 @@ export function TerrainPanel(props: TerrainPanelProps) {
           <div className="world__row">
             <button
               type="button"
-              className="world__mini"
+              className="ui-btn"
               onClick={() => props.onTargetY(settings.seaLevel)}
             >
               Sea level ({settings.seaLevel})
             </button>
             {hover && (
-              <button type="button" className="world__mini" onClick={() => props.onTargetY(hover.height)}>
+              <button type="button" className="ui-btn" onClick={() => props.onTargetY(hover.height)}>
                 Under cursor ({hover.height})
               </button>
             )}
@@ -203,7 +203,7 @@ function Slider(props: {
       />
       <input
         type="number"
-        className="world__number"
+        className="world__number ui-num"
         min={props.min}
         max={props.max}
         step={props.step}

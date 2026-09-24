@@ -142,8 +142,22 @@ export function normalizeSettings(raw: unknown): WorldSettings {
 		),
 		// An empty strata list is not a world with no ground; it is a world nothing can be
 		// painted with. The defaults come back rather than leaving every column unresolvable.
-		strata: strata.length > 0 ? strata : DEFAULT_STRATA.map((profile) => ({ ...profile })),
+		// Keep a saved palette, and add any default the build did not have yet — water and the
+		// biome grounds arrived after the first five, and a draft from before that should
+		// still be able to paint them.
+		strata: mergeStrata(strata),
 	};
+}
+
+function mergeStrata(saved: SurfaceProfile[]): SurfaceProfile[] {
+  const profiles = saved.length > 0 ? saved : DEFAULT_STRATA.map((profile) => ({ ...profile }));
+  const ids = new Set(profiles.map((profile) => profile.id));
+  for (const profile of DEFAULT_STRATA) {
+    if (ids.has(profile.id)) continue;
+    if (profiles.length >= WORLD_LIMITS.maxStrata) break;
+    profiles.push({ ...profile });
+  }
+  return profiles;
 }
 
 const ANCHORS: PlacementAnchor[] = ['surface', 'fixed', 'buried'];

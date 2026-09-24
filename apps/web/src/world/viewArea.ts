@@ -30,7 +30,7 @@ import { areaCount, areaStats, clampArea, type Prefab, type RegionArea, type Wor
  * only thing that has to be held whole, and 16 MB of it is comparable to a large imported
  * schematic the editor already opens without complaint.
  */
-export const MAX_VIEW_CELLS = 8_000_000;
+export const MAX_VIEW_CELLS = 16_000_000;
 
 export interface FittedArea {
   /** The area that fits — the requested one, or the largest rectangle inside it that does. */

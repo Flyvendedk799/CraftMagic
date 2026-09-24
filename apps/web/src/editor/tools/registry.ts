@@ -19,7 +19,6 @@ import type { VoxelHit } from '../raycast.js';
 import { boxLabel, cellPreview, clipCells, dedupe, isAir, type Preview } from '../previewShapes.js';
 import { boxBounds, type BoxCorner } from './boxSelect.js';
 import { brushCells, brushEdit, type BrushShape, type Cell } from './brush.js';
-import { grabStructure } from './grab.js';
 import { linePath, lineEdit } from './line.js';
 import { erase } from './erase.js';
 import { floodFill } from './fill.js';
@@ -301,26 +300,16 @@ const swap: EditorTool = {
  * version deleted without ever showing you.
  */
 const grab: EditorTool = {
-  groundRefusal: 'Nothing to grab there — drag a block to move it, or click one to select its structure.',
-  onClick(ctx, hit) {
-    const result = grabStructure(ctx.grid, hit);
-    if (result.capped) {
-      return {
-        notice: `That structure is over ${result.cells.toLocaleString()} blocks — too much to trace. Use the Box tool for something that size.`,
-      };
-    }
-    if (!result.bounds) return { notice: 'Nothing to grab there.' };
-
-    const { min, max } = result.bounds;
+  groundRefusal: 'Nothing to grab there. Drag a block to move it.',
+  onClick(_ctx, hit) {
+    // A click used to flood-fill the whole connected mass and hand you a Box around it.
+    // On a tree or an apartment that box was the entire build, and it looked like the
+    // click had selected everything. Dragging is the move. A click selects that one block.
+    const cell = { x: hit.x, y: hit.y, z: hit.z };
     return {
-      region: { min, max },
-      // Straight to the tool that owns selections, so the verbs for what you just picked out
-      // are under the cursor rather than one more click away.
+      region: { min: cell, max: cell },
       switchTool: 'select',
-      notice:
-        `Selected ${result.cells.toLocaleString()} connected blocks in a ` +
-        `${max.x - min.x + 1}×${max.y - min.y + 1}×${max.z - min.z + 1} box. ` +
-        `Drag to move it, or Cut to lift it.`,
+      notice: 'Selected that one block. Drag with Grab to move a block; drag with Box to select a larger region.',
     };
   },
 };

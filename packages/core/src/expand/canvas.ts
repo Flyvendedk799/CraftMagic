@@ -131,6 +131,10 @@ export class VoxelCanvas {
 
 	/** Writes that fell outside the build volume, so the caller can warn about clipping. */
 	private clipped = 0;
+	/** One past the furthest coordinate any write asked for, including ones that missed. */
+	private spanX = 0;
+	private spanY = 0;
+	private spanZ = 0;
 
 	/** The part currently drawing. 0 while nothing has claimed the brush. */
 	private part = 0;
@@ -168,6 +172,9 @@ export class VoxelCanvas {
 	}
 
 	set(x: number, y: number, z: number, paletteIdx: number): void {
+		if (x + 1 > this.spanX) this.spanX = x + 1;
+		if (y + 1 > this.spanY) this.spanY = y + 1;
+		if (z + 1 > this.spanZ) this.spanZ = z + 1;
 		if (!this.inBounds(x, y, z)) {
 			this.clipped++;
 			return;
@@ -187,6 +194,11 @@ export class VoxelCanvas {
 
 	get clippedWrites(): number {
 		return this.clipped;
+	}
+
+	/** The volume that would have held every write, clipped ones included. */
+	get drawnSpan(): { x: number; y: number; z: number } {
+		return { x: this.spanX, y: this.spanY, z: this.spanZ };
 	}
 
 	resetClipCounter(): void {

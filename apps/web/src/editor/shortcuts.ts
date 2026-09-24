@@ -37,12 +37,13 @@ export const EDITOR_SHORTCUTS: readonly ShortcutGroup[] = [
     title: 'Editing',
     rows: [
       { keys: 'Grab tool, drag a block', what: 'Move that one block on its own, wherever you drop it' },
-      { keys: 'Grab tool, click a block', what: 'Select the whole connected structure instead' },
+      { keys: 'Grab tool, click a block', what: 'Select just that block. Box selects a region' },
       { keys: 'Alt + click', what: 'Pick the block under the pointer, from any tool' },
       { keys: 'Shift + drag', what: 'Paint even where the press missed the build — onto the ground plane' },
       { keys: 'Esc', what: 'Cancel the corner in progress' },
       { keys: 'Ctrl + Z', what: 'Undo' },
       { keys: 'Ctrl + Shift + Z', what: 'Redo' },
+      { keys: 'Ctrl + Y', what: 'Redo' },
     ],
   },
   {

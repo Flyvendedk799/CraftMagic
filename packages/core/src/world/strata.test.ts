@@ -39,9 +39,9 @@ describe('DEFAULT_STRATA', () => {
 		}
 	});
 
-	it('has the five grounds the painter offers, grass first', () => {
+	it('offers grass first, then the other grounds, biomes and water', () => {
 		expect(DEFAULT_STRATA.map((profile) => profile.id)).toEqual([
-			'grass', 'sand', 'stone', 'snow', 'path',
+			'grass', 'sand', 'stone', 'snow', 'path', 'forest', 'desert', 'swamp', 'peaks', 'water',
 		]);
 		// `createTerrain` fills the stratum array with zeroes, so index 0 is what a new world is
 		// made of — a field, not whatever happened to sort first.

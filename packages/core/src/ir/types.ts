@@ -351,6 +351,8 @@ export type ExpandIssueCode =
   | 'UNKNOWN_BLOCK'
   | 'UNDEFINED_ROLE'
   | 'OUT_OF_BOUNDS'
+  /** The editor enlarged `size` so writes that missed the old volume were kept. */
+  | 'VOLUME_GREW'
   | 'BAD_COORD_EXPR'
   | 'SIZE_CAP'
   | 'DETAIL_CAP'
@@ -440,6 +442,14 @@ export interface ExpandResult {
   origin: Uint16Array | null;
   /** The parts `origin` refers to, in program order. Empty when provenance is off. */
   parts: BuildPart[];
+  /**
+   * How far the components actually reached, one past the furthest write on each axis.
+   *
+   * Includes writes that missed the volume. A library build whose `size` is smaller than
+   * its components reports a span larger than `grid.size`, which is how the editor can
+   * grow the volume instead of dropping those blocks.
+   */
+  span: { x: number; y: number; z: number };
 }
 
 /** An undo/redo unit. Typed arrays keep large edits cheap (~10 bytes per voxel). */

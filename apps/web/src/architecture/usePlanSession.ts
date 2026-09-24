@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizePlan, type LayoutPlan } from './plan.js';
 import { PlanHistory } from './history.js';
+import { planHistoryFor } from '../studio/retainHistory.js';
 import { loadAutosave, saveAutosave, listSaved, savePlan, deleteSaved, type SavedPlan } from './storage.js';
 
 /** Long enough that a drag writes once, short enough that a closed tab loses nothing real. */
@@ -53,7 +54,7 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
   planRef.current = plan;
 
   const historyRef = useRef<PlanHistory | null>(null);
-  const history = (historyRef.current ??= new PlanHistory());
+  const history = (historyRef.current ??= planHistoryFor('architecture'));
 
   const [revision, setRevision] = useState(0);
   const [saved, setSaved] = useState<SavedPlan[]>(() => listSaved());

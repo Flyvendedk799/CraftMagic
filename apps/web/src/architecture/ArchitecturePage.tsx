@@ -35,6 +35,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { registerPlanHandoff } from '../studio/handoffBridge.js';
+import { useReportPresence } from '../studio/presence.js';
 import { expand, paletteColors, paletteFlags, voxelIndex, type BuildPart, type VoxelGrid } from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorCanvas.js';
 import type { VoxelHit } from '../editor/raycast.js';
@@ -558,6 +560,17 @@ export function ArchitecturePage() {
     },
     [built.program, navigate],
   );
+
+  useEffect(() => {
+    return registerPlanHandoff(() => (built.blockCount > 0 ? registerGeneratedBuild(built.program) : null));
+  }, [built.program, built.blockCount]);
+
+  useReportPresence({
+    structure: plan.name || 'Structure',
+    plan: true,
+    dirty: session.dirty,
+    dirtyLabel: 'the floorplan',
+  });
 
   // A finished AI pass lands in Build, exactly like the hand-off button: the result is a
   // generated build, not a plan, and Build is where a generated build lives. The plan here is

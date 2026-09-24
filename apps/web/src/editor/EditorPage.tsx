@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { useReportPresence } from '../studio/presence.js';
 import {
   AIR_BLOCK,
   displayName,
@@ -57,6 +58,7 @@ import {
   registerImportedBuild,
 } from './builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
+import { saveToLibrary } from '../library/library.js';
 import {
   carrySettings,
   parseScale,
@@ -295,6 +297,31 @@ export function EditorPage() {
   }, []);
 
   const { grid, name } = build;
+  useReportPresence({
+    structure: name,
+    plan: false,
+    dirty: session.edits > 0,
+    dirtyLabel: 'this building',
+  });
+
+  // A library build is the structure a placement points at. Writing the edited voxels
+  // back to that row is what makes a wall change show up on the map, instead of a copy.
+  useEffect(() => {
+    if (!build.id.startsWith('lib:') || session.edits === 0) return;
+    const row = build.id.slice(4);
+    const timer = setTimeout(() => {
+      void saveToLibrary({
+        id: row,
+        name,
+        grid,
+        program: build.program,
+        detached: true,
+        edits: session.exportEdits(),
+        kind: 'structure',
+      }).catch(() => undefined);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [session.edits, session.exportEdits, build.id, build.program, grid, name]);
 
   const scalePreview = useMemo(() => previewScale(buildId, scale), [buildId, scale]);
   const scaleBase = useMemo(() => baseSize(buildId), [buildId]);
@@ -419,6 +446,10 @@ export function EditorPage() {
   const [region, setRegion] = useState<{ min: BoxCorner; max: BoxCorner } | null>(null);
   const [familyMode, setFamilyMode] = useState(false);
   const [anchor, setAnchor] = useState<BoxCorner | null>(null);
+  // Written in the same turn as setAnchor. A line's second click can land before React
+  // re-renders, and reading state then still sees "no start".
+  const anchorRef = useRef<BoxCorner | null>(null);
+  anchorRef.current = anchor;
   /** Where a selection being dragged would land, while it is being dragged. */
   const [dragGhost, setDragGhost] = useState<{ dx: number; dy: number; dz: number } | null>(null);
   /** Where the single block being carried would land, while it is in the air. */
@@ -790,7 +821,10 @@ export function EditorPage() {
             : result.op;
         session.apply(op);
       }
-      if (result.anchor !== undefined) setAnchor(result.anchor);
+      if (result.anchor !== undefined) {
+        anchorRef.current = result.anchor;
+        setAnchor(result.anchor);
+      }
       if (result.region !== undefined) setRegion(result.region);
       if (result.pickBlock !== undefined) setBlock(result.pickBlock);
       if (result.clip !== undefined) setClip(result.clip);
@@ -798,6 +832,23 @@ export function EditorPage() {
       if (result.notice !== undefined) setNotice(result.notice);
     },
     [grid, session, symmetry],
+  );
+
+  /**
+   * A dragged line: both ends in one gesture.
+   *
+   * If a start is already standing, the drag finishes it at the release point. Otherwise
+   * the press and the release are the two ends. Either way it is one `lineEdit`, not two
+   * clicks sharing a stale anchor.
+   */
+  const onLine = useCallback(
+    (from: VoxelHit, to: VoxelHit) => {
+      const impl = TOOL_IMPL.line;
+      const start = anchorRef.current ?? from;
+      const end = anchorRef.current ? to : to;
+      runTool(impl, impl.onClick({ ...toolCtx(), anchor: start }, end));
+    },
+    [runTool, toolCtx],
   );
 
   const onCanvasClick = useCallback(
@@ -810,7 +861,9 @@ export function EditorPage() {
         setNotice(impl.groundRefusal);
         return;
       }
-      runTool(impl, impl.onClick(toolCtx(), hit));
+      const ctx = toolCtx();
+      if (tool === 'line') ctx.anchor = anchorRef.current;
+      runTool(impl, impl.onClick(ctx, hit));
     },
     [tool, toolCtx, runTool],
   );
@@ -1184,6 +1237,7 @@ export function EditorPage() {
           layerFloor={!ghost && isolate && layer !== null ? layer : 0}
           onHover={setHover}
           onClick={ghost ? undefined : assembly.assembling ? assembly.skip : onCanvasClick}
+          onLine={ghost || assembly.assembling || tool !== 'line' ? undefined : onLine}
           onStroke={ghost || assembly.assembling ? undefined : strokable ? onStroke : undefined}
           onPick={ghost ? undefined : assembly.assembling ? assembly.skip : onPick}
           marker={ghost ? null : anchor}

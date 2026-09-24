@@ -28,6 +28,7 @@ import {
   type WorldSettings,
 } from '@craftmagic/core';
 import { WorldHistory, type WorldDelta } from './history.js';
+import { worldHistoryFor } from '../studio/retainHistory.js';
 import { TerrainStroke, applyTerrainDelta } from './stroke.js';
 import { loadDraft, saveDraft, type SavedWorld } from './storage.js';
 import { localStore, type WorldStore } from './api.js';
@@ -95,7 +96,10 @@ export function useWorldSession(
   const [draftRevision, setDraftRevision] = useState(0);
 
   const historyRef = useRef<WorldHistory | null>(null);
-  const history = (historyRef.current ??= new WorldHistory());
+  // One stack for the world on screen. Keyed constantly rather than by document id: the id
+  // is minted again on every remount, before the draft is read back, and keying on it would
+  // hand back an empty stack every time you returned to the map.
+  const history = (historyRef.current ??= worldHistoryFor('open-world'));
 
   const bump = useCallback(() => setRevision((n) => n + 1), []);
 
@@ -314,8 +318,12 @@ export function useWorldSession(
 
   const open = useCallback(
     (doc: WorldDoc) => {
-      docRef.current = normalizeWorld(doc);
-      history.clear();
+      const next = normalizeWorld(doc);
+      const same = docRef.current?.id === next.id;
+      docRef.current = next;
+      // Opening a different map starts a fresh stack. Re-opening the one already on screen
+      // — including the remount a mode switch causes — must not throw the sculpting away.
+      if (!same) history.clear();
       setSavedRevision(0);
       bump();
     },

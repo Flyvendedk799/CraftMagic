@@ -34,6 +34,7 @@ import {
 } from '@craftmagic/core';
 import { editsOf, rememberEdits, type LoadedBuild } from './builds.js';
 import type { VoxelWorld } from './VoxelWorld.js';
+import { editHistoryFor } from '../studio/retainHistory.js';
 import { useUndoKeys } from '../studio/undoKeys.js';
 import { EditHistory } from './history.js';
 import { blockDelta } from './tools/op.js';
@@ -101,7 +102,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
   const historyRef = useRef<EditHistory | null>(null);
   // Lazy rather than `useRef(new EditHistory())`, which would allocate one on every render
   // — and the editor re-renders on every pointer move.
-  const history = (historyRef.current ??= new EditHistory());
+  const history = (historyRef.current ??= editHistoryFor(build.id));
 
   const worldRef = useRef<VoxelWorld | null>(null);
   /** Voxels as expanded — before the overlay, before any edit. What discard restores. */
@@ -124,7 +125,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
    * where it must run: an effect would let one frame paint the un-composited grid, and the
    * user's edits blinking out for a frame on every slider tick reads as data loss.
    */
-  const stateFor = (next: LoadedBuild): SessionState => {
+  const stateFor = (next: LoadedBuild, stack: EditHistory = history): SessionState => {
     if (lastIdRef.current !== next.id) {
       lastIdRef.current = next.id;
       overlayRef.current = EditOverlay.fromJSON(editsOf(next.id));
@@ -153,8 +154,8 @@ export function useEditSession(build: LoadedBuild): EditSession {
       blockCount: next.blockCount + (composited?.delta ?? 0),
       edits: overlay.size,
       outside: composited?.outside ?? 0,
-      canUndo: false,
-      canRedo: false,
+      canUndo: stack.canUndo,
+      canRedo: stack.canRedo,
     };
   };
 
@@ -163,9 +164,12 @@ export function useEditSession(build: LoadedBuild): EditSession {
   // Reset during render rather than in an effect — see `stateFor`. React re-runs the
   // component immediately, so nothing downstream sees the stale state.
   if (state.build !== build) {
-    history.clear();
+    // A different building gets its own stack. The same id — a remount after zooming out
+    // and back, or a re-expand that did not change which document this is — keeps the
+    // stack. Clearing here was what made Ctrl+Z forget the edit the moment you left.
+    if (state.build.id !== build.id) historyRef.current = editHistoryFor(build.id);
     baselineRef.current = null;
-    setState(stateFor(build));
+    setState(stateFor(build, historyRef.current ?? history));
   }
 
   const grid = build.grid;

@@ -153,10 +153,13 @@ export function saveToLibrary(input: {
    * own.
    */
   generationId?: string | null;
+  /** When set, overwrite this library row instead of inserting a copy. */
+  id?: string;
 }): Promise<{ id: string; blockCount: number }> {
   return request(
     '/api/builds',
     json('POST', {
+      id: input.id,
       name: input.name,
       library: input.library ?? true,
       kind: input.kind ?? 'structure',

@@ -244,6 +244,28 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 
 			let blockCount = 0;
 			for (const v of voxelGrid.voxels) if (v !== 0) blockCount++;
+
+			const existingId = typeof (body as { id?: unknown } | null)?.id === 'string'
+				? (body as { id: string }).id
+				: null;
+			if (existingId && UUID_SHAPE.test(existingId)) {
+				const updated = await store!.updateBuild(existingId, user.id, {
+					name,
+					sizeX: grid.size.x,
+					sizeY: grid.size.y,
+					sizeZ: grid.size.z,
+					blockCount,
+					voxels: encodeVoxels(voxelGrid),
+					program: body?.program ?? null,
+					detached: body?.detached === true,
+					edits: typeof body?.edits === 'object' ? body.edits : null,
+					plan: typeof body?.plan === 'object' ? body.plan : null,
+					kind,
+				});
+				if (!updated) return reply.code(404).send({ error: 'unknown_build' });
+				return { id: existingId, blockCount };
+			}
+
 			const id = await store!.saveBuild({
 				name,
 				description: typeof body?.description === 'string' ? body.description : null,

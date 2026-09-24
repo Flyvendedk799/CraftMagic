@@ -36,23 +36,20 @@ export interface PlacementsPanelProps {
   onFrame: (placement: WorldPlacement) => void;
 }
 
-const KIND_LABELS: ReadonlyArray<{ id: BuildKind; label: string }> = [
-  { id: 'structure', label: 'Structures' },
-  { id: 'interior', label: 'Interiors' },
-];
-
 export function PlacementsPanel(props: PlacementsPanelProps) {
   const { doc, library, selected } = props;
-  const [kinds, setKinds] = useState<BuildKind[]>(['structure', 'interior']);
+  // One choice, not two switches that both start on. Turning "Interiors" off while
+  // Structures stayed on changed nothing you could see, which read as a dead control.
+  const [kind, setKind] = useState<'all' | BuildKind>('all');
   const [filter, setFilter] = useState('');
 
   const shelf = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     return library.shelf.filter(
       (entry) =>
-        kinds.includes(entry.kind) && (needle === '' || entry.name.toLowerCase().includes(needle)),
+        (kind === 'all' || entry.kind === kind) && (needle === '' || entry.name.toLowerCase().includes(needle)),
     );
-  }, [library.shelf, kinds, filter]);
+  }, [library.shelf, kind, filter]);
 
   const placement = doc.placements.find((entry) => entry.id === selected) ?? null;
 
@@ -63,23 +60,15 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
             `button` rule and rendered as two full-strength mint call-to-actions — the loudest
             thing on a page whose actual verbs are "sculpt" and "place". */}
         <div className="shelf__kinds" role="group" aria-label="Component kind">
-          {KIND_LABELS.map(({ id, label }) => (
+          {(['all', 'structure', 'interior'] as const).map((id) => (
             <button
               key={id}
               type="button"
               className="shelf__kind"
-              aria-pressed={kinds.includes(id)}
-              onClick={() =>
-                setKinds((current) =>
-                  current.includes(id)
-                    ? // Never empty: a filter that hides everything looks like a broken library
-                      // rather than like a filter, and there is no way back from it by clicking.
-                      current.length === 1 ? current : current.filter((k) => k !== id)
-                    : [...current, id],
-                )
-              }
+              aria-pressed={kind === id}
+              onClick={() => setKind(id)}
             >
-              {label}
+              {id === 'all' ? 'All' : id === 'structure' ? 'Structures' : 'Interiors'}
             </button>
           ))}
         </div>
@@ -112,9 +101,11 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
 
         {library.status === 'ready' && shelf.length === 0 && (
           <p className="world__hint">
-            Nothing saved yet. Make something in <Link to="/studio?build=empty">Build</Link> or
-            draw one in <Link to="/studio?mode=arch">Architecture</Link>, press “Save to
-            library”, and it becomes a component you can place here.
+            {kind === 'interior'
+              ? 'No interiors yet. Draw a floorplan in Architecture and save it — interiors are plans, structures are voxel builds.'
+              : kind === 'structure'
+                ? 'No structures yet. Save a build from the voxel editor and it shows up here.'
+                : 'Nothing saved yet. Make something in Build or draw one in Architecture, press “Save to library”, and it becomes a component you can place here.'}
           </p>
         )}
 
@@ -261,8 +252,10 @@ function PlacementInspector({
         </p>
       ) : (
         <p className="world__hint">
-          <Link to={openInBuild(libRef(placement.buildId))}>Edit the source build in Build →</Link>{' '}
-          Changes there save as a new build; re-place it here to use the new one.
+          <Link to={openInBuild(libRef(placement.buildId))}>Open these blocks</Link>
+          {' · '}
+          double-click the building on the map. It points at this build, so an edit here shows
+          on every placement of it.
         </p>
       )}
 

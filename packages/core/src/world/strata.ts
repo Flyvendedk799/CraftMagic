@@ -64,6 +64,48 @@ export const DEFAULT_STRATA: readonly SurfaceProfile[] = [
 		subsurfaceDepth: 2,
 		filler: 'minecraft:stone',
 	},
+	{
+		id: 'forest',
+		label: 'Forest',
+		surface: 'minecraft:podzol',
+		subsurface: 'minecraft:dirt',
+		subsurfaceDepth: 3,
+		filler: 'minecraft:stone',
+	},
+	{
+		id: 'desert',
+		label: 'Desert',
+		surface: 'minecraft:sand',
+		subsurface: 'minecraft:sand',
+		subsurfaceDepth: 4,
+		filler: 'minecraft:sandstone',
+		color: [194, 178, 128],
+	},
+	{
+		id: 'swamp',
+		label: 'Swamp',
+		surface: 'minecraft:mud',
+		subsurface: 'minecraft:dirt',
+		subsurfaceDepth: 3,
+		filler: 'minecraft:stone',
+	},
+	{
+		id: 'peaks',
+		label: 'Peaks',
+		surface: 'minecraft:stone',
+		subsurface: 'minecraft:stone',
+		subsurfaceDepth: 2,
+		filler: 'minecraft:deepslate',
+	},
+	{
+		id: 'water',
+		label: 'Water',
+		surface: 'minecraft:sand',
+		subsurface: 'minecraft:sand',
+		subsurfaceDepth: 2,
+		filler: 'minecraft:stone',
+		color: [58, 110, 165],
+	},
 ];
 
 /**

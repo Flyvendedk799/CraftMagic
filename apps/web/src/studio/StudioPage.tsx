@@ -40,6 +40,8 @@ import { listBuilds, type LibraryBuild } from '../library/library.js';
 import { localStore, remoteStore, type SavedWorld } from '../world/api.js';
 import { CommandPalette, type Command } from './CommandPalette.js';
 import { composeMap, libRef, openGuide, openInBuild, openMap, placeOnMap } from './handoff.js';
+import { takePlanHandoff } from './handoffBridge.js';
+import { PresenceProvider, useStudioPresence } from './presence.js';
 import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, parseMode, type StudioMode } from './mode.js';
 import './studio.css';
 
@@ -62,6 +64,14 @@ const MODE_PAGES: Readonly<Record<StudioMode, () => JSX.Element>> = {
 };
 
 export function StudioPage() {
+  return (
+    <PresenceProvider>
+      <StudioShell />
+    </PresenceProvider>
+  );
+}
+
+function StudioShell() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = parseMode(searchParams.get('mode'));
@@ -97,11 +107,18 @@ export function StudioPage() {
     };
   }, [palette, auth.status]);
 
+  const presence = useStudioPresence();
+
   const setMode = useCallback(
     (next: StudioMode) => {
       setSearchParams(
         (params) => {
-          // Absent means build — the default every redirected `/editor?…` link relies on.
+          // Zooming from a floorplan into the blocks compiles the plan into the build,
+          // the same way Hand off does. A bare switch used to open the empty 32×24×32 plot.
+          if (mode === 'arch' && next === 'build') {
+            const id = takePlanHandoff();
+            if (id) params.set('build', id);
+          }
           const value = modeParam(next);
           if (value === null) params.delete('mode');
           else params.set('mode', value);
@@ -110,7 +127,7 @@ export function StudioPage() {
         { replace: true },
       );
     },
-    [setSearchParams],
+    [mode, setSearchParams],
   );
 
   // Ctrl+K (or ⌘K) from anywhere on the page, text fields included — the palette is how you
@@ -284,19 +301,32 @@ export function StudioPage() {
    * middle of the bar — so the pill is a flex child of the chrome instead of a fixed overlay
    * that used to land on Architecture's zoom controls and World's toolbar.
    */
+  const placeBuild = searchParams.get('build');
   const switcher = (
-    <div className="studio__switch" role="group" aria-label="Studio mode">
-      {STUDIO_MODES.map((id) => (
+    <div className="studio__switch" role="navigation" aria-label="Where you are in the project">
+      <button type="button" aria-pressed={mode === 'world'} title="The map" onClick={() => setMode('world')}>
+        {presence.project}
+      </button>
+      {(mode === 'build' || mode === 'arch' || presence.structure) && (
         <button
-          key={id}
           type="button"
-          aria-pressed={mode === id}
-          title={MODE_SPECS[id].hint}
-          onClick={() => setMode(id)}
+          aria-pressed={mode === 'build'}
+          title="The blocks"
+          onClick={() => setMode('build')}
         >
-          {MODE_SPECS[id].label}
+          {presence.structure ?? 'Structure'}
         </button>
-      ))}
+      )}
+      {mode === 'arch' && (
+        <button type="button" aria-pressed title="The floorplan">
+          Plan
+        </button>
+      )}
+      {presence.dirty && (
+        <span className="studio__dirty" title={`${presence.dirtyLabel} has unsaved changes`}>
+          Unsaved
+        </span>
+      )}
       <button
         type="button"
         className="studio__palette-key"
@@ -316,7 +346,29 @@ export function StudioPage() {
 
       {foreign.length > 0 && dismissed !== foreignKey && (
         <p className="studio__notice" role="status">
-          {describeForeign(foreign)}{' '}
+          {describeForeign(foreign, mode)}{' '}
+          {mode === 'world' && placeBuild && (
+            <>
+              <button
+                type="button"
+                className="studio__notice-link"
+                onClick={() =>
+                  setSearchParams(
+                    (params) => {
+                      params.set('mode', 'world');
+                      params.set('place', placeBuild.startsWith('lib:') ? placeBuild.slice(4) : placeBuild);
+                      params.delete('build');
+                      return params;
+                    },
+                    { replace: true },
+                  )
+                }
+              >
+                Place this build on the map
+              </button>
+              {' · '}
+            </>
+          )}
           <button type="button" className="studio__notice-link" onClick={() => setMode(foreign[0]!.owner)}>
             Switch to {MODE_SPECS[foreign[0]!.owner].label}
           </button>
@@ -341,7 +393,7 @@ export function StudioPage() {
 }
 
 /** One sentence, in the visitor's terms rather than the query string's. */
-function describeForeign(foreign: ReturnType<typeof foreignParams>): string {
+function describeForeign(foreign: ReturnType<typeof foreignParams>, mode: StudioMode): string {
   const first = foreign[0]!;
   const what =
     first.key === 'build'
@@ -354,11 +406,12 @@ function describeForeign(foreign: ReturnType<typeof foreignParams>): string {
             ? 'The map in the address bar'
             : `“${first.key}” in the address bar`;
   const owner = MODE_SPECS[first.owner].label;
+  if (mode === 'world' && first.key === 'build') {
+    return 'This build is not on the map yet.';
+  }
   const tail =
     first.owner === 'world' && first.key === 'place'
       ? ' — nothing is placed here.'
-      : first.owner === 'build'
-        ? ' — it is not on this map or plan.'
-        : '.';
-  return `${what} belongs to ${owner} mode and is not open here${tail}`;
+      : '.';
+  return `${what} belongs to ${owner} and is not open here${tail}`;
 }

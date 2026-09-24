@@ -61,7 +61,7 @@ export function WorldPreview({ built, area, trimmed = 0 }: WorldPreviewProps) {
         </span>
         {trimmed > 0 && (
           <span className="world__warn-inline" title="Materialising every region asked for would not fit in memory">
-            {trimmed} more asked for
+            {trimmed} more regions than memory can hold — the nearest ones are on screen
           </span>
         )}
         {built.stats.unresolved > 0 && (

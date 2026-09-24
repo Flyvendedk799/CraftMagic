@@ -141,6 +141,7 @@ export function expand(program: BuildProgram, options: ExpandOptions = {}): Expa
 		errors,
 		origin: canvas.origin,
 		parts: canvas.origin ? parts.measure(canvas.origin, size) : [],
+		span: canvas.drawnSpan,
 	};
 }
 

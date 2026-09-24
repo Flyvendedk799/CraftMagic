@@ -189,12 +189,17 @@ export function validatePlan(plan: LayoutPlan): ValidationResult {
         floorIndex: 0,
       });
     } else {
+      const seenRooms = new Set<string>();
       for (const room of reachabilityCheck(plan)) {
+        const key = `${room.floorIndex}:${room.item.id}`;
+        if (seenRooms.has(key)) continue;
+        seenRooms.add(key);
         unreachable.add(room.item.id);
+        const storey = plan.floors[room.floorIndex]?.name ?? `storey ${room.floorIndex + 1}`;
         issues.push({
           level: 'warning',
           code: 'room_unreachable',
-          message: `${label(room.item)} cannot be walked to from any door.`,
+          message: `${label(room.item)} on ${storey} cannot be walked to from any door.`,
           floorIndex: room.floorIndex,
           itemId: room.item.id,
         });

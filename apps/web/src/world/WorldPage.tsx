@@ -29,7 +29,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useReportPresence } from '../studio/presence.js';
+import { openInBuild } from '../studio/handoff.js';
 import {
   OVERLAY_AIR,
   createWorld,
@@ -90,6 +92,14 @@ export function WorldPage() {
   );
   const session = useWorldSession(undefined, store);
   const { doc } = session;
+  const navigate = useNavigate();
+  useReportPresence({
+    project: doc.name || 'Map',
+    structure: null,
+    plan: false,
+    dirty: session.dirty,
+    dirtyLabel: 'the map',
+  });
 
   const [tool, setTool] = useState<WorldTool>('raise');
   const [brush, setBrush] = useState<TerrainBrush>({ radius: 12, strength: 2, falloff: 'smooth' });
@@ -244,6 +254,7 @@ export function WorldPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const worldParam = searchParams.get('world');
   const placeParam = searchParams.get('place');
+  const plotParam = searchParams.get('plot');
 
   const dropParam = useCallback(
     (key: string) => {
@@ -257,6 +268,12 @@ export function WorldPage() {
     },
     [setSearchParams],
   );
+
+  useEffect(() => {
+    if (plotParam !== '1' || session.loading) return;
+    setNotice(`One plot is selected in the middle of ${doc.name}. Place a build, or open one and draw its plan.`);
+    dropParam('plot');
+  }, [plotParam, session.loading, doc.name, dropParam]);
 
   useEffect(() => {
     // Not before the draft has been read: `useWorldSession` assigns the stored draft over the
@@ -331,8 +348,10 @@ export function WorldPage() {
     (id: string, x: number, z: number) => {
       const placement = doc.placements.find((entry) => entry.id === id);
       if (!placement) return;
-      placement.x = Math.max(0, Math.min(doc.settings.size.x - 1, x));
-      placement.z = Math.max(0, Math.min(doc.settings.size.z - 1, z));
+      // Snap to a 4-block grid so two buildings can share a spacing without typing it.
+      const snap = (value: number, limit: number) => Math.max(0, Math.min(limit, Math.round(value / 4) * 4));
+      placement.x = snap(x, doc.settings.size.x - 1);
+      placement.z = snap(z, doc.settings.size.z - 1);
       setSculpting(true);
       session.touch();
     },
@@ -461,6 +480,12 @@ export function WorldPage() {
     if (!online) return;
 
     const run = runOf(doc);
+    if (run.length > 1) {
+      const go = window.confirm(
+        `Send all ${run.length} regions? The first one is placed by hand in Minecraft, and the rest queue behind it. A full map can take hours. Cancel to send only the region on screen instead.`,
+      );
+      if (!go) return;
+    }
     setSending(true);
     try {
       for (let index = 0; index < run.length; index++) {
@@ -775,6 +800,7 @@ export function WorldPage() {
               showPlacements
               selected={selected}
               onSelect={setSelected}
+              onOpen={(placement) => navigate(openInBuild(`lib:${placement.buildId}`))}
               onMovePlacement={movePlacement}
               onCommitPlacements={() => {
                 setSculpting(false);

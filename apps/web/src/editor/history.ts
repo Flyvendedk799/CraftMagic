@@ -86,4 +86,8 @@ export class EditHistory {
   clear(): void {
     this.inner.clear();
   }
+
+  discardRedo(): void {
+    this.inner.discardRedo();
+  }
 }

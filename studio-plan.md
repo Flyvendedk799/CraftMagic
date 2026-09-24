@@ -18,9 +18,9 @@ Implemented on `cursor/studio-project-zoom-0047`. The journey the plan describes
 - [x] The header is a breadcrumb (map, structure, plan) instead of three peer mode buttons.
 - [x] Double-click a placed building to open its blocks. The placement points at the library row, and edits to a `lib:` build are written back to that row.
 - [x] `POST /api/builds` with an `id` updates that row (voxels, program, edits, plan) instead of inserting a copy.
-- [ ] A single undo stack that crosses zoom levels. Each document keeps its own stack, and that stack survives leaving and coming back.
-- [ ] Recompiling a plan onto the same structure while keeping hand edits as an override, with an explicit Detach. Hand off still registers a generated copy; the plan document stays the drawing.
-- [ ] Starting a plan on a chosen plot with the surrounding terrain in the 3D preview.
+- [x] A single undo stack that crosses zoom levels. Ctrl+Z undoes the latest edit in the project, zooming to the document that owns it when that document is not the one open.
+- [x] Recompiling a plan onto the same structure while keeping hand edits as an override, with an explicit Detach. A library plan stays on `?plan=lib:`; Detach clears that link.
+- [x] Starting a plan on a chosen plot with the surrounding terrain in the 3D preview. The placement inspector’s “Draw a plan here” carries the view into Plan.
 
 ## Phase 3
 
@@ -29,5 +29,5 @@ Implemented on `cursor/studio-project-zoom-0047`. The journey the plan describes
 - [x] Dragging a placement snaps to a 4-block grid.
 - [x] Sending the whole map asks first and says it can take hours. The on-screen export is still the view.
 - [x] Dashboard "Start a build" opens the map with one plot selected.
-- [ ] Streaming every requested region instead of shrinking the rectangle to the budget.
-- [ ] Spacing guides and a path from a door to a road.
+- [x] Streaming every requested region instead of shrinking the rectangle to the budget. The request is tiled into windows that each fit, and the 3D view walks them.
+- [x] Spacing guides and a path from a door to a road. The inspector names the gap to the nearest placement, and Path to road paints a path stratum from the door edge.

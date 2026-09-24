@@ -374,11 +374,13 @@ export class AgentStore {
 			voxels: Uint8Array;
 			program: unknown;
 			detached: boolean;
-			edits: unknown;
+			/** `undefined` leaves the stored layer alone. `null` clears it. */
+			edits?: unknown;
 			plan: unknown;
 			kind: BuildKind;
 		},
 	): Promise<boolean> {
+		const keepEdits = input.edits === undefined;
 		const { rowCount } = await this.db.query(
 			`UPDATE builds
 			 SET name = $3,
@@ -389,7 +391,7 @@ export class AgentStore {
 			     voxels = $8,
 			     program = $9,
 			     detached = $10,
-			     edits = $11,
+			     edits = CASE WHEN $14::bool THEN edits ELSE $11::jsonb END,
 			     plan = $12,
 			     kind = $13,
 			     updated_at = now()
@@ -405,9 +407,10 @@ export class AgentStore {
 				Buffer.from(input.voxels),
 				input.program == null ? null : JSON.stringify(input.program),
 				input.detached,
-				input.edits == null ? null : JSON.stringify(input.edits),
+				keepEdits || input.edits == null ? null : JSON.stringify(input.edits),
 				input.plan == null ? null : JSON.stringify(input.plan),
 				input.kind,
+				keepEdits,
 			],
 		);
 		return (rowCount ?? 0) > 0;

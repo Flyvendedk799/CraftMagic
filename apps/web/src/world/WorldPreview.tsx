@@ -30,12 +30,11 @@ export interface WorldPreviewProps {
   built: MaterializedRegion;
   /** Which regions this is. One is the ordinary case; several is the point of the feature. */
   area: RegionArea;
-  /** Regions the cell budget refused. Said here as well as in the navigator, because this is
-      the panel that is visibly missing them. */
-  trimmed?: number;
+  /** Which budget window this grid is, when the request is walked in pieces. */
+  stream?: { index: number; total: number };
 }
 
-export function WorldPreview({ built, area, trimmed = 0 }: WorldPreviewProps) {
+export function WorldPreview({ built, area, stream }: WorldPreviewProps) {
   const colors = useMemo(() => paletteColors(built.grid.palette), [built.grid.palette]);
   const flags = useMemo(() => paletteFlags(built.grid.palette), [built.grid.palette]);
 
@@ -59,9 +58,9 @@ export function WorldPreview({ built, area, trimmed = 0 }: WorldPreviewProps) {
         <span className="world__preview-size">
           {built.grid.size.x}×{built.grid.size.y}×{built.grid.size.z}
         </span>
-        {trimmed > 0 && (
-          <span className="world__warn-inline" title="Materialising every region asked for would not fit in memory">
-            {trimmed} more regions than memory can hold — the nearest ones are on screen
+        {stream && stream.total > 1 && (
+          <span className="world__warn-inline" title="Each piece fits in memory. The view walks the rest.">
+            Area {stream.index + 1} of {stream.total} — the rest stream in
           </span>
         )}
         {built.stats.unresolved > 0 && (

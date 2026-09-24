@@ -249,6 +249,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				? (body as { id: string }).id
 				: null;
 			if (existingId && UUID_SHAPE.test(existingId)) {
+				const hasEdits = body != null && Object.prototype.hasOwnProperty.call(body, 'edits');
 				const updated = await store!.updateBuild(existingId, user.id, {
 					name,
 					sizeX: grid.size.x,
@@ -258,7 +259,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 					voxels: encodeVoxels(voxelGrid),
 					program: body?.program ?? null,
 					detached: body?.detached === true,
-					edits: typeof body?.edits === 'object' ? body.edits : null,
+					edits: hasEdits ? (typeof body?.edits === 'object' ? body.edits : null) : undefined,
 					plan: typeof body?.plan === 'object' ? body.plan : null,
 					kind,
 				});

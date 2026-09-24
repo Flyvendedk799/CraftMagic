@@ -23,6 +23,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useReportPresence } from '../studio/presence.js';
+import { redoProject, undoProject } from '../studio/journal.js';
+import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import {
   AIR_BLOCK,
   displayName,
@@ -227,6 +229,8 @@ export function EditorPage() {
     [buildId, overrideKey, scaleKey, styleId, hiddenKey],
   );
   const session = useEditSession(build);
+  useZoomUndo('build', build.id, session.undo, session.redo);
+  const journal = useJournalFlags();
   // The opening reveal. It owns the canvas's grid and world handle while it runs; the
   // session takes over the moment it finishes, through the same remount the canvas would
   // have done anyway. Any click during the reveal skips to the finished build.
@@ -1338,10 +1342,10 @@ export function EditorPage() {
           edits={session.edits}
           detached={session.detached}
           outside={session.outside}
-          canUndo={session.canUndo}
-          canRedo={session.canRedo}
-          onUndo={session.undo}
-          onRedo={session.redo}
+          canUndo={journal.canUndo}
+          canRedo={journal.canRedo}
+          onUndo={undoProject}
+          onRedo={redoProject}
           onDiscard={session.discard}
           notice={notice}
           onShowHelp={() => setHelp(true)}

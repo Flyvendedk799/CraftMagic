@@ -75,6 +75,44 @@ export function fitArea(
   }
 }
 
+/**
+ * Every region of a request, as windows that each fit the cell budget.
+ *
+ * `fitArea` answers "what is the largest rectangle I can hold". A request bigger than that
+ * used to stop there, and the rest of the rectangle never appeared. These windows tile that
+ * remainder: the first is the fitted rectangle, then the strip to its right, then the rows
+ * below, each fitted the same way. Together they cover the request, and the 3D view walks
+ * them one at a time.
+ */
+export function coverArea(
+  doc: WorldDoc,
+  requested: RegionArea,
+  catalogue?: ReadonlyMap<string, Prefab>,
+  budget: number = MAX_VIEW_CELLS,
+): RegionArea[] {
+  const root = clampArea(doc.settings, requested);
+  const windows: RegionArea[] = [];
+  const queue: RegionArea[] = [root];
+  while (queue.length > 0) {
+    const next = queue.shift()!;
+    const fitted = fitArea(doc, next, catalogue, budget);
+    windows.push(fitted.area);
+    if (fitted.dropped === 0) continue;
+    if (fitted.area.rx1 < next.rx1) {
+      queue.push({
+        rx0: fitted.area.rx1 + 1,
+        rx1: next.rx1,
+        rz0: fitted.area.rz0,
+        rz1: fitted.area.rz1,
+      });
+    }
+    if (fitted.area.rz1 < next.rz1) {
+      queue.push({ rx0: next.rx0, rx1: next.rx1, rz0: fitted.area.rz1 + 1, rz1: next.rz1 });
+    }
+  }
+  return windows;
+}
+
 /** Whether a region is inside an area — what "the view already covers where I am" means. */
 export function areaHolds(area: RegionArea, rx: number, rz: number): boolean {
   return rx >= area.rx0 && rx <= area.rx1 && rz >= area.rz0 && rz <= area.rz1;

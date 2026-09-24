@@ -41,6 +41,8 @@ import { localStore, remoteStore, type SavedWorld } from '../world/api.js';
 import { CommandPalette, type Command } from './CommandPalette.js';
 import { composeMap, libRef, openGuide, openInBuild, openMap, placeOnMap } from './handoff.js';
 import { takePlanHandoff } from './handoffBridge.js';
+import { bindZoom, redoProject, undoProject, type JournalFrame } from './journal.js';
+import { useUndoKeys } from './undoKeys.js';
 import { PresenceProvider, useStudioPresence } from './presence.js';
 import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, parseMode, type StudioMode } from './mode.js';
 import './studio.css';
@@ -108,6 +110,29 @@ function StudioShell() {
   }, [palette, auth.status]);
 
   const presence = useStudioPresence();
+
+  const openFrame = useCallback(
+    (frame: JournalFrame) => {
+      setSearchParams(
+        (params) => {
+          if (frame.scope === 'build') {
+            params.delete('mode');
+            params.set('build', frame.docId);
+          } else if (frame.scope === 'arch') {
+            params.set('mode', 'arch');
+          } else {
+            params.set('mode', 'world');
+          }
+          return params;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  useEffect(() => bindZoom(openFrame), [openFrame]);
+  useUndoKeys({ undo: undoProject, redo: redoProject });
 
   const setMode = useCallback(
     (next: StudioMode) => {

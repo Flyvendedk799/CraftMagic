@@ -20,6 +20,7 @@ import type { BuildKind } from '../library/library.js';
 import type { ComponentLibrary, ShelfEntry } from '../library/components.js';
 import { libRef, openInBuild } from '../studio/handoff.js';
 import { placementFootprint } from './toolset.js';
+import { spacingToNearest } from './guides.js';
 
 export interface PlacementsPanelProps {
   doc: WorldDoc;
@@ -34,6 +35,8 @@ export interface PlacementsPanelProps {
   onRemove: (id: string) => void;
   onDuplicate: (id: string) => void;
   onFrame: (placement: WorldPlacement) => void;
+  onDrawPlan?: (placement: WorldPlacement) => void;
+  onPathToRoad?: (placement: WorldPlacement) => void;
 }
 
 export function PlacementsPanel(props: PlacementsPanelProps) {
@@ -181,8 +184,11 @@ function PlacementInspector({
   onRemove,
   onDuplicate,
   library,
+  onDrawPlan,
+  onPathToRoad,
 }: PlacementsPanelProps & { placement: WorldPlacement }) {
   const box = placementFootprint(placement);
+  const spacing = spacingToNearest(doc, placement);
   const index = placement.z * doc.settings.size.x + placement.x;
   const ground = doc.terrain.height[index] ?? doc.settings.minY;
   const resolvedY = anchorY(doc, placement, ground);
@@ -241,6 +247,10 @@ function PlacementInspector({
         <div><dt>Footprint</dt><dd>{box.w}×{box.d}</dd></div>
         <div><dt>Height</dt><dd>{placement.h}</dd></div>
         <div><dt>Blocks</dt><dd>{loaded ? 'loaded' : 'not fetched yet'}</dd></div>
+        <div>
+          <dt>Spacing</dt>
+          <dd>{spacing ? `${spacing.blocks} to ${spacing.name}` : 'nothing else placed'}</dd>
+        </div>
       </dl>
 
       {/* The way back: a placement is a reference to a library row, and that row is what Build
@@ -260,6 +270,16 @@ function PlacementInspector({
       )}
 
       <div className="world__row world__row--actions">
+        {onDrawPlan && (
+          <button type="button" className="ui-btn" onClick={() => onDrawPlan(placement)}>
+            Draw a plan here
+          </button>
+        )}
+        {onPathToRoad && (
+          <button type="button" className="ui-btn" onClick={() => onPathToRoad(placement)}>
+            Path to road
+          </button>
+        )}
         <button type="button" className="ui-btn" onClick={() => onDuplicate(placement.id)}>
           Duplicate
         </button>

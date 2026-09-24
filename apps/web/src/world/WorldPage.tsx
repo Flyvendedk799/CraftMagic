@@ -60,9 +60,12 @@ import {
 import { AppNav } from '../shell/AppNav.js';
 import { useAuth } from '../library/auth.js';
 import { useComponents, type ShelfEntry } from '../library/components.js';
+import { getBuild } from '../library/library.js';
+import { pathToRoad } from './guides.js';
+import { offerPlot, plotFromView } from './plotContext.js';
 import { localStore, remoteStore } from './api.js';
 import { RegionNavigator, type RegionCell } from './RegionNavigator.js';
-import { MAX_VIEW_CELLS, areaHolds, fitArea, regionOfColumn, spanOf } from './viewArea.js';
+import { MAX_VIEW_CELLS, areaHolds, coverArea, fitArea, regionOfColumn, spanOf } from './viewArea.js';
 import { useAgents } from '../agent/useAgents.js';
 import { runOf, sendRegion, waitForJob } from './send.js';
 import { WorldMap } from './WorldMap.js';
@@ -75,7 +78,9 @@ import { useWorldSession } from './useWorldSession.js';
 import { ExportBar } from '../editor/ExportBar.js';
 import { registerImportedBuild } from '../editor/builds.js';
 import { openGuide } from '../studio/handoff.js';
-import { isTextEntry, useUndoKeys } from '../studio/undoKeys.js';
+import { isTextEntry } from '../studio/undoKeys.js';
+import { redoProject, undoProject } from '../studio/journal.js';
+import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { WORLD_SHORTCUTS } from './shortcuts.js';
 import { ShortcutHelp } from '../editor/ShortcutHelp.js';
 import { WORLD_TOOLS, type WorldTool } from './toolset.js';
@@ -187,10 +192,8 @@ export function WorldPage() {
     }
   }, [library.catalogue, doc, session]);
 
-  // Shared with the other two modes, which also gets this mode Ctrl+Y — the Windows redo key
-  // did nothing here — and a guard that sees `contentEditable`, which the old inline test for
-  // `tagName` did not.
-  useUndoKeys({ undo: session.undo, redo: session.redo });
+  useZoomUndo('world', 'open-world', session.undo, session.redo);
+  const journal = useJournalFlags();
 
   // Number-row tool shortcuts, matching the editor and Architecture. Ignored while a text
   // field has focus, or typing a world's name would silently change the tool.
@@ -601,12 +604,24 @@ export function WorldPage() {
    * a running game server.
    */
   const counts = regionCount(doc.settings);
-  const fitted = useMemo(
-    () => fitArea(doc, requestedView),
+  const windows = useMemo(
+    () => coverArea(doc, requestedView),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [doc, session.revision, requestedView],
   );
-  const view = fitted.area;
+  const [windowIndex, setWindowIndex] = useState(0);
+  const shownIndex = Math.min(windowIndex, Math.max(0, windows.length - 1));
+  useEffect(() => {
+    setWindowIndex(0);
+  }, [requestedView]);
+  useEffect(() => {
+    if (windows.length < 2) return;
+    const timer = setInterval(() => {
+      setWindowIndex((current) => (current + 1) % windows.length);
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [windows]);
+  const view = windows[shownIndex] ?? fitArea(doc, requestedView).area;
   const inViewCount = areaCount(view);
 
   const built = useRegionGrid({
@@ -734,8 +749,8 @@ export function WorldPage() {
               <button
                 type="button"
                 className="ui-btn"
-                onClick={session.undo}
-                disabled={!session.canUndo}
+                onClick={undoProject}
+                disabled={!journal.canUndo}
                 title="Undo  (Ctrl+Z)"
               >
                 Undo
@@ -743,8 +758,8 @@ export function WorldPage() {
               <button
                 type="button"
                 className="ui-btn"
-                onClick={session.redo}
-                disabled={!session.canRedo}
+                onClick={redoProject}
+                disabled={!journal.canRedo}
                 title="Redo  (Ctrl+Shift+Z)"
               >
                 Redo
@@ -848,7 +863,11 @@ export function WorldPage() {
             </div>
 
             {showPreview && (
-              <WorldPreview built={built} area={view} trimmed={fitted.dropped} />
+              <WorldPreview
+                built={built}
+                area={view}
+                stream={{ index: shownIndex, total: windows.length }}
+              />
             )}
           </div>
         </main>
@@ -884,6 +903,32 @@ export function WorldPage() {
               const at = regionOfColumn(doc.settings.regionSize, placement.x, placement.z);
               showRegion(at.rx, at.rz);
               setSelected(placement.id);
+            }}
+            onDrawPlan={(placement) => {
+              offerPlot(plotFromView(built.grid, view, doc.settings.regionSize, placement));
+              void getBuild(placement.buildId)
+                .then((detail) => {
+                  navigate(detail.plan ? `/studio?mode=arch&plan=lib:${placement.buildId}` : '/studio?mode=arch');
+                })
+                .catch(() => navigate('/studio?mode=arch'));
+            }}
+            onPathToRoad={(placement) => {
+              const path = doc.settings.strata.findIndex((entry) => entry.id === 'path');
+              if (path < 0) {
+                setNotice('This map has no path ground to paint.');
+                return;
+              }
+              const stroke = session.beginStroke();
+              const cells = pathToRoad(doc, placement);
+              const width = doc.settings.size.x;
+              for (const cell of cells) {
+                const index = cell.z * width + cell.x;
+                if (index < 0 || index >= doc.terrain.strata.length) continue;
+                stroke.note(doc.terrain, index);
+                doc.terrain.strata[index] = path;
+              }
+              session.endStroke(stroke);
+              setNotice(`A path runs from the door of ${placement.name || 'the building'} toward the road.`);
             }}
           />
 

@@ -29,6 +29,7 @@ import {
 } from '@craftmagic/core';
 import { WorldHistory, type WorldDelta } from './history.js';
 import { worldHistoryFor } from '../studio/retainHistory.js';
+import { recordChange } from '../studio/journal.js';
 import { TerrainStroke, applyTerrainDelta } from './stroke.js';
 import { loadDraft, saveDraft, type SavedWorld } from './storage.js';
 import { localStore, type WorldStore } from './api.js';
@@ -55,8 +56,8 @@ export interface WorldSession {
   commitSettings: (mutate: (doc: WorldDoc) => WorldDoc) => void;
   rename: (name: string) => void;
 
-  undo: () => void;
-  redo: () => void;
+  undo: () => boolean;
+  redo: () => boolean;
   canUndo: boolean;
   canRedo: boolean;
   historyDepth: number;
@@ -181,36 +182,38 @@ export function useWorldSession(
 
   const beginStroke = useCallback(() => new TerrainStroke(), []);
 
+  const note = useCallback(() => recordChange('world', 'open-world'), []);
+
   const endStroke = useCallback(
     (stroke: TerrainStroke) => {
       const doc = docRef.current;
       if (!doc) return;
-      history.push(stroke.finish(doc.terrain));
+      if (history.push(stroke.finish(doc.terrain))) note();
       stamp();
       bump();
     },
-    [history, stamp, bump],
+    [history, stamp, bump, note],
   );
 
   const commitCarve = useCallback(
     (before: Overlay, after: Overlay, keys: string[]) => {
-      history.push({ kind: 'carve', before, after, keys });
+      if (history.push({ kind: 'carve', before, after, keys })) note();
       stamp();
       bump();
     },
-    [history, stamp, bump],
+    [history, stamp, bump, note],
   );
 
   const commitPlacements = useCallback(
     (next: WorldPlacement[]) => {
       const doc = docRef.current;
       if (!doc) return;
-      history.push({ kind: 'placements', before: doc.placements, after: next });
+      if (history.push({ kind: 'placements', before: doc.placements, after: next })) note();
       doc.placements = next;
       stamp();
       bump();
     },
-    [history, stamp, bump],
+    [history, stamp, bump, note],
   );
 
   /**
@@ -228,16 +231,16 @@ export function useWorldSession(
       const before = cloneWorld(doc);
       const after = normalizeWorld(mutate(doc));
       docRef.current = after;
-      history.push({
+      if (history.push({
         kind: 'snapshot',
         before,
         after: cloneWorld(after),
         bytes: terrainBytes(before.settings) + terrainBytes(after.settings),
-      });
+      })) note();
       stamp();
       bump();
     },
-    [history, stamp, bump],
+    [history, stamp, bump, note],
   );
 
   const rename = useCallback(
@@ -287,20 +290,22 @@ export function useWorldSession(
     }
   }, []);
 
-  const undo = useCallback(() => {
+  const undo = useCallback((): boolean => {
     const delta = history.undo();
-    if (!delta) return;
+    if (!delta) return false;
     applyDelta(delta, 'before');
     stamp();
     bump();
+    return true;
   }, [history, applyDelta, stamp, bump]);
 
-  const redo = useCallback(() => {
+  const redo = useCallback((): boolean => {
     const delta = history.redo();
-    if (!delta) return;
+    if (!delta) return false;
     applyDelta(delta, 'after');
     stamp();
     bump();
+    return true;
   }, [history, applyDelta, stamp, bump]);
 
   const save = useCallback(() => {

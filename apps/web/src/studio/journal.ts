@@ -104,35 +104,59 @@ export function registerLive(handler: LiveUndo): () => void {
 }
 
 /**
+ * Drop a journal frame whose document entry is already gone.
+ *
+ * Discard, replace, and history eviction can remove an undo entry while the frame that named
+ * it stays. Leaving the frame would keep Undo enabled and park the cursor on a no-op.
+ */
+function dropStale(at: number): void {
+  if (at < 0 || at >= frames.length) return;
+  frames.splice(at, 1);
+  if (cursor > at) cursor--;
+  emit();
+}
+
+/**
  * Undo the latest edit in the project.
  *
  * `applied` means the open page did it. `zoom` means the shell should open that document;
  * the page applies the entry when it mounts.
  */
 export function requestUndo(): { kind: 'applied' } | { kind: 'zoom'; frame: JournalFrame; action: 'undo' } | { kind: 'empty' } {
-  if (cursor === 0) return { kind: 'empty' };
-  const frame = frames[cursor - 1]!;
-  if (live && live.scope === frame.scope && live.docId === frame.docId) {
-    if (!live.undo()) return { kind: 'empty' };
-    cursor--;
-    emit();
-    return { kind: 'applied' };
+  while (cursor > 0) {
+    const frame = frames[cursor - 1]!;
+    if (live && live.scope === frame.scope && live.docId === frame.docId) {
+      if (!live.undo()) {
+        // Document stack no longer has this entry — skip it and try the one before.
+        dropStale(cursor - 1);
+        continue;
+      }
+      cursor--;
+      emit();
+      return { kind: 'applied' };
+    }
+    pending = { frame, action: 'undo' };
+    return { kind: 'zoom', frame, action: 'undo' };
   }
-  pending = { frame, action: 'undo' };
-  return { kind: 'zoom', frame, action: 'undo' };
+  return { kind: 'empty' };
 }
 
 export function requestRedo(): { kind: 'applied' } | { kind: 'zoom'; frame: JournalFrame; action: 'redo' } | { kind: 'empty' } {
-  if (cursor >= frames.length) return { kind: 'empty' };
-  const frame = frames[cursor]!;
-  if (live && live.scope === frame.scope && live.docId === frame.docId) {
-    if (!live.redo()) return { kind: 'empty' };
-    cursor++;
-    emit();
-    return { kind: 'applied' };
+  while (cursor < frames.length) {
+    const frame = frames[cursor]!;
+    if (live && live.scope === frame.scope && live.docId === frame.docId) {
+      if (!live.redo()) {
+        dropStale(cursor);
+        continue;
+      }
+      cursor++;
+      emit();
+      return { kind: 'applied' };
+    }
+    pending = { frame, action: 'redo' };
+    return { kind: 'zoom', frame, action: 'redo' };
   }
-  pending = { frame, action: 'redo' };
-  return { kind: 'zoom', frame, action: 'redo' };
+  return { kind: 'empty' };
 }
 
 /** The zoom the shell just performed, once, for the page that matches it. */
@@ -148,6 +172,16 @@ export function confirmPending(action: 'undo' | 'redo'): void {
   if (action === 'undo' && cursor > 0) cursor--;
   else if (action === 'redo' && cursor < frames.length) cursor++;
   emit();
+}
+
+/**
+ * The page could not apply the pending entry — its document history no longer has it.
+ *
+ * Drops the stale frame so the next Undo reaches an older edit instead of retrying forever.
+ */
+export function skipPending(action: 'undo' | 'redo'): void {
+  if (action === 'undo' && cursor > 0) dropStale(cursor - 1);
+  else if (action === 'redo' && cursor < frames.length) dropStale(cursor);
 }
 
 /** Test hook. */

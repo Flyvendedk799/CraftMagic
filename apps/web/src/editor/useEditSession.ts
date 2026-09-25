@@ -167,7 +167,19 @@ export function useEditSession(build: LoadedBuild): EditSession {
     // A different building gets its own stack. The same id — a remount after zooming out
     // and back, or a re-expand that did not change which document this is — keeps the
     // stack. Clearing here was what made Ctrl+Z forget the edit the moment you left.
-    if (state.build.id !== build.id) historyRef.current = editHistoryFor(build.id);
+    //
+    // Exception: a scale or param change re-expands the same id into a differently sized
+    // grid. Ops are indexed for the old volume, so keeping them would write to the wrong
+    // cells (or past the end) on undo.
+    if (state.build.id !== build.id) {
+      historyRef.current = editHistoryFor(build.id);
+    } else {
+      const prev = state.build.grid.size;
+      const next = build.grid.size;
+      if (prev.x !== next.x || prev.y !== next.y || prev.z !== next.z) {
+        history.clear();
+      }
+    }
     baselineRef.current = null;
     setState(stateFor(build, historyRef.current ?? history));
   }

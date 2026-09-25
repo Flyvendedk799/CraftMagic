@@ -376,11 +376,15 @@ export class AgentStore {
 			detached: boolean;
 			/** `undefined` leaves the stored layer alone. `null` clears it. */
 			edits?: unknown;
-			plan: unknown;
-			kind: BuildKind;
+			/** `undefined` leaves the stored plan alone. `null` clears it. */
+			plan?: unknown;
+			/** `undefined` leaves the stored kind alone. */
+			kind?: BuildKind;
 		},
 	): Promise<boolean> {
 		const keepEdits = input.edits === undefined;
+		const keepPlan = input.plan === undefined;
+		const keepKind = input.kind === undefined;
 		const { rowCount } = await this.db.query(
 			`UPDATE builds
 			 SET name = $3,
@@ -392,8 +396,8 @@ export class AgentStore {
 			     program = $9,
 			     detached = $10,
 			     edits = CASE WHEN $14::bool THEN edits ELSE $11::jsonb END,
-			     plan = $12,
-			     kind = $13,
+			     plan = CASE WHEN $15::bool THEN plan ELSE $12::jsonb END,
+			     kind = CASE WHEN $16::bool THEN kind ELSE $13::text END,
 			     updated_at = now()
 			 WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
 			[
@@ -408,9 +412,11 @@ export class AgentStore {
 				input.program == null ? null : JSON.stringify(input.program),
 				input.detached,
 				keepEdits || input.edits == null ? null : JSON.stringify(input.edits),
-				input.plan == null ? null : JSON.stringify(input.plan),
-				input.kind,
+				keepPlan || input.plan == null ? null : JSON.stringify(input.plan),
+				input.kind ?? 'structure',
 				keepEdits,
+				keepPlan,
+				keepKind,
 			],
 		);
 		return (rowCount ?? 0) > 0;

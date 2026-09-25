@@ -43,7 +43,7 @@ import { composeMap, libRef, openGuide, openInBuild, openMap, placeOnMap } from 
 import { takePlanHandoff } from './handoffBridge.js';
 import { bindZoom, redoProject, undoProject, type JournalFrame } from './journal.js';
 import { useUndoKeys } from './undoKeys.js';
-import { PresenceProvider, useStudioPresence } from './presence.js';
+import { PresenceProvider, useConfirmLeave, useStudioPresence } from './presence.js';
 import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, parseMode, type StudioMode } from './mode.js';
 import './studio.css';
 
@@ -110,6 +110,7 @@ function StudioShell() {
   }, [palette, auth.status]);
 
   const presence = useStudioPresence();
+  const confirmLeave = useConfirmLeave();
 
   const openFrame = useCallback(
     (frame: JournalFrame) => {
@@ -286,13 +287,34 @@ function StudioShell() {
     }
 
     list.push(
-      { id: 'go-library', label: 'Go to the library', hint: 'Saved builds', run: () => navigate('/library') },
-      { id: 'go-dashboard', label: 'Go to the dashboard', hint: 'Account, quota, paired Minecraft, maps', run: () => navigate('/dashboard') },
-      { id: 'go-mod', label: 'Go to the Minecraft mod page', hint: 'Pairing and downloads', run: () => navigate('/mod') },
+      {
+        id: 'go-library',
+        label: 'Go to the library',
+        hint: 'Saved builds',
+        run: () => {
+          if (confirmLeave('/library')) navigate('/library');
+        },
+      },
+      {
+        id: 'go-dashboard',
+        label: 'Go to the dashboard',
+        hint: 'Account, quota, paired Minecraft, maps',
+        run: () => {
+          if (confirmLeave('/dashboard')) navigate('/dashboard');
+        },
+      },
+      {
+        id: 'go-mod',
+        label: 'Go to the Minecraft mod page',
+        hint: 'Pairing and downloads',
+        run: () => {
+          if (confirmLeave('/mod')) navigate('/mod');
+        },
+      },
     );
 
     return list;
-  }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds]);
+  }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds, confirmLeave]);
 
   // Resolved once per render rather than inside the JSX: mounting through a variable is what
   // keeps "which page" and "which pill is lit" reading from the same table.

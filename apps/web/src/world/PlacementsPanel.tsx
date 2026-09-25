@@ -35,6 +35,8 @@ export interface PlacementsPanelProps {
   onRemove: (id: string) => void;
   onDuplicate: (id: string) => void;
   onFrame: (placement: WorldPlacement) => void;
+  /** Open the placed build in Build mode — carries any handoff prompt the map still holds. */
+  onOpenBuild?: (placement: WorldPlacement) => void;
   onDrawPlan?: (placement: WorldPlacement) => void;
   onPathToRoad?: (placement: WorldPlacement) => void;
 }
@@ -184,6 +186,7 @@ function PlacementInspector({
   onRemove,
   onDuplicate,
   library,
+  onOpenBuild,
   onDrawPlan,
   onPathToRoad,
 }: PlacementsPanelProps & { placement: WorldPlacement }) {
@@ -262,7 +265,13 @@ function PlacementInspector({
         </p>
       ) : (
         <p className="world__hint">
-          <Link to={openInBuild(libRef(placement.buildId))}>Open these blocks</Link>
+          {onOpenBuild ? (
+            <button type="button" className="export__linkish" onClick={() => onOpenBuild(placement)}>
+              Open these blocks
+            </button>
+          ) : (
+            <Link to={openInBuild(libRef(placement.buildId))}>Open these blocks</Link>
+          )}
           {' · '}
           double-click the building on the map. It points at this build, so an edit here shows
           on every placement of it.

@@ -62,6 +62,13 @@ export interface WorldMapProps {
   onSelect: (id: string | null) => void;
   /** Double-click a placed building to open its blocks. */
   onOpen?: (placement: WorldPlacement) => void;
+  /**
+   * Right-click a placed building.
+   *
+   * Defaults to selecting it (and opening the inspector). Callers that want “open blocks”
+   * can pass the same handler as `onOpen`.
+   */
+  onContextOpen?: (placement: WorldPlacement) => void;
   /** A drag on a placement, live; committed by the page on release. */
   onMovePlacement: (id: string, x: number, z: number) => void;
   onCommitPlacements: () => void;
@@ -278,6 +285,18 @@ export function WorldMap(props: WorldMapProps) {
         capture(host, event.pointerId);
         return;
       }
+
+      // Right-click a placement: select it and open its blocks. Without this the browser menu
+      // ate the gesture and the building did nothing — the inspector's "Open these blocks"
+      // was the only way in from the map besides double-click.
+      if (event.button === 2) {
+        const hit = hitPlacement(doc, world.x, world.z);
+        if (hit) {
+          props.onSelect(hit.id);
+          (props.onContextOpen ?? props.onOpen)?.(hit);
+        }
+        return;
+      }
       if (event.button !== 0) return;
 
       if (tool === 'select') {
@@ -442,6 +461,7 @@ export function WorldMap(props: WorldMapProps) {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onContextMenu={(event) => event.preventDefault()}
       onPointerLeave={() => {
         setCursor(null);
         props.onHover(null);

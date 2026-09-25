@@ -39,7 +39,7 @@ import { useAuth } from '../library/auth.js';
 import { listBuilds, type LibraryBuild } from '../library/library.js';
 import { localStore, remoteStore, type SavedWorld } from '../world/api.js';
 import { CommandPalette, type Command } from './CommandPalette.js';
-import { composeMap, libRef, openGuide, openInBuild, openMap, placeOnMap } from './handoff.js';
+import { composeMap, libRef, libRowId, openGuide, openInBuild, openMap, openPlan, placeOnMap, planForBuild } from './handoff.js';
 import { takePlanHandoff } from './handoffBridge.js';
 import { bindZoom, redoProject, undoProject, type JournalFrame } from './journal.js';
 import { useUndoKeys } from './undoKeys.js';
@@ -135,15 +135,51 @@ function StudioShell() {
   useEffect(() => bindZoom(openFrame), [openFrame]);
   useUndoKeys({ undo: undoProject, redo: redoProject });
 
+  // A stale `?build=lib:` left in the address bar while Architecture is open used to mean
+  // "Untitled layout" plus the disconnect banner. Translate it into the linked plan URL.
+  useEffect(() => {
+    if (mode !== 'arch') return;
+    if (searchParams.get('plan')) return;
+    const row = libRowId(searchParams.get('build') ?? '');
+    if (!row) return;
+    navigate(openPlan(row), { replace: true });
+  }, [mode, searchParams, navigate]);
+
+  /**
+   * Zoom to another level of the same project — carrying identity, not opening a peer draft.
+   *
+   * Build → Architecture opens that library build's plan (`?plan=lib:`), or starts a layout
+   * bound to the same row. Architecture → Build compiles into the linked row (or a hand-off).
+   * Zooming out to the map drops `build` / `plan` so the "not on the map" banner does not
+   * fire for a structure you just left.
+   */
   const setMode = useCallback(
     (next: StudioMode) => {
+      if (next === 'arch' && mode !== 'arch') {
+        const fromPresence = presence.structureRowId;
+        const fromUrl = libRowId(searchParams.get('build') ?? '');
+        const row = fromPresence ?? fromUrl;
+        if (row) {
+          navigate(openPlan(row));
+          return;
+        }
+      }
       setSearchParams(
         (params) => {
-          // Zooming from a floorplan into the blocks compiles the plan into the build,
-          // the same way Hand off does. A bare switch used to open the empty 32×24×32 plot.
           if (mode === 'arch' && next === 'build') {
             const id = takePlanHandoff();
-            if (id) params.set('build', id);
+            if (id) {
+              params.set('build', id);
+              params.delete('plan');
+            }
+          }
+          if (next === 'world') {
+            // Leaving the blocks or the plan for the map: the placement is already on it.
+            params.delete('build');
+            params.delete('plan');
+          }
+          if (next === 'build') {
+            params.delete('plan');
           }
           const value = modeParam(next);
           if (value === null) params.delete('mode');
@@ -153,8 +189,17 @@ function StudioShell() {
         { replace: true },
       );
     },
-    [mode, setSearchParams],
+    [mode, setSearchParams, navigate, presence.structureRowId, searchParams],
   );
+
+  const openStructurePlan = useCallback(() => {
+    const row = presence.structureRowId ?? libRowId(searchParams.get('build') ?? '');
+    if (row) {
+      navigate(openPlan(row));
+      return;
+    }
+    setMode('arch');
+  }, [presence.structureRowId, searchParams, navigate, setMode]);
 
   // Ctrl+K (or ⌘K) from anywhere on the page, text fields included — the palette is how you
   // leave wherever you are, so no context may swallow it.
@@ -186,13 +231,32 @@ function StudioShell() {
     };
 
     // Every mode except the one you are in. This was a ternary offering the single other
-    // mode, which with three of them would silently hide one.
+    // mode, which with three of them would silently hide one. Architecture is reached through
+    // `setMode`, which opens the linked plan when a library build is on screen — never an
+    // untitled draft with the old "belongs to Build" banner.
     const list: Command[] = STUDIO_MODES.filter((id) => id !== mode).map((id) => ({
       id: `mode-${id}`,
       label: `Switch to ${MODE_SPECS[id].label} mode`,
-      hint: MODE_SPECS[id].hint,
+      hint:
+        id === 'arch' && (presence.structureRowId || libRowId(searchParams.get('build') ?? ''))
+          ? presence.hasPlan
+            ? 'Open this build’s floorplan'
+            : 'Create a layout for this build'
+          : MODE_SPECS[id].hint,
       run: () => setMode(id),
     }));
+
+    if (mode === 'build') {
+      const planHref = planForBuild(searchParams.get('build')) ?? (presence.structureRowId ? openPlan(presence.structureRowId) : null);
+      if (planHref) {
+        list.unshift({
+          id: 'open-structure-plan',
+          label: presence.hasPlan ? 'Open this build’s plan' : 'Create a layout for this build',
+          hint: 'Architecture — linked to the same library row',
+          run: () => navigate(planHref),
+        });
+      }
+    }
 
     for (const id of BUILD_IDS) {
       list.push({
@@ -314,7 +378,7 @@ function StudioShell() {
     );
 
     return list;
-  }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds, confirmLeave]);
+  }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds, confirmLeave, presence.structureRowId, presence.hasPlan]);
 
   // Resolved once per render rather than inside the JSX: mounting through a variable is what
   // keeps "which page" and "which pill is lit" reading from the same table.
@@ -349,6 +413,11 @@ function StudioShell() {
    * that used to land on Architecture's zoom controls and World's toolbar.
    */
   const placeBuild = searchParams.get('build');
+  const canOpenPlan =
+    mode === 'arch' ||
+    Boolean(presence.structureRowId) ||
+    Boolean(libRowId(searchParams.get('build') ?? ''));
+  const planLabel = mode === 'arch' ? 'Plan' : presence.hasPlan ? 'Plan' : 'Open layout';
   const switcher = (
     <div className="studio__switch" role="navigation" aria-label="Where you are in the project">
       <button type="button" aria-pressed={mode === 'world'} title="The map" onClick={() => setMode('world')}>
@@ -364,9 +433,20 @@ function StudioShell() {
           {presence.structure ?? 'Structure'}
         </button>
       )}
-      {mode === 'arch' && (
-        <button type="button" aria-pressed title="The floorplan">
-          Plan
+      {canOpenPlan && (
+        <button
+          type="button"
+          aria-pressed={mode === 'arch'}
+          title={
+            mode === 'arch'
+              ? 'The floorplan'
+              : presence.hasPlan
+                ? 'Open this build’s floorplan'
+                : 'Create a layout for this build'
+          }
+          onClick={openStructurePlan}
+        >
+          {planLabel}
         </button>
       )}
       {presence.dirty && (

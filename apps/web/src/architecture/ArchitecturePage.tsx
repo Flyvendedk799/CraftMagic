@@ -47,7 +47,8 @@ import { redoProject, undoProject } from '../studio/journal.js';
 import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { Section } from '../editor/Section.js';
 import { registerGeneratedBuild, registerLibraryBuild } from '../editor/builds.js';
-import { openGuide, openInBuild } from '../studio/handoff.js';
+import { openGuide, openInBuild, openPlan } from '../studio/handoff.js';
+import { notifyLibraryRow } from '../studio/libraryEvents.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
 import { AccountPanel } from '../library/AccountPanel.js';
@@ -189,7 +190,9 @@ export function ArchitecturePage() {
 
   // Open a plan saved in the library: `/studio?mode=arch&plan=lib:<row>`. The param stays, so
   // the drawing and the library row are the same structure. Hand edits on that row are an
-  // override: a recompile writes new voxels and leaves the layer where it is.
+  // override: a recompile writes new voxels and leaves the layer where it is. A row with no
+  // plan yet gets a blank layout still bound to that row — "create a layout for this build"
+  // rather than dumping into an untitled disconnected draft.
   const [searchParams, setSearchParams] = useSearchParams();
   const planParam = searchParams.get('plan');
   const linkedId = planParam?.startsWith('lib:') ? planParam.slice(4) : null;
@@ -212,7 +215,13 @@ export function ArchitecturePage() {
         loadedLink.current = linkedId;
         setLinkedEdits(detail.edits);
         if (!detail.plan) {
-          setImportError('That library build has no plan saved with it — only its blocks.');
+          const blank = templateById('blank')!.build();
+          blank.name = detail.name || blank.name;
+          load(blank);
+          setImportError(null);
+          setNotice(
+            `No floorplan on “${detail.name || 'this build'}” yet — draw one here. Saving keeps it linked to the same blocks.`,
+          );
           setLinkReady(true);
           return;
         }
@@ -594,7 +603,9 @@ export function ArchitecturePage() {
       plan,
       keepEdits: true,
       keepKind: true,
-    }).catch((error: unknown) => setImportError((error as Error).message));
+    })
+      .then(() => notifyLibraryRow(linkedId))
+      .catch((error: unknown) => setImportError((error as Error).message));
   }, [linkedId, auth.status, built, plan, linkedEdits, linkReady]);
 
   const handOff = useCallback(
@@ -663,6 +674,8 @@ export function ArchitecturePage() {
 
   useReportPresence({
     structure: plan.name || 'Structure',
+    structureRowId: linkedId,
+    hasPlan: Boolean(linkedId),
     plan: true,
     dirty: session.dirty,
     dirtyLabel: 'the floorplan',

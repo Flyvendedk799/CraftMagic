@@ -53,14 +53,31 @@ export function openInBuild(ref: BuildRef): string {
   return studio('build', { build: ref });
 }
 
-/** Open a saved plan in Architecture. Only library rows carry a plan the server can return. */
+/**
+ * Open the plan for a library build in Architecture.
+ *
+ * The `plan=lib:` param is the link: Architecture loads that row's drawing when it has one,
+ * or starts a blank layout bound to the same row when it does not — never an untitled draft
+ * that forgets which build you came from.
+ */
 export function openPlan(rowId: string): string {
   return studio('arch', { plan: libRef(rowId) });
 }
 
-/** A fresh floorplan. */
+/** A fresh floorplan, not tied to a library build. */
 export function drawFloorplan(): string {
   return studio('arch', {});
+}
+
+/**
+ * The Architecture URL for the build currently open in Build, if it is a library row.
+ *
+ * Returns null for samples and `gen:` bridges — those have no durable plan to open, and the
+ * breadcrumb must not pretend they do.
+ */
+export function planForBuild(buildRef: string | null | undefined): string | null {
+  const row = buildRef ? libRowId(buildRef) : null;
+  return row ? openPlan(row) : null;
 }
 
 /**

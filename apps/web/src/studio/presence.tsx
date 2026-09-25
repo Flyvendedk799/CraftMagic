@@ -13,6 +13,15 @@ export interface StudioPresence {
   project: string;
   /** The structure being edited, when zoomed in past the map. */
   structure: string | null;
+  /**
+   * Library row id for the open structure (`lib:` stripped), when it is one.
+   *
+   * The breadcrumb uses this to open that build's plan instead of an untitled Architecture
+   * draft. Absent for samples, generated bridges, and the empty plot.
+   */
+  structureRowId: string | null;
+  /** True when that library row already has a floorplan saved beside it. */
+  hasPlan: boolean;
   /** True on the floorplan of that structure. */
   plan: boolean;
   dirty: boolean;
@@ -23,6 +32,8 @@ export interface StudioPresence {
 const EMPTY: StudioPresence = {
   project: 'Map',
   structure: null,
+  structureRowId: null,
+  hasPlan: false,
   plan: false,
   dirty: false,
   dirtyLabel: 'your work',

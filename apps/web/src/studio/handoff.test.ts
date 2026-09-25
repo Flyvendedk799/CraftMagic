@@ -19,6 +19,7 @@ import {
   openMap,
   openPlan,
   placeOnMap,
+  planForBuild,
 } from './handoff.js';
 
 describe('library refs', () => {
@@ -49,6 +50,13 @@ describe('studio links', () => {
   it('opens a plan in Architecture by its library row', () => {
     expect(openPlan('abc')).toBe('/studio?mode=arch&plan=lib%3Aabc');
     expect(drawFloorplan()).toBe('/studio?mode=arch');
+  });
+
+  it('derives a plan URL from the open build ref, and refuses non-library ones', () => {
+    expect(planForBuild('lib:abc')).toBe('/studio?mode=arch&plan=lib%3Aabc');
+    expect(planForBuild('gen:3')).toBeNull();
+    expect(planForBuild('cottage')).toBeNull();
+    expect(planForBuild(null)).toBeNull();
   });
 
   it('arms a bare row id in World, with or without a map to open first', () => {

@@ -30,6 +30,7 @@ import { encodePrefab, type Prefab } from '@craftmagic/core';
 import { useAuth } from './auth.js';
 import { getBuild, gridOf, listBuilds, type BuildKind, type LibraryBuild } from './library.js';
 import type { LayoutPlan, PlaceItem } from '../architecture/plan.js';
+import { onLibraryRow } from '../studio/libraryEvents.js';
 
 /** What the shelf shows: enough to pick a build without fetching its blocks. */
 export interface ShelfEntry {
@@ -67,6 +68,8 @@ export interface ComponentLibrary {
   failed: ReadonlySet<string>;
   /** Fetch a build's blocks, or hand back the fetch already in flight for it. */
   load: (id: string) => Promise<LoadedComponent | null>;
+  /** Drop a cached build and fetch it again — used when Build writes that row. */
+  reload: (id: string) => Promise<LoadedComponent | null>;
 }
 
 function entryOf(build: LibraryBuild): ShelfEntry {
@@ -153,6 +156,12 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
     if (pending) return pending;
 
     setLoading((prev) => new Set(prev).add(id));
+    setFailed((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
 
     const request = getBuild(id)
       .then((detail): LoadedComponent => {
@@ -184,6 +193,26 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
     return request;
   }, []);
 
+  const reload = useCallback(
+    (id: string): Promise<LoadedComponent | null> => {
+      inFlight.current.delete(id);
+      // A new map, assigned to the ref *before* `load` runs, so the cache miss is visible in
+      // this turn — `known.current = catalogue` only runs again on the next render.
+      const next = new Map(known.current);
+      next.delete(id);
+      known.current = next;
+      setCatalogue(next);
+      return load(id);
+    },
+    [load],
+  );
+
+  // Build (and linked Architecture) write the same library row a placement points at.
+  // Drop the cached blocks so the map shows the edit without a full page reload.
+  useEffect(() => onLibraryRow((id) => {
+    void reload(id);
+  }), [reload]);
+
   /**
    * The referenced ids as one stable key.
    *
@@ -201,7 +230,7 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
     for (const id of referenced.split(',')) void load(id);
   }, [referenced, load]);
 
-  return { shelf, status, catalogue, loading, failed, load };
+  return { shelf, status, catalogue, loading, failed, load, reload };
 }
 
 /** The footprint to draw for a placement: the library's if it has arrived, else the plan's. */

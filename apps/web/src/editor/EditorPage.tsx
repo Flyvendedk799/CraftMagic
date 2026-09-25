@@ -25,6 +25,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useReportPresence } from '../studio/presence.js';
 import { redoProject, undoProject } from '../studio/journal.js';
 import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
+import { notifyLibraryRow } from '../studio/libraryEvents.js';
 import {
   AIR_BLOCK,
   displayName,
@@ -303,6 +304,8 @@ export function EditorPage() {
   const { grid, name } = build;
   useReportPresence({
     structure: name,
+    structureRowId: libraryRowId(build.id),
+    hasPlan: fetching.hasPlan,
     plan: false,
     dirty: session.edits > 0,
     dirtyLabel: 'this building',
@@ -328,7 +331,9 @@ export function EditorPage() {
       edits: exportEdits(),
       keepPlan: true,
       keepKind: true,
-    }).catch(() => undefined);
+    })
+      .then(() => notifyLibraryRow(row))
+      .catch(() => undefined);
   }, [build.id, build.program, grid, name, exportEdits, editCount]);
 
   useEffect(() => {

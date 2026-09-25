@@ -31,10 +31,13 @@ export interface LibraryFetch {
   loading: boolean;
   /** Why it could not be fetched, or null. */
   error: string | null;
+  /** True when the library row has a floorplan saved beside its blocks. */
+  hasPlan: boolean;
 }
 
 export function useLibraryBuild(buildId: string | null): LibraryFetch {
   const [error, setError] = useState<string | null>(null);
+  const [hasPlan, setHasPlan] = useState(false);
 
   // A landed fetch must force a re-render: `registerLibraryBuild` writes into a module-level
   // map that React cannot observe, so without this the id would stay unresolved on screen
@@ -46,21 +49,29 @@ export function useLibraryBuild(buildId: string | null): LibraryFetch {
   const needsFetch = buildId !== null && isLibraryId(buildId) && !isBuildId(buildId);
 
   useEffect(() => {
-    if (!needsFetch || buildId === null) return;
+    if (buildId === null || !isLibraryId(buildId)) {
+      setHasPlan(false);
+      return;
+    }
+    // Already registered (same-tab hand-off from Architecture): still learn whether a plan
+    // exists, so the breadcrumb can offer Plan without a second full expand.
     const rowId = libraryRowId(buildId);
     if (!rowId) return;
 
     let cancelled = false;
-    setError(null);
+    if (needsFetch) setError(null);
 
     getBuild(rowId)
       .then((detail) => {
         if (cancelled) return;
-        register(buildId, rowId, detail);
-        landed((n) => n + 1);
+        setHasPlan(detail.plan != null);
+        if (needsFetch) {
+          register(buildId, rowId, detail);
+          landed((n) => n + 1);
+        }
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError((err as Error).message);
+        if (!cancelled && needsFetch) setError((err as Error).message);
       });
 
     return () => {
@@ -68,7 +79,7 @@ export function useLibraryBuild(buildId: string | null): LibraryFetch {
     };
   }, [needsFetch, buildId]);
 
-  return { loading: needsFetch && error === null, error };
+  return { loading: needsFetch && error === null, error, hasPlan };
 }
 
 /** The one rule — see the module header. */

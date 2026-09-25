@@ -31,7 +31,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useReportPresence } from '../studio/presence.js';
-import { openInBuild, libRef } from '../studio/handoff.js';
+import { openInBuild, libRef, openPlan } from '../studio/handoff.js';
 import {
   OVERLAY_AIR,
   createWorld,
@@ -62,7 +62,6 @@ import {
 import { AppNav } from '../shell/AppNav.js';
 import { useAuth } from '../library/auth.js';
 import { useComponents, type ShelfEntry } from '../library/components.js';
-import { getBuild } from '../library/library.js';
 import { pathToRoad } from './guides.js';
 import { offerPlot, plotFromView } from './plotContext.js';
 import { localStore, remoteStore } from './api.js';
@@ -103,6 +102,8 @@ export function WorldPage() {
   useReportPresence({
     project: doc.name || 'Map',
     structure: null,
+    structureRowId: null,
+    hasPlan: false,
     plan: false,
     dirty: session.dirty,
     dirtyLabel: 'the map',
@@ -944,11 +945,9 @@ export function WorldPage() {
               for (const [id, component] of library.catalogue) prefabs.set(id, component.prefab);
               const snapshot = materializeArea(doc, target, prefabs);
               offerPlot(plotFromView(snapshot.grid, target, doc.settings.regionSize, placement));
-              void getBuild(placement.buildId)
-                .then((detail) => {
-                  navigate(detail.plan ? `/studio?mode=arch&plan=lib:${placement.buildId}` : '/studio?mode=arch');
-                })
-                .catch(() => navigate('/studio?mode=arch'));
+              // Always open this build's plan link — Architecture creates a blank layout on
+              // the same row when none is saved yet, instead of an untitled disconnected draft.
+              navigate(openPlan(placement.buildId));
             }}
             onPathToRoad={(placement) => {
               const path = doc.settings.strata.findIndex((entry) => entry.id === 'path');

@@ -20,6 +20,7 @@ import type { BuildKind } from '../library/library.js';
 import type { ComponentLibrary, ShelfEntry } from '../library/components.js';
 import { libRef, openInBuild } from '../studio/handoff.js';
 import { placementFootprint } from './toolset.js';
+import { spacingToNearest } from './guides.js';
 
 export interface PlacementsPanelProps {
   doc: WorldDoc;
@@ -34,25 +35,26 @@ export interface PlacementsPanelProps {
   onRemove: (id: string) => void;
   onDuplicate: (id: string) => void;
   onFrame: (placement: WorldPlacement) => void;
+  /** Open the placed build in Build mode — carries any handoff prompt the map still holds. */
+  onOpenBuild?: (placement: WorldPlacement) => void;
+  onDrawPlan?: (placement: WorldPlacement) => void;
+  onPathToRoad?: (placement: WorldPlacement) => void;
 }
-
-const KIND_LABELS: ReadonlyArray<{ id: BuildKind; label: string }> = [
-  { id: 'structure', label: 'Structures' },
-  { id: 'interior', label: 'Interiors' },
-];
 
 export function PlacementsPanel(props: PlacementsPanelProps) {
   const { doc, library, selected } = props;
-  const [kinds, setKinds] = useState<BuildKind[]>(['structure', 'interior']);
+  // One choice, not two switches that both start on. Turning "Interiors" off while
+  // Structures stayed on changed nothing you could see, which read as a dead control.
+  const [kind, setKind] = useState<'all' | BuildKind>('all');
   const [filter, setFilter] = useState('');
 
   const shelf = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     return library.shelf.filter(
       (entry) =>
-        kinds.includes(entry.kind) && (needle === '' || entry.name.toLowerCase().includes(needle)),
+        (kind === 'all' || entry.kind === kind) && (needle === '' || entry.name.toLowerCase().includes(needle)),
     );
-  }, [library.shelf, kinds, filter]);
+  }, [library.shelf, kind, filter]);
 
   const placement = doc.placements.find((entry) => entry.id === selected) ?? null;
 
@@ -63,23 +65,15 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
             `button` rule and rendered as two full-strength mint call-to-actions — the loudest
             thing on a page whose actual verbs are "sculpt" and "place". */}
         <div className="shelf__kinds" role="group" aria-label="Component kind">
-          {KIND_LABELS.map(({ id, label }) => (
+          {(['all', 'structure', 'interior'] as const).map((id) => (
             <button
               key={id}
               type="button"
               className="shelf__kind"
-              aria-pressed={kinds.includes(id)}
-              onClick={() =>
-                setKinds((current) =>
-                  current.includes(id)
-                    ? // Never empty: a filter that hides everything looks like a broken library
-                      // rather than like a filter, and there is no way back from it by clicking.
-                      current.length === 1 ? current : current.filter((k) => k !== id)
-                    : [...current, id],
-                )
-              }
+              aria-pressed={kind === id}
+              onClick={() => setKind(id)}
             >
-              {label}
+              {id === 'all' ? 'All' : id === 'structure' ? 'Structures' : 'Interiors'}
             </button>
           ))}
         </div>
@@ -112,9 +106,11 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
 
         {library.status === 'ready' && shelf.length === 0 && (
           <p className="world__hint">
-            Nothing saved yet. Make something in <Link to="/studio?build=empty">Build</Link> or
-            draw one in <Link to="/studio?mode=arch">Architecture</Link>, press “Save to
-            library”, and it becomes a component you can place here.
+            {kind === 'interior'
+              ? 'No interiors yet. Draw a floorplan in Architecture and save it — interiors are plans, structures are voxel builds.'
+              : kind === 'structure'
+                ? 'No structures yet. Save a build from the voxel editor and it shows up here.'
+                : 'Nothing saved yet. Make something in Build or draw one in Architecture, press “Save to library”, and it becomes a component you can place here.'}
           </p>
         )}
 
@@ -190,8 +186,12 @@ function PlacementInspector({
   onRemove,
   onDuplicate,
   library,
+  onOpenBuild,
+  onDrawPlan,
+  onPathToRoad,
 }: PlacementsPanelProps & { placement: WorldPlacement }) {
   const box = placementFootprint(placement);
+  const spacing = spacingToNearest(doc, placement);
   const index = placement.z * doc.settings.size.x + placement.x;
   const ground = doc.terrain.height[index] ?? doc.settings.minY;
   const resolvedY = anchorY(doc, placement, ground);
@@ -250,6 +250,10 @@ function PlacementInspector({
         <div><dt>Footprint</dt><dd>{box.w}×{box.d}</dd></div>
         <div><dt>Height</dt><dd>{placement.h}</dd></div>
         <div><dt>Blocks</dt><dd>{loaded ? 'loaded' : 'not fetched yet'}</dd></div>
+        <div>
+          <dt>Spacing</dt>
+          <dd>{spacing ? `${spacing.blocks} to ${spacing.name}` : 'nothing else placed'}</dd>
+        </div>
       </dl>
 
       {/* The way back: a placement is a reference to a library row, and that row is what Build
@@ -261,12 +265,30 @@ function PlacementInspector({
         </p>
       ) : (
         <p className="world__hint">
-          <Link to={openInBuild(libRef(placement.buildId))}>Edit the source build in Build →</Link>{' '}
-          Changes there save as a new build; re-place it here to use the new one.
+          {onOpenBuild ? (
+            <button type="button" className="export__linkish" onClick={() => onOpenBuild(placement)}>
+              Open these blocks
+            </button>
+          ) : (
+            <Link to={openInBuild(libRef(placement.buildId))}>Open these blocks</Link>
+          )}
+          {' · '}
+          double-click the building on the map. It points at this build, so an edit here shows
+          on every placement of it.
         </p>
       )}
 
       <div className="world__row world__row--actions">
+        {onDrawPlan && (
+          <button type="button" className="ui-btn" onClick={() => onDrawPlan(placement)}>
+            Draw a plan here
+          </button>
+        )}
+        {onPathToRoad && (
+          <button type="button" className="ui-btn" onClick={() => onPathToRoad(placement)}>
+            Path to road
+          </button>
+        )}
         <button type="button" className="ui-btn" onClick={() => onDuplicate(placement.id)}>
           Duplicate
         </button>

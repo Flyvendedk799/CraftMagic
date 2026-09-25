@@ -153,27 +153,48 @@ export function saveToLibrary(input: {
    * own.
    */
   generationId?: string | null;
+  /** When set, overwrite this library row instead of inserting a copy. */
+  id?: string;
+  /**
+   * Leave the stored hand-edit layer alone.
+   *
+   * A plan recompile writes new voxels and a new program. The override layer is not part of
+   * that write, and sending nothing used to clear it.
+   */
+  keepEdits?: boolean;
+  /**
+   * Leave the stored plan alone.
+   *
+   * A hand edit from Build writes voxels and the edit layer. The drawing is not part of that
+   * write — omitting `plan` without this flag used to clear it on the server.
+   */
+  keepPlan?: boolean;
+  /**
+   * Leave the stored kind alone.
+   *
+   * Recompiling a linked interior must not re-file it as a structure.
+   */
+  keepKind?: boolean;
 }): Promise<{ id: string; blockCount: number }> {
-  return request(
-    '/api/builds',
-    json('POST', {
-      name: input.name,
-      library: input.library ?? true,
-      kind: input.kind ?? 'structure',
-      detached: input.detached,
-      program: input.program ?? undefined,
-      edits: input.edits ?? undefined,
-      plan: input.plan ?? undefined,
-      generationId: input.generationId ?? undefined,
-      grid: {
-        size: input.grid.size,
-        palette: input.grid.palette,
-        // Base64 of the gzipped ICVX blob rather than one JSON number per cell. A build at the
-        // engine's own 256x160x256 size cap is ~280 KB this way and 20 MB as an integer array,
-        // which is 20x Fastify's body limit — so until this changed, a build that big, and the
-        // "Stress test" sample shipped in the editor, could not be saved at all. Both 413'd.
-        data: toBase64(encodeVoxels(input.grid)),
-      },
-    }),
-  );
+  const body: Record<string, unknown> = {
+    id: input.id,
+    name: input.name,
+    library: input.library ?? true,
+    detached: input.detached,
+    program: input.program ?? undefined,
+    generationId: input.generationId ?? undefined,
+    grid: {
+      size: input.grid.size,
+      palette: input.grid.palette,
+      // Base64 of the gzipped ICVX blob rather than one JSON number per cell. A build at the
+      // engine's own 256x160x256 size cap is ~280 KB this way and 20 MB as an integer array,
+      // which is 20x Fastify's body limit — so until this changed, a build that big, and the
+      // "Stress test" sample shipped in the editor, could not be saved at all. Both 413'd.
+      data: toBase64(encodeVoxels(input.grid)),
+    },
+  };
+  if (!input.keepKind) body.kind = input.kind ?? 'structure';
+  if (!input.keepPlan && 'plan' in input) body.plan = input.plan;
+  if (!input.keepEdits) body.edits = input.edits ?? undefined;
+  return request('/api/builds', json('POST', body));
 }

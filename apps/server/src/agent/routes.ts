@@ -122,22 +122,13 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 		}
 
 		/**
-		 * The build's tier: a valid one, `'structure'` when the field is absent, or `null` for
-		 * anything else — which the caller turns into a 400.
+		 * The build's tier, or `null` when the value is not one of the accepted kinds.
 		 *
-		 * Absent and wrong are not the same thing, and that distinction is the whole point of
-		 * this function. Absent is an older client that predates the field, and defaulting it
-		 * to `'structure'` is right. Wrong is a typo, a stale enum, or a client sending a tier
-		 * this server has never heard of, and coercing *that* to `'structure'` files the build
-		 * in the wrong drawer permanently: the save answers 201, the row looks healthy, and the
-		 * only symptom is an interior that turns up in the component shelf months later with
-		 * nothing left to say where it came from. A 400 costs one failed request and is fixed
-		 * before it ships.
-		 *
-		 * `null` rather than a thrown error so the check reads like the `readName` above it.
+		 * Absent is handled by the caller: create defaults to `'structure'`, update leaves the
+		 * column alone. Only an explicit junk value is a 400 — coercing that to `'structure'`
+		 * files the build in the wrong drawer permanently.
 		 */
 		function readKind(value: unknown): BuildKind | null {
-			if (value === undefined || value === null) return 'structure';
 			return BUILD_KINDS.includes(value as BuildKind) ? (value as BuildKind) : null;
 		}
 
@@ -195,11 +186,28 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 
 			// Checked here, before the voxels are decoded: a rejection should not first cost
 			// the server a 16 MB gunzip it is going to throw away.
-			const kind = readKind(body?.kind);
-			if (!kind) {
-				return reply
-					.code(400)
-					.send({ error: 'bad_kind', message: `kind must be one of ${BUILD_KINDS.join(', ')}` });
+			//
+			// Kind and plan are optional on an *update*. Omitting them used to mean "clear the
+			// plan" and "force structure" — so a hand edit from Build wiped the linked drawing,
+			// and a recompile from Architecture turned an interior into a structure. `undefined`
+			// now means leave the column alone; an explicit `null` plan still clears it.
+			const existingId = typeof (body as { id?: unknown } | null)?.id === 'string'
+				? (body as { id: string }).id
+				: null;
+			const isUpdate = Boolean(existingId && UUID_SHAPE.test(existingId));
+			const hasKind = body != null && Object.prototype.hasOwnProperty.call(body, 'kind');
+			const hasPlan = body != null && Object.prototype.hasOwnProperty.call(body, 'plan');
+			let kind: BuildKind | undefined;
+			if (hasKind) {
+				const parsed = readKind(body.kind);
+				if (!parsed) {
+					return reply
+						.code(400)
+						.send({ error: 'bad_kind', message: `kind must be one of ${BUILD_KINDS.join(', ')}` });
+				}
+				kind = parsed;
+			} else if (!isUpdate) {
+				kind = 'structure';
 			}
 
 			const grid = body?.grid;
@@ -244,6 +252,26 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 
 			let blockCount = 0;
 			for (const v of voxelGrid.voxels) if (v !== 0) blockCount++;
+
+			if (isUpdate && existingId) {
+				const hasEdits = body != null && Object.prototype.hasOwnProperty.call(body, 'edits');
+				const updated = await store!.updateBuild(existingId, user.id, {
+					name,
+					sizeX: grid.size.x,
+					sizeY: grid.size.y,
+					sizeZ: grid.size.z,
+					blockCount,
+					voxels: encodeVoxels(voxelGrid),
+					program: body?.program ?? null,
+					detached: body?.detached === true,
+					edits: hasEdits ? (typeof body?.edits === 'object' ? body.edits : null) : undefined,
+					plan: hasPlan ? (typeof body?.plan === 'object' ? body.plan : null) : undefined,
+					kind,
+				});
+				if (!updated) return reply.code(404).send({ error: 'unknown_build' });
+				return { id: existingId, blockCount };
+			}
+
 			const id = await store!.saveBuild({
 				name,
 				description: typeof body?.description === 'string' ? body.description : null,
@@ -263,7 +291,7 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				// Unlike `edits` and `plan`, this one is validated rather than ferried: it is
 				// the server's own vocabulary, and the column has a CHECK that would turn a
 				// junk value into a 500 at the very end of a multi-megabyte upload.
-				kind,
+				kind: kind ?? 'structure',
 				// The transport row "send to game" writes stays out of the library; only an
 				// explicit save belongs in a list the user curates.
 				inLibrary: body?.library === true,

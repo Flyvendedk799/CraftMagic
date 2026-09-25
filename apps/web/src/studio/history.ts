@@ -120,6 +120,19 @@ export class History<T> {
   }
 
   /**
+   * Drop the redo tail without touching what is still applied.
+   *
+   * A new edit on another zoom level branches the project journal. This document did not
+   * push, so its own `push` never ran, and the redo it still holds would replay onto a
+   * project that has already moved on.
+   */
+  discardRedo(): void {
+    for (let i = this.entries.length - 1; i >= this.cursor; i--) this.total -= this.costs[i]!;
+    this.entries.length = this.cursor;
+    this.costs.length = this.cursor;
+  }
+
+  /**
    * Drop the oldest entries until both ceilings hold.
    *
    * `length > 1` rather than `length > 0`: an entry that is on its own bigger than the byte

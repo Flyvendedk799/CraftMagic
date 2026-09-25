@@ -417,8 +417,7 @@ export function PlanCanvas({
       }
       setDrag(null);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [drag, tool, plan, items],
+    [drag, tool, plan, items, onCreate, onNotice, onSelectMany, selectedIds],
   );
 
   /**
@@ -431,9 +430,18 @@ export function PlanCanvas({
     const clamped = clampRectToSite(rect, plan.site);
 
     if (tool === 'room') {
+      if (clamped.w < 1 || clamped.d < 1) {
+        onNotice('That drag is outside the site, so no room was drawn.');
+        return;
+      }
       const snapped = draftFor('room', from, to, plan, items);
       if (snapped.w < 3 || snapped.d < 3) {
-        onNotice('A room needs to be at least 3×3 — anything smaller has no inside once its walls are built.');
+        const shrank = clamped.w >= 3 && clamped.d >= 3;
+        onNotice(
+          shrank
+            ? `Snapping to the neighbouring rooms shrank that to ${snapped.w}×${snapped.d}, which is below 3×3 — no room was added.`
+            : 'A room needs to be at least 3×3 — anything smaller has no inside once its walls are built.',
+        );
         return;
       }
       onCreate(createRoom(snapped));

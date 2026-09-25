@@ -160,10 +160,11 @@ export class WorldHistory {
    * sides is kept, because an empty placement list is a real state — it is what removing the
    * last building leaves behind.
    */
-  push(delta: WorldDelta): void {
-    if (delta.kind === 'terrain' && delta.columns.length === 0) return;
-    if (delta.kind === 'carve' && delta.keys.length === 0) return;
+  push(delta: WorldDelta): boolean {
+    if (delta.kind === 'terrain' && delta.columns.length === 0) return false;
+    if (delta.kind === 'carve' && delta.keys.length === 0) return false;
     this.inner.push(delta);
+    return true;
   }
 
   /** The entry to reverse, or null. The caller applies it. */
@@ -178,5 +179,9 @@ export class WorldHistory {
 
   clear(): void {
     this.inner.clear();
+  }
+
+  discardRedo(): void {
+    this.inner.discardRedo();
   }
 }

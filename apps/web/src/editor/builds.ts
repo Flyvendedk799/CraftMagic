@@ -16,7 +16,9 @@ import {
   encodeVoxels,
   expand,
   isScaled,
+  LIMITS,
   NO_SCALE,
+  scaleFactors,
   paletteColors,
   paletteFlags,
   samples,
@@ -26,6 +28,7 @@ import {
   type BuildPart,
   type BuildProgram,
   type ExpandIssue,
+  type ExpandResult,
   type ProgramParam,
   type ScalePercent,
   type VoxelGrid,
@@ -701,6 +704,65 @@ export interface ExpandBuildOptions {
  * the geometry; this one keeps `params` in the result truthful, so a hand-edited URL shows
  * the slider at the value that was actually built rather than the one that was asked for.
  */
+/**
+ * Re-expand until every write lands inside the volume.
+ *
+ * A saved program can name a size smaller than its components — Grand Treehouse and Small
+ * Apartment both did, and the expander dropped a thousand blocks without a word, because the
+ * warning only fires once the loss is a large share of what survived. Growing the volume to
+ * the span the components actually reached keeps those blocks. The scale, if any, is kept:
+ * the base size is what grows, so 110% still means 110% of a volume that can hold the build.
+ */
+function growVolumeToFit(
+  program: BuildProgram,
+  provenance: boolean,
+): { program: BuildProgram; result: ExpandResult } {
+  let current = program;
+  let result = expand(current, { provenance });
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const grid = result.grid.size;
+    const span = result.span;
+    if (span.x <= grid.x && span.y <= grid.y && span.z <= grid.z) break;
+    const factors = scaleFactors(current.size, current.scale);
+    const size = {
+      x: Math.min(LIMITS.maxSizeX, Math.max(current.size.x, Math.ceil(span.x / (factors.x || 1)))),
+      y: Math.min(LIMITS.maxSizeY, Math.max(current.size.y, Math.ceil(span.y / (factors.y || 1)))),
+      z: Math.min(LIMITS.maxSizeZ, Math.max(current.size.z, Math.ceil(span.z / (factors.z || 1)))),
+    };
+    if (size.x === current.size.x && size.y === current.size.y && size.z === current.size.z) break;
+    const dropped = result.warnings.find((issue) => issue.code === 'OUT_OF_BOUNDS');
+    current = { ...current, size };
+    result = expand(current, { provenance });
+    if (dropped) {
+      result = {
+        ...result,
+        warnings: [
+          ...result.warnings.filter((issue) => issue.code !== 'OUT_OF_BOUNDS'),
+          {
+            path: 'size',
+            code: 'VOLUME_GREW',
+            message:
+              `The volume grew to ${size.x}×${size.y}×${size.z} so blocks that fell outside ${grid.x}×${grid.y}×${grid.z} could be kept.`,
+          },
+        ],
+      };
+    } else if (span.x > grid.x || span.y > grid.y || span.z > grid.z) {
+      result = {
+        ...result,
+        warnings: [
+          ...result.warnings,
+          {
+            path: 'size',
+            code: 'VOLUME_GREW',
+            message: `The volume grew to ${size.x}×${size.y}×${size.z} to fit the build. Nothing was dropped.`,
+          },
+        ],
+      };
+    }
+  }
+  return { program: current, result };
+}
+
 export function expandBuild(
   id: string,
   overrides: BuildOverrides = {},
@@ -727,7 +789,9 @@ export function expandBuild(
   const pack = stylePackById(overrides.style);
   if (pack) applied = applyStylePack(applied, pack);
   if (overrides.hide && overrides.hide.length > 0) applied = hideComponents(applied, overrides.hide);
-  const result = expand(applied, { provenance: options.provenance });
+  const fitted = growVolumeToFit(applied, options.provenance === true);
+  applied = fitted.program;
+  const result = fitted.result;
 
   return {
     id,

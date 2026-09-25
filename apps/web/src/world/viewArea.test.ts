@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createWorld, resizeWorld, type WorldDoc } from '@craftmagic/core';
-import { areaHolds, fitArea, regionOfColumn, spanOf } from './viewArea.js';
+import { areaHolds, coverArea, fitArea, regionOfColumn, spanOf } from './viewArea.js';
 
 /** A flat world of a given size, at the region size the tests reason in. */
 function world(sizeX: number, sizeZ: number, regionSize: number, height = 62): WorldDoc {
@@ -85,6 +85,28 @@ describe('fitArea', () => {
     const doc = world(256, 256, 128);
     const fitted = fitArea(doc, { rx0: 5, rz0: 5, rx1: -3, rz1: -3 });
     expect(fitted.area).toEqual({ rx0: 0, rz0: 0, rx1: 1, rz1: 1 });
+  });
+});
+
+describe('coverArea', () => {
+  it('returns the request itself when it fits', () => {
+    const doc = world(256, 256, 128);
+    expect(coverArea(doc, { rx0: 0, rz0: 0, rx1: 1, rz1: 1 })).toEqual([
+      { rx0: 0, rz0: 0, rx1: 1, rz1: 1 },
+    ]);
+  });
+
+  it('tiles a request the budget cannot hold in one grid', () => {
+    const doc = world(512, 512, 128);
+    const windows = coverArea(doc, { rx0: 0, rz0: 0, rx1: 3, rz1: 3 }, undefined, 1_000_000);
+    expect(windows.length).toBeGreaterThan(1);
+    const seen = new Set<string>();
+    for (const area of windows) {
+      for (let rz = area.rz0; rz <= area.rz1; rz++) {
+        for (let rx = area.rx0; rx <= area.rx1; rx++) seen.add(`${rx},${rz}`);
+      }
+    }
+    expect(seen.size).toBe(16);
   });
 });
 

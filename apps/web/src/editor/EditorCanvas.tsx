@@ -67,6 +67,8 @@ export interface EditorCanvasProps {
    * means, and what to do about it, is the page's business.
    */
   onClick?: (hit: VoxelHit) => void;
+  /** A line dragged in one gesture, from the press cell to the release cell. */
+  onLine?: (from: VoxelHit, to: VoxelHit) => void;
   /**
    * A Shift-drag, reported once on release with every cell it crossed. One callback for the
    * whole gesture rather than one per move, so the page can fold it into a single edit.
@@ -191,6 +193,7 @@ function Scene({
   clip,
   onHover,
   onClick,
+  onLine,
   onStroke,
   onPick,
   marker,
@@ -299,6 +302,7 @@ function Scene({
         dragMode={dragMode}
         onHover={onHover}
         onClick={onClick}
+        onLine={onLine}
         onStroke={onStroke}
         onPick={onPick}
         onRegionDrag={onRegionDrag}
@@ -792,6 +796,7 @@ function Picker({
   dragMode = 'none',
   onHover,
   onClick,
+  onLine,
   onStroke,
   onPick,
   onRegionDrag,
@@ -807,6 +812,7 @@ function Picker({
   dragMode?: 'stroke' | 'endpoints' | 'lift' | 'none';
   onHover?: (hit: VoxelHit | null) => void;
   onClick?: (hit: VoxelHit) => void;
+  onLine?: (from: VoxelHit, to: VoxelHit) => void;
   onStroke?: (hits: VoxelHit[]) => void;
   onPick?: (hit: VoxelHit) => void;
   onRegionDrag?: (drag: RegionDrag) => void;
@@ -823,6 +829,8 @@ function Picker({
   notify.current = onHover;
   const notifyClick = useRef(onClick);
   notifyClick.current = onClick;
+  const notifyLine = useRef(onLine);
+  notifyLine.current = onLine;
   const notifyStroke = useRef(onStroke);
   notifyStroke.current = onStroke;
   const notifyPick = useRef(onPick);
@@ -1115,10 +1123,12 @@ function Picker({
         endpoints = null;
         if (controls) controls.enabled = true;
         const to = moved ? cast(event) : null;
-        // Both ends in one gesture, or — when the pointer never moved — the first end only,
-        // which leaves the anchor standing for a second click exactly as it always did.
-        notifyClick.current?.(from);
-        if (to) notifyClick.current?.(to);
+        // A drag is one line, from the press to the release. Reporting it as two clicks
+        // ran both against the same anchor — the state update from the first had not
+        // landed — so the second click set a new start instead of committing.
+        const other = to && (to.x !== from.x || to.y !== from.y || to.z !== from.z) ? to : null;
+        if (other && notifyLine.current) notifyLine.current(from, other);
+        else notifyClick.current?.(from);
         downAt = null;
         return;
       }

@@ -355,6 +355,73 @@ export class AgentStore {
 		return (rowCount ?? 0) > 0;
 	}
 
+	/**
+	 * Write a new revision of a build the caller already owns.
+	 *
+	 * Placements point at this row. A second insert would be a copy, and the map would keep
+	 * showing the old one. Same ownership rule as rename: a miss is false, never someone
+	 * else's row.
+	 */
+	async updateBuild(
+		id: string,
+		scope: OwnerScope,
+		input: {
+			name: string;
+			sizeX: number;
+			sizeY: number;
+			sizeZ: number;
+			blockCount: number;
+			voxels: Uint8Array;
+			program: unknown;
+			detached: boolean;
+			/** `undefined` leaves the stored layer alone. `null` clears it. */
+			edits?: unknown;
+			/** `undefined` leaves the stored plan alone. `null` clears it. */
+			plan?: unknown;
+			/** `undefined` leaves the stored kind alone. */
+			kind?: BuildKind;
+		},
+	): Promise<boolean> {
+		const keepEdits = input.edits === undefined;
+		const keepPlan = input.plan === undefined;
+		const keepKind = input.kind === undefined;
+		const { rowCount } = await this.db.query(
+			`UPDATE builds
+			 SET name = $3,
+			     size_x = $4,
+			     size_y = $5,
+			     size_z = $6,
+			     block_count = $7,
+			     voxels = $8,
+			     program = $9,
+			     detached = $10,
+			     edits = CASE WHEN $14::bool THEN edits ELSE $11::jsonb END,
+			     plan = CASE WHEN $15::bool THEN plan ELSE $12::jsonb END,
+			     kind = CASE WHEN $16::bool THEN kind ELSE $13::text END,
+			     updated_at = now()
+			 WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,
+			[
+				id,
+				scope,
+				input.name,
+				input.sizeX,
+				input.sizeY,
+				input.sizeZ,
+				input.blockCount,
+				Buffer.from(input.voxels),
+				input.program == null ? null : JSON.stringify(input.program),
+				input.detached,
+				keepEdits || input.edits == null ? null : JSON.stringify(input.edits),
+				keepPlan || input.plan == null ? null : JSON.stringify(input.plan),
+				input.kind ?? 'structure',
+				keepEdits,
+				keepPlan,
+				keepKind,
+			],
+		);
+		return (rowCount ?? 0) > 0;
+	}
+
 	async deleteBuild(id: string, scope: OwnerScope): Promise<boolean> {
 		const { rowCount } = await this.db.query(
 			`DELETE FROM builds WHERE id = $1 AND user_id IS NOT DISTINCT FROM $2::uuid`,

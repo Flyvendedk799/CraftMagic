@@ -33,15 +33,20 @@
  * and walkability validation, each ported to TypeScript in the module named in its header.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { expand, paletteColors, paletteFlags, voxelIndex, type BuildPart, type VoxelGrid } from '@craftmagic/core';
+import { registerPlanHandoff } from '../studio/handoffBridge.js';
+import { useReportPresence } from '../studio/presence.js';
+import { EditOverlay, expand, paletteColors, paletteFlags, voxelIndex, type BuildPart, type EditLayer, type VoxelGrid } from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorCanvas.js';
+import { readPlot, stampOnPlot } from '../world/plotContext.js';
 import type { VoxelHit } from '../editor/raycast.js';
 import { ExportBar } from '../editor/ExportBar.js';
-import { isTextEntry, useUndoKeys } from '../studio/undoKeys.js';
+import { isTextEntry } from '../studio/undoKeys.js';
+import { redoProject, undoProject } from '../studio/journal.js';
+import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { Section } from '../editor/Section.js';
-import { registerGeneratedBuild } from '../editor/builds.js';
+import { registerGeneratedBuild, registerLibraryBuild } from '../editor/builds.js';
 import { openGuide, openInBuild } from '../studio/handoff.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
@@ -142,9 +147,8 @@ export function ArchitecturePage() {
   const [importError, setImportError] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
 
-  // Suppressed while the shortcut sheet is up: it is the only thing on screen, and a key that
-  // changed the plan behind it is not what anyone meant.
-  useUndoKeys({ undo: session.undo, redo: session.redo, disabled: help });
+  useZoomUndo('arch', 'architecture', session.undo, session.redo);
+  const journal = useJournalFlags();
   /** The saved build the Place tool will drop. Armed from the Components panel. */
   const [placeChoice, setPlaceChoice] = useState<PlaceChoice | null>(null);
   /** Bumped to ask the plan to re-frame; see `PlanCanvas`'s `fitNonce`. */
@@ -183,44 +187,46 @@ export function ArchitecturePage() {
     [session, frame],
   );
 
-  // Open a plan saved in the library: `/studio?mode=arch&plan=lib:<row>`. One fetch, then the param
-  // is dropped from the URL so a reload afterwards keeps whatever the user has since drawn
-  // rather than stamping the library copy back over it.
+  // Open a plan saved in the library: `/studio?mode=arch&plan=lib:<row>`. The param stays, so
+  // the drawing and the library row are the same structure. Hand edits on that row are an
+  // override: a recompile writes new voxels and leaves the layer where it is.
   const [searchParams, setSearchParams] = useSearchParams();
   const planParam = searchParams.get('plan');
+  const linkedId = planParam?.startsWith('lib:') ? planParam.slice(4) : null;
+  const [linkedEdits, setLinkedEdits] = useState<EditLayer | null>(null);
+  /** True once the linked library row has been fetched into this session. */
+  const [linkReady, setLinkReady] = useState(false);
+  const loadedLink = useRef<string | null>(null);
   useEffect(() => {
-    if (!planParam?.startsWith('lib:')) return;
+    if (!linkedId) {
+      loadedLink.current = null;
+      setLinkReady(false);
+      return;
+    }
+    if (loadedLink.current === linkedId) return;
+    setLinkReady(false);
     let cancelled = false;
-    getBuild(planParam.slice(4))
+    getBuild(linkedId)
       .then((detail) => {
         if (cancelled) return;
+        loadedLink.current = linkedId;
+        setLinkedEdits(detail.edits);
         if (!detail.plan) {
           setImportError('That library build has no plan saved with it — only its blocks.');
+          setLinkReady(true);
           return;
         }
         load(normalizePlan(detail.plan));
         setImportError(null);
+        setLinkReady(true);
       })
       .catch((err: unknown) => {
         if (!cancelled) setImportError((err as Error).message);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          // Drop only our own param. The studio shell keeps its mode in the same query, and
-          // wiping it would flip the page out of Plan mode the moment a plan finished loading.
-          setSearchParams(
-            (params) => {
-              params.delete('plan');
-              return params;
-            },
-            { replace: true },
-          );
-        }
       });
     return () => {
       cancelled = true;
     };
-  }, [planParam, load, setSearchParams]);
+  }, [linkedId, load]);
 
   // A plan that lost a storey — an undo, a delete, an import — must not leave the canvas
   // editing a floor that no longer exists.
@@ -267,6 +273,13 @@ export function ArchitecturePage() {
 
   const deferred = useDeferred(plan, PREVIEW_DELAY);
   const built = useMemo(() => buildFrom(deferred, library.catalogue), [deferred, library.catalogue]);
+  const plot = useMemo(() => readPlot(), []);
+  const previewGrid = useMemo(
+    () => (plot && built.blockCount > 0 ? stampOnPlot(plot, built.grid) : built.grid),
+    [plot, built],
+  );
+  const previewColors = useMemo(() => paletteColors(previewGrid.palette), [previewGrid.palette]);
+  const previewFlags = useMemo(() => paletteFlags(previewGrid.palette), [previewGrid.palette]);
 
   const selectedId = selectedIds.length === 1 ? selectedIds[0]! : null;
   const selected = useMemo(() => findItem(plan, selectedId ?? ''), [plan, selectedId]);
@@ -542,6 +555,8 @@ export function ArchitecturePage() {
 
   // --- hand-off ----------------------------------------------------------
 
+  const auth = useAuth();
+
   /**
    * Register the compiled program as a build, so the rest of the product can address it.
    *
@@ -550,14 +565,108 @@ export function ArchitecturePage() {
    * on demand rather than on every compile matters: the store is capped and persisted, and a
    * plan compiles on every keystroke.
    */
+  const writeLinkedRow = useCallback(() => {
+    if (!linkedId || auth.status !== 'signedIn' || built.blockCount === 0) return;
+    // Never write until the linked row has been loaded — otherwise a shared autosave with
+    // another nonempty plan would overwrite the library drawing within the debounce window.
+    if (!linkReady || loadedLink.current !== linkedId) return;
+    const overlay = linkedEdits ? EditOverlay.fromJSON(linkedEdits) : null;
+    const grid: VoxelGrid = {
+      size: built.grid.size,
+      palette: built.grid.palette.slice(),
+      voxels: built.grid.voxels.slice(),
+    };
+    if (overlay && overlay.size > 0) overlay.composite(grid);
+    // Keep kind: a plan saved as an interior must stay on the Interiors shelf. Keep edits:
+    // the override layer is not part of a recompile. Refresh Build's in-memory entry so
+    // returning to it in this tab expands the program just written, not the one fetched earlier.
+    registerLibraryBuild(linkedId, {
+      kind: 'program',
+      name: plan.name || 'Structure',
+      program: built.program,
+    });
+    void saveToLibrary({
+      id: linkedId,
+      name: plan.name || 'Structure',
+      grid,
+      program: built.program,
+      detached: false,
+      plan,
+      keepEdits: true,
+      keepKind: true,
+    }).catch((error: unknown) => setImportError((error as Error).message));
+  }, [linkedId, auth.status, built, plan, linkedEdits, linkReady]);
+
   const handOff = useCallback(
     (where: 'editor' | 'guide') => {
-      const id = registerGeneratedBuild(built.program);
+      // Flush before leaving — the 800 ms debounce would otherwise be cancelled by unmount,
+      // and Build would open the previous library version.
+      writeLinkedRow();
+      const id = linkedId ? `lib:${linkedId}` : registerGeneratedBuild(built.program);
       if (where === 'editor') navigate(openInBuild(id));
       else window.open(openGuide(id), '_blank', 'noreferrer');
     },
-    [built.program, navigate],
+    [built.program, navigate, linkedId, writeLinkedRow],
   );
+
+  useEffect(() => {
+    return registerPlanHandoff(() => {
+      if (built.blockCount === 0) return null;
+      writeLinkedRow();
+      return linkedId ? `lib:${linkedId}` : registerGeneratedBuild(built.program);
+    });
+  }, [built.program, built.blockCount, linkedId, writeLinkedRow]);
+
+  const detachPlan = useCallback(() => {
+    const id = linkedId;
+    loadedLink.current = null;
+    setLinkReady(false);
+    setLinkedEdits(null);
+    setSearchParams(
+      (params) => {
+        params.delete('plan');
+        return params;
+      },
+      { replace: true },
+    );
+    if (id && auth.status === 'signedIn' && built.blockCount > 0) {
+      void saveToLibrary({
+        id,
+        name: plan.name || 'Structure',
+        grid: built.grid,
+        program: built.program,
+        detached: true,
+        plan: null,
+        kind: 'structure',
+        keepEdits: true,
+      });
+    }
+  }, [linkedId, auth.status, built, plan, setSearchParams]);
+
+  // Recompile into the same library row. The edit layer is composited into the voxels the
+  // map reads, and omitted from the body so the server keeps it as the override.
+  useEffect(() => {
+    if (!linkedId || auth.status !== 'signedIn' || built.blockCount === 0) return;
+    if (!linkReady || loadedLink.current !== linkedId) return;
+    const timer = setTimeout(writeLinkedRow, 800);
+    return () => clearTimeout(timer);
+  }, [linkedId, auth.status, built, plan, linkedEdits, linkReady, writeLinkedRow]);
+
+  // Flush the pending library write on the way out — switching to Build cancels the timer.
+  // Ref rather than a dep on `writeLinkedRow`: that callback changes every compile, and an
+  // effect that cleaned up on each would write on every keystroke instead of on leave.
+  const writeLinkedRef = useRef(writeLinkedRow);
+  writeLinkedRef.current = writeLinkedRow;
+  useEffect(() => () => {
+    writeLinkedRef.current();
+  }, []);
+
+  useReportPresence({
+    structure: plan.name || 'Structure',
+    plan: true,
+    dirty: session.dirty,
+    dirtyLabel: 'the floorplan',
+  });
 
   // A finished AI pass lands in Build, exactly like the hand-off button: the result is a
   // generated build, not a plan, and Build is where a generated build lives. The plan here is
@@ -597,7 +706,6 @@ export function ArchitecturePage() {
    * with its drawing, one click per plan or all at once, and never silently — an upload
    * somebody did not ask for is how a library fills with things they cannot explain.
    */
-  const auth = useAuth();
   const [uploads, setUploads] = useState<Record<string, 'saving' | 'saved' | 'error'>>({});
   const [uploadNote, setUploadNote] = useState<string | null>(null);
 
@@ -761,10 +869,10 @@ export function ArchitecturePage() {
           </p>
 
           <div className="tool-rail__history">
-            <button type="button" className="ui-btn" onClick={session.undo} disabled={!session.canUndo}>
+            <button type="button" className="ui-btn" onClick={undoProject} disabled={!journal.canUndo}>
               Undo
             </button>
-            <button type="button" className="ui-btn" onClick={session.redo} disabled={!session.canRedo}>
+            <button type="button" className="ui-btn" onClick={redoProject} disabled={!journal.canRedo}>
               Redo
             </button>
           </div>
@@ -1059,11 +1167,16 @@ export function ArchitecturePage() {
             <button type="button" onClick={() => handOff('editor')} disabled={built.blockCount === 0}>
               Open in Build
             </button>
+            {linkedId && (
+              <button type="button" onClick={detachPlan}>
+                Detach from plan
+              </button>
+            )}
           </div>
           <p className="site-panel__hint">
-            Build takes the compiled building block by block — good for detailing. It is a copy:
-            Build edits voxels, not rooms, so your drawing stays here untouched and the Architecture
-            pill brings you back to it.
+            {linkedId
+              ? 'This drawing is the plan for that library build. A change here recompiles the same structure, and hand edits stay as an override. Detach from plan is what makes the next hand-off a copy.'
+              : 'Build takes a copy of the compiled building. Save the plan onto a library build to keep the two linked.'}
           </p>
         </Section>
 
@@ -1125,10 +1238,10 @@ export function ArchitecturePage() {
 
       <div className="arch__model">
         <EditorCanvas
-          grid={built.grid}
-          paletteColors={built.paletteColors}
-          paletteFlags={built.paletteFlags}
-          clip={shown.clip}
+          grid={previewGrid}
+          paletteColors={previewColors}
+          paletteFlags={previewFlags}
+          clip={plot ? null : shown.clip}
           view={view}
           onClick={onModelClick}
         />
@@ -1136,6 +1249,7 @@ export function ArchitecturePage() {
         {/* Says which storey you are looking at, because every mode but Whole shows one and
             the plan beside it is the only other thing that knows which. */}
         <p className="model-caption">
+          {plot ? <>On {plot.label}’s plot · terrain and neighbours stay in view. </> : null}
           {modelMode === 'whole' ? (
             <>Whole building · {plan.floors.length} storey{plan.floors.length === 1 ? '' : 's'}</>
           ) : shown.fallback ? (

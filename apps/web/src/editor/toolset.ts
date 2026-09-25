@@ -136,11 +136,11 @@ export const TOOLS: readonly ToolSpec[] = [
   {
     id: 'grab',
     group: 'select',
-    verb: 'select a structure',
+    verb: 'select that block',
     dragVerb: 'move that block',
     drag: 'lift',
     label: 'Grab',
-    hint: 'Drag any block to move it on its own — it lands against the face you drop it on. Click one instead to select the whole connected structure: a tree, a statue, a chimney.',
+    hint: 'Drag a block to move it on its own — it lands against the face you drop it on. A click selects just that block. Use Box to select a whole region.',
     needsBlock: false,
     usesBrush: false,
     key: '9',

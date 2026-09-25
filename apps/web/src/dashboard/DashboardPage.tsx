@@ -249,7 +249,10 @@ function Launcher({
 
   const open = useCallback(() => {
     const trimmed = prompt.trim();
-    navigate(trimmed ? `/studio?prompt=${encodeURIComponent(trimmed)}` : '/studio');
+    // A new project is a map with one plot, not a blank voxel editor. The prompt, when
+    // there is one, still rides along for the editor once a building is opened.
+    const promptQuery = trimmed ? `&prompt=${encodeURIComponent(trimmed)}` : '';
+    navigate(`/studio?mode=world&plot=1${promptQuery}`);
   }, [navigate, prompt]);
 
   // Two siblings rather than one box, so the hero can put the prompt beside the greeting and

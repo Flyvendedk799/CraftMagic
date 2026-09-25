@@ -34,7 +34,8 @@ import {
 } from '@craftmagic/core';
 import { editsOf, rememberEdits, type LoadedBuild } from './builds.js';
 import type { VoxelWorld } from './VoxelWorld.js';
-import { useUndoKeys } from '../studio/undoKeys.js';
+import { editHistoryFor } from '../studio/retainHistory.js';
+import { recordChange } from '../studio/journal.js';
 import { EditHistory } from './history.js';
 import { blockDelta } from './tools/op.js';
 import { resolvePaletteIndex } from './tools/palette.js';
@@ -65,8 +66,8 @@ export interface EditSession {
 
   /** Apply an op and record it in the overlay. Null ops are ignored. */
   apply: (op: EditOp | null) => void;
-  undo: () => void;
-  redo: () => void;
+  undo: () => boolean;
+  redo: () => boolean;
   /** Remove every hand edit: restore the pristine expansion and clear the overlay. */
   discard: () => void;
   /** Palette slot for a block, appending one if needed. -1 when the palette is full. */
@@ -101,7 +102,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
   const historyRef = useRef<EditHistory | null>(null);
   // Lazy rather than `useRef(new EditHistory())`, which would allocate one on every render
   // — and the editor re-renders on every pointer move.
-  const history = (historyRef.current ??= new EditHistory());
+  const history = (historyRef.current ??= editHistoryFor(build.id));
 
   const worldRef = useRef<VoxelWorld | null>(null);
   /** Voxels as expanded — before the overlay, before any edit. What discard restores. */
@@ -124,7 +125,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
    * where it must run: an effect would let one frame paint the un-composited grid, and the
    * user's edits blinking out for a frame on every slider tick reads as data loss.
    */
-  const stateFor = (next: LoadedBuild): SessionState => {
+  const stateFor = (next: LoadedBuild, stack: EditHistory = history): SessionState => {
     if (lastIdRef.current !== next.id) {
       lastIdRef.current = next.id;
       overlayRef.current = EditOverlay.fromJSON(editsOf(next.id));
@@ -153,8 +154,8 @@ export function useEditSession(build: LoadedBuild): EditSession {
       blockCount: next.blockCount + (composited?.delta ?? 0),
       edits: overlay.size,
       outside: composited?.outside ?? 0,
-      canUndo: false,
-      canRedo: false,
+      canUndo: stack.canUndo,
+      canRedo: stack.canRedo,
     };
   };
 
@@ -163,9 +164,24 @@ export function useEditSession(build: LoadedBuild): EditSession {
   // Reset during render rather than in an effect — see `stateFor`. React re-runs the
   // component immediately, so nothing downstream sees the stale state.
   if (state.build !== build) {
-    history.clear();
+    // A different building gets its own stack. The same id — a remount after zooming out
+    // and back, or a re-expand that did not change which document this is — keeps the
+    // stack. Clearing here was what made Ctrl+Z forget the edit the moment you left.
+    //
+    // Exception: a scale or param change re-expands the same id into a differently sized
+    // grid. Ops are indexed for the old volume, so keeping them would write to the wrong
+    // cells (or past the end) on undo.
+    if (state.build.id !== build.id) {
+      historyRef.current = editHistoryFor(build.id);
+    } else {
+      const prev = state.build.grid.size;
+      const next = build.grid.size;
+      if (prev.x !== next.x || prev.y !== next.y || prev.z !== next.z) {
+        history.clear();
+      }
+    }
     baselineRef.current = null;
-    setState(stateFor(build));
+    setState(stateFor(build, historyRef.current ?? history));
   }
 
   const grid = build.grid;
@@ -212,6 +228,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
       ensureBaseline();
       world.applyEdit(op);
       history.push(op);
+      recordChange('build', build.id);
       overlay.recordOp(grid, op, baselineRef.current?.voxels);
 
       const delta = blockDelta(op);
@@ -223,18 +240,18 @@ export function useEditSession(build: LoadedBuild): EditSession {
         canRedo: false,
       }));
     },
-    [ensureBaseline, history, overlay, grid],
+    [ensureBaseline, history, overlay, grid, build.id],
   );
 
   // Undo does not shrink the palette. A slot the undone edit was the last user of stays
   // behind, costing four bytes in the mesher's tables and one entry in an exported
   // schematic — both harmless, and cheaper than the alternative, which is renumbering every
   // voxel above the removed slot and invalidating every op still on the stack.
-  const undo = useCallback(() => {
+  const undo = useCallback((): boolean => {
     const world = worldRef.current;
-    if (!world) return;
+    if (!world) return false;
     const op = history.undo();
-    if (!op) return;
+    if (!op) return false;
 
     world.revertEdit(op);
     overlay.recordRevert(grid, op, baselineRef.current?.voxels);
@@ -246,13 +263,14 @@ export function useEditSession(build: LoadedBuild): EditSession {
       canUndo: history.canUndo,
       canRedo: true,
     }));
+    return true;
   }, [history, overlay, grid]);
 
-  const redo = useCallback(() => {
+  const redo = useCallback((): boolean => {
     const world = worldRef.current;
-    if (!world) return;
+    if (!world) return false;
     const op = history.redo();
-    if (!op) return;
+    if (!op) return false;
 
     world.applyEdit(op);
     overlay.recordOp(grid, op, baselineRef.current?.voxels);
@@ -264,6 +282,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
       canUndo: true,
       canRedo: history.canRedo,
     }));
+    return true;
   }, [history, overlay, grid]);
 
   const discard = useCallback(() => {
@@ -314,12 +333,6 @@ export function useEditSession(build: LoadedBuild): EditSession {
     },
     [grid],
   );
-
-  // Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z, on the window so they work wherever the pointer is.
-  // Shared with the other two modes. It skips text fields — the generation prompt is a
-  // textarea on this same page, and stealing undo inside it would be worse than not having
-  // the shortcut at all.
-  useUndoKeys({ undo, redo });
 
   const exportEdits = useCallback(
     () => (overlay.size > 0 ? overlay.toJSON() : null),

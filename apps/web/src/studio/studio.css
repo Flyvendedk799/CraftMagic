@@ -57,6 +57,15 @@
   color: var(--bg);
 }
 
+.studio__dirty {
+  margin-left: 0.4rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+  font-size: var(--text-2xs);
+}
+
 /* The palette key is a hint, not a fourth mode, so it sits behind a rule and never lights. */
 .studio__palette-key {
   margin-left: 2px;

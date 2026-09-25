@@ -60,6 +60,8 @@ export interface WorldMapProps {
   view?: RegionArea;
   selected: string | null;
   onSelect: (id: string | null) => void;
+  /** Double-click a placed building to open its blocks. */
+  onOpen?: (placement: WorldPlacement) => void;
   /** A drag on a placement, live; committed by the page on release. */
   onMovePlacement: (id: string, x: number, z: number) => void;
   onCommitPlacements: () => void;
@@ -243,7 +245,18 @@ export function WorldMap(props: WorldMapProps) {
         else if (tool === 'lower') raiseDisc(terrain, settings, x, z, { ...brush, strength: -brush.strength });
         else if (tool === 'level') levelDisc(terrain, settings, x, z, brush, targetY);
         else if (tool === 'smooth') smoothDisc(doc, x, z, brush);
-        else if (tool === 'paint') paintDisc(terrain, settings, x, z, brush, stratum);
+        else if (tool === 'paint') {
+          const profile = settings.strata[stratum];
+          if (profile?.id === 'water') {
+            // Water is not a solid coat. Drop the ground under sea level and the
+            // materialiser fills the difference with water, which is how lakes already work.
+            const bed = settings.strata.findIndex((entry) => entry.id === 'sand');
+            levelDisc(terrain, settings, x, z, brush, settings.seaLevel - 2);
+            if (bed >= 0) paintDisc(terrain, settings, x, z, brush, bed);
+          } else {
+            paintDisc(terrain, settings, x, z, brush, stratum);
+          }
+        }
       });
     },
     [doc, settings, brush, tool, targetY, stratum],
@@ -269,6 +282,10 @@ export function WorldMap(props: WorldMapProps) {
 
       if (tool === 'select') {
         const hit = hitPlacement(doc, world.x, world.z);
+        if (event.detail >= 2 && hit && props.onOpen) {
+          props.onOpen(hit);
+          return;
+        }
         props.onSelect(hit?.id ?? null);
         if (hit) {
           drag.current = {

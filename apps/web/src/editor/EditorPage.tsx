@@ -22,6 +22,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { useReportPresence } from '../studio/presence.js';
+import { redoProject, undoProject } from '../studio/journal.js';
+import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import {
   AIR_BLOCK,
   displayName,
@@ -57,6 +60,7 @@ import {
   registerImportedBuild,
 } from './builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
+import { saveToLibrary } from '../library/library.js';
 import {
   carrySettings,
   parseScale,
@@ -225,6 +229,8 @@ export function EditorPage() {
     [buildId, overrideKey, scaleKey, styleId, hiddenKey],
   );
   const session = useEditSession(build);
+  useZoomUndo('build', build.id, session.undo, session.redo);
+  const journal = useJournalFlags();
   // The opening reveal. It owns the canvas's grid and world handle while it runs; the
   // session takes over the moment it finishes, through the same remount the canvas would
   // have done anyway. Any click during the reveal skips to the finished build.
@@ -295,6 +301,63 @@ export function EditorPage() {
   }, []);
 
   const { grid, name } = build;
+  useReportPresence({
+    structure: name,
+    plan: false,
+    dirty: session.edits > 0,
+    dirtyLabel: 'this building',
+  });
+
+  // A library build is the structure a placement points at. Writing the edited voxels
+  // back to that row is what makes a wall change show up on the map, instead of a copy.
+  // Also write when edits return to zero — otherwise undoing the last hand edit leaves the
+  // library (and map placements) showing blocks that are no longer in the editor.
+  const lastWrittenEdits = useRef<number | null>(null);
+  const exportEdits = session.exportEdits;
+  const editCount = session.edits;
+  const writeLibraryRow = useCallback(() => {
+    if (!build.id.startsWith('lib:')) return;
+    const row = build.id.slice(4);
+    lastWrittenEdits.current = editCount;
+    void saveToLibrary({
+      id: row,
+      name,
+      grid,
+      program: build.program,
+      detached: editCount > 0,
+      edits: exportEdits(),
+      keepPlan: true,
+      keepKind: true,
+    }).catch(() => undefined);
+  }, [build.id, build.program, grid, name, exportEdits, editCount]);
+
+  useEffect(() => {
+    if (!build.id.startsWith('lib:')) return;
+    // Skip the initial mount when there is nothing to push — avoid a needless write of an
+    // untouched row. Once we have written (or the user has edited), every change including
+    // clearing edits must land.
+    if (lastWrittenEdits.current === null && editCount === 0) {
+      lastWrittenEdits.current = 0;
+      return;
+    }
+    if (lastWrittenEdits.current === editCount) return;
+    const timer = setTimeout(writeLibraryRow, 800);
+    return () => clearTimeout(timer);
+  }, [editCount, build.id, writeLibraryRow]);
+
+  // Flush on the way out — leaving within the debounce window used to cancel the write.
+  const writeLibraryRef = useRef(writeLibraryRow);
+  writeLibraryRef.current = writeLibraryRow;
+  const editsRef = useRef(editCount);
+  editsRef.current = editCount;
+  useEffect(() => {
+    const id = build.id;
+    return () => {
+      if (!id.startsWith('lib:')) return;
+      if (lastWrittenEdits.current === editsRef.current) return;
+      writeLibraryRef.current();
+    };
+  }, [build.id]);
 
   const scalePreview = useMemo(() => previewScale(buildId, scale), [buildId, scale]);
   const scaleBase = useMemo(() => baseSize(buildId), [buildId]);
@@ -419,6 +482,10 @@ export function EditorPage() {
   const [region, setRegion] = useState<{ min: BoxCorner; max: BoxCorner } | null>(null);
   const [familyMode, setFamilyMode] = useState(false);
   const [anchor, setAnchor] = useState<BoxCorner | null>(null);
+  // Written in the same turn as setAnchor. A line's second click can land before React
+  // re-renders, and reading state then still sees "no start".
+  const anchorRef = useRef<BoxCorner | null>(null);
+  anchorRef.current = anchor;
   /** Where a selection being dragged would land, while it is being dragged. */
   const [dragGhost, setDragGhost] = useState<{ dx: number; dy: number; dz: number } | null>(null);
   /** Where the single block being carried would land, while it is in the air. */
@@ -790,7 +857,10 @@ export function EditorPage() {
             : result.op;
         session.apply(op);
       }
-      if (result.anchor !== undefined) setAnchor(result.anchor);
+      if (result.anchor !== undefined) {
+        anchorRef.current = result.anchor;
+        setAnchor(result.anchor);
+      }
       if (result.region !== undefined) setRegion(result.region);
       if (result.pickBlock !== undefined) setBlock(result.pickBlock);
       if (result.clip !== undefined) setClip(result.clip);
@@ -798,6 +868,23 @@ export function EditorPage() {
       if (result.notice !== undefined) setNotice(result.notice);
     },
     [grid, session, symmetry],
+  );
+
+  /**
+   * A dragged line: both ends in one gesture.
+   *
+   * If a start is already standing, the drag finishes it at the release point. Otherwise
+   * the press and the release are the two ends. Either way it is one `lineEdit`, not two
+   * clicks sharing a stale anchor.
+   */
+  const onLine = useCallback(
+    (from: VoxelHit, to: VoxelHit) => {
+      const impl = TOOL_IMPL.line;
+      const start = anchorRef.current ?? from;
+      const end = anchorRef.current ? to : to;
+      runTool(impl, impl.onClick({ ...toolCtx(), anchor: start }, end));
+    },
+    [runTool, toolCtx],
   );
 
   const onCanvasClick = useCallback(
@@ -810,7 +897,9 @@ export function EditorPage() {
         setNotice(impl.groundRefusal);
         return;
       }
-      runTool(impl, impl.onClick(toolCtx(), hit));
+      const ctx = toolCtx();
+      if (tool === 'line') ctx.anchor = anchorRef.current;
+      runTool(impl, impl.onClick(ctx, hit));
     },
     [tool, toolCtx, runTool],
   );
@@ -1184,6 +1273,7 @@ export function EditorPage() {
           layerFloor={!ghost && isolate && layer !== null ? layer : 0}
           onHover={setHover}
           onClick={ghost ? undefined : assembly.assembling ? assembly.skip : onCanvasClick}
+          onLine={ghost || assembly.assembling || tool !== 'line' ? undefined : onLine}
           onStroke={ghost || assembly.assembling ? undefined : strokable ? onStroke : undefined}
           onPick={ghost ? undefined : assembly.assembling ? assembly.skip : onPick}
           marker={ghost ? null : anchor}
@@ -1284,10 +1374,10 @@ export function EditorPage() {
           edits={session.edits}
           detached={session.detached}
           outside={session.outside}
-          canUndo={session.canUndo}
-          canRedo={session.canRedo}
-          onUndo={session.undo}
-          onRedo={session.redo}
+          canUndo={journal.canUndo}
+          canRedo={journal.canRedo}
+          onUndo={undoProject}
+          onRedo={redoProject}
           onDiscard={session.discard}
           notice={notice}
           onShowHelp={() => setHelp(true)}

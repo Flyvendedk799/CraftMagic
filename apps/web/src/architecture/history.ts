@@ -63,4 +63,8 @@ export class PlanHistory {
     this.past.length = 0;
     this.future.length = 0;
   }
+
+  discardRedo(): void {
+    this.future.length = 0;
+  }
 }

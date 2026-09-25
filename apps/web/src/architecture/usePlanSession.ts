@@ -16,6 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizePlan, type LayoutPlan } from './plan.js';
 import { PlanHistory } from './history.js';
+import { planHistoryFor } from '../studio/retainHistory.js';
+import { recordChange } from '../studio/journal.js';
 import { loadAutosave, saveAutosave, listSaved, savePlan, deleteSaved, type SavedPlan } from './storage.js';
 
 /** Long enough that a drag writes once, short enough that a closed tab loses nothing real. */
@@ -31,8 +33,8 @@ export interface PlanSession {
   mark: () => void;
   /** Replace the plan wholesale — a template, an import, a saved plan. Clears history. */
   reset: (plan: LayoutPlan) => void;
-  undo: () => void;
-  redo: () => void;
+  undo: () => boolean;
+  redo: () => boolean;
   canUndo: boolean;
   canRedo: boolean;
   saved: SavedPlan[];
@@ -53,7 +55,7 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
   planRef.current = plan;
 
   const historyRef = useRef<PlanHistory | null>(null);
-  const history = (historyRef.current ??= new PlanHistory());
+  const history = (historyRef.current ??= planHistoryFor('architecture'));
 
   const [revision, setRevision] = useState(0);
   const [saved, setSaved] = useState<SavedPlan[]>(() => listSaved());
@@ -77,6 +79,7 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
         const resolved = typeof next === 'function' ? next(current) : next;
         if (resolved === current) return current;
         history.push(current);
+        recordChange('arch', 'architecture');
         return resolved;
       });
       bump();
@@ -91,6 +94,7 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
   const mark = useCallback(() => {
     setPlan((current) => {
       history.push(current);
+      recordChange('arch', 'architecture');
       return current;
     });
     bump();
@@ -105,14 +109,18 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
     [history, bump],
   );
 
-  const undo = useCallback(() => {
+  const undo = useCallback((): boolean => {
+    if (!history.canUndo) return false;
     setPlan((current) => history.undo(current) ?? current);
     bump();
+    return true;
   }, [history, bump]);
 
-  const redo = useCallback(() => {
+  const redo = useCallback((): boolean => {
+    if (!history.canRedo) return false;
     setPlan((current) => history.redo(current) ?? current);
     bump();
+    return true;
   }, [history, bump]);
 
   const save = useCallback(() => {

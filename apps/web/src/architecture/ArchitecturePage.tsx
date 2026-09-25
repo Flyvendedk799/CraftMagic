@@ -46,7 +46,7 @@ import { isTextEntry } from '../studio/undoKeys.js';
 import { redoProject, undoProject } from '../studio/journal.js';
 import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { Section } from '../editor/Section.js';
-import { registerGeneratedBuild } from '../editor/builds.js';
+import { registerGeneratedBuild, registerLibraryBuild } from '../editor/builds.js';
 import { openGuide, openInBuild } from '../studio/handoff.js';
 import { PromptPanel } from '../generate/PromptPanel.js';
 import { useGeneration, type GenerationResult } from '../generate/useGeneration.js';
@@ -194,9 +194,17 @@ export function ArchitecturePage() {
   const planParam = searchParams.get('plan');
   const linkedId = planParam?.startsWith('lib:') ? planParam.slice(4) : null;
   const [linkedEdits, setLinkedEdits] = useState<EditLayer | null>(null);
+  /** True once the linked library row has been fetched into this session. */
+  const [linkReady, setLinkReady] = useState(false);
   const loadedLink = useRef<string | null>(null);
   useEffect(() => {
-    if (!linkedId || loadedLink.current === linkedId) return;
+    if (!linkedId) {
+      loadedLink.current = null;
+      setLinkReady(false);
+      return;
+    }
+    if (loadedLink.current === linkedId) return;
+    setLinkReady(false);
     let cancelled = false;
     getBuild(linkedId)
       .then((detail) => {
@@ -205,10 +213,12 @@ export function ArchitecturePage() {
         setLinkedEdits(detail.edits);
         if (!detail.plan) {
           setImportError('That library build has no plan saved with it — only its blocks.');
+          setLinkReady(true);
           return;
         }
         load(normalizePlan(detail.plan));
         setImportError(null);
+        setLinkReady(true);
       })
       .catch((err: unknown) => {
         if (!cancelled) setImportError((err as Error).message);
@@ -545,6 +555,8 @@ export function ArchitecturePage() {
 
   // --- hand-off ----------------------------------------------------------
 
+  const auth = useAuth();
+
   /**
    * Register the compiled program as a build, so the rest of the product can address it.
    *
@@ -553,26 +565,62 @@ export function ArchitecturePage() {
    * on demand rather than on every compile matters: the store is capped and persisted, and a
    * plan compiles on every keystroke.
    */
+  const writeLinkedRow = useCallback(() => {
+    if (!linkedId || auth.status !== 'signedIn' || built.blockCount === 0) return;
+    // Never write until the linked row has been loaded — otherwise a shared autosave with
+    // another nonempty plan would overwrite the library drawing within the debounce window.
+    if (!linkReady || loadedLink.current !== linkedId) return;
+    const overlay = linkedEdits ? EditOverlay.fromJSON(linkedEdits) : null;
+    const grid: VoxelGrid = {
+      size: built.grid.size,
+      palette: built.grid.palette.slice(),
+      voxels: built.grid.voxels.slice(),
+    };
+    if (overlay && overlay.size > 0) overlay.composite(grid);
+    // Keep kind: a plan saved as an interior must stay on the Interiors shelf. Keep edits:
+    // the override layer is not part of a recompile. Refresh Build's in-memory entry so
+    // returning to it in this tab expands the program just written, not the one fetched earlier.
+    registerLibraryBuild(linkedId, {
+      kind: 'program',
+      name: plan.name || 'Structure',
+      program: built.program,
+    });
+    void saveToLibrary({
+      id: linkedId,
+      name: plan.name || 'Structure',
+      grid,
+      program: built.program,
+      detached: false,
+      plan,
+      keepEdits: true,
+      keepKind: true,
+    }).catch((error: unknown) => setImportError((error as Error).message));
+  }, [linkedId, auth.status, built, plan, linkedEdits, linkReady]);
+
   const handOff = useCallback(
     (where: 'editor' | 'guide') => {
+      // Flush before leaving — the 800 ms debounce would otherwise be cancelled by unmount,
+      // and Build would open the previous library version.
+      writeLinkedRow();
       const id = linkedId ? `lib:${linkedId}` : registerGeneratedBuild(built.program);
       if (where === 'editor') navigate(openInBuild(id));
       else window.open(openGuide(id), '_blank', 'noreferrer');
     },
-    [built.program, navigate, linkedId],
+    [built.program, navigate, linkedId, writeLinkedRow],
   );
 
   useEffect(() => {
     return registerPlanHandoff(() => {
       if (built.blockCount === 0) return null;
+      writeLinkedRow();
       return linkedId ? `lib:${linkedId}` : registerGeneratedBuild(built.program);
     });
-  }, [built.program, built.blockCount, linkedId]);
+  }, [built.program, built.blockCount, linkedId, writeLinkedRow]);
 
-  const auth = useAuth();
   const detachPlan = useCallback(() => {
     const id = linkedId;
     loadedLink.current = null;
+    setLinkReady(false);
     setLinkedEdits(null);
     setSearchParams(
       (params) => {
@@ -599,27 +647,19 @@ export function ArchitecturePage() {
   // map reads, and omitted from the body so the server keeps it as the override.
   useEffect(() => {
     if (!linkedId || auth.status !== 'signedIn' || built.blockCount === 0) return;
-    const timer = setTimeout(() => {
-      const overlay = linkedEdits ? EditOverlay.fromJSON(linkedEdits) : null;
-      const grid: VoxelGrid = {
-        size: built.grid.size,
-        palette: built.grid.palette.slice(),
-        voxels: built.grid.voxels.slice(),
-      };
-      if (overlay && overlay.size > 0) overlay.composite(grid);
-      void saveToLibrary({
-        id: linkedId,
-        name: plan.name || 'Structure',
-        grid,
-        program: built.program,
-        detached: false,
-        plan,
-        kind: 'structure',
-        keepEdits: true,
-      }).catch((error: unknown) => setImportError((error as Error).message));
-    }, 800);
+    if (!linkReady || loadedLink.current !== linkedId) return;
+    const timer = setTimeout(writeLinkedRow, 800);
     return () => clearTimeout(timer);
-  }, [linkedId, auth.status, built, plan, linkedEdits]);
+  }, [linkedId, auth.status, built, plan, linkedEdits, linkReady, writeLinkedRow]);
+
+  // Flush the pending library write on the way out — switching to Build cancels the timer.
+  // Ref rather than a dep on `writeLinkedRow`: that callback changes every compile, and an
+  // effect that cleaned up on each would write on every keystroke instead of on leave.
+  const writeLinkedRef = useRef(writeLinkedRow);
+  writeLinkedRef.current = writeLinkedRow;
+  useEffect(() => () => {
+    writeLinkedRef.current();
+  }, []);
 
   useReportPresence({
     structure: plan.name || 'Structure',

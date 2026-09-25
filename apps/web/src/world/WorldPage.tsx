@@ -31,7 +31,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useReportPresence } from '../studio/presence.js';
-import { openInBuild } from '../studio/handoff.js';
+import { openInBuild, libRef } from '../studio/handoff.js';
 import {
   OVERLAY_AIR,
   createWorld,
@@ -45,6 +45,7 @@ import {
   areaCount,
   areaLabel,
   clampArea,
+  materializeArea,
   regionCount,
   regionStats,
   regionsOf,
@@ -52,6 +53,7 @@ import {
   spanFrom,
   worldId,
   type Overlay,
+  type Prefab,
   type Region,
   type RegionArea,
   type TerrainBrush,
@@ -192,7 +194,7 @@ export function WorldPage() {
     }
   }, [library.catalogue, doc, session]);
 
-  useZoomUndo('world', 'open-world', session.undo, session.redo);
+  useZoomUndo('world', 'open-world', session.undo, session.redo, !session.loading);
   const journal = useJournalFlags();
 
   // Number-row tool shortcuts, matching the editor and Architecture. Ignored while a text
@@ -258,6 +260,9 @@ export function WorldPage() {
   const worldParam = searchParams.get('world');
   const placeParam = searchParams.get('place');
   const plotParam = searchParams.get('plot');
+  // Dashboard's launcher carries the typed prompt through World into Build. Kept until a
+  // building is opened — dropping it on arrival would lose the text before the editor seeds.
+  const promptParam = searchParams.get('prompt');
 
   const dropParam = useCallback(
     (key: string) => {
@@ -272,11 +277,33 @@ export function WorldPage() {
     [setSearchParams],
   );
 
+  const openBuild = useCallback(
+    (buildId: string) => {
+      const href = openInBuild(libRef(buildId));
+      if (!promptParam) {
+        navigate(href);
+        return;
+      }
+      const url = new URL(href, window.location.origin);
+      url.searchParams.set('prompt', promptParam);
+      dropParam('prompt');
+      navigate(`${url.pathname}?${url.searchParams.toString()}`);
+    },
+    [navigate, promptParam, dropParam],
+  );
+
   useEffect(() => {
     if (plotParam !== '1' || session.loading) return;
+    // Frame the centre of the map — the 3D view defaults to region 0,0 at the corner, and
+    // the notice claimed a central plot was selected without ever moving there.
+    const counts = regionCount(doc.settings);
+    const rx = Math.floor((counts.x - 1) / 2);
+    const rz = Math.floor((counts.z - 1) / 2);
+    setPinned(true);
+    setRequestedView(spanFrom(doc.settings, rx, rz, 1));
     setNotice(`One plot is selected in the middle of ${doc.name}. Place a build, or open one and draw its plan.`);
     dropParam('plot');
-  }, [plotParam, session.loading, doc.name, dropParam]);
+  }, [plotParam, session.loading, doc.name, doc.settings, dropParam]);
 
   useEffect(() => {
     // Not before the draft has been read: `useWorldSession` assigns the stored draft over the
@@ -815,7 +842,7 @@ export function WorldPage() {
               showPlacements
               selected={selected}
               onSelect={setSelected}
-              onOpen={(placement) => navigate(openInBuild(`lib:${placement.buildId}`))}
+              onOpen={(placement) => openBuild(placement.buildId)}
               onMovePlacement={movePlacement}
               onCommitPlacements={() => {
                 setSculpting(false);
@@ -904,8 +931,19 @@ export function WorldPage() {
               showRegion(at.rx, at.rz);
               setSelected(placement.id);
             }}
+            onOpenBuild={(placement) => openBuild(placement.buildId)}
             onDrawPlan={(placement) => {
-              offerPlot(plotFromView(built.grid, view, doc.settings.regionSize, placement));
+              // Snapshot the window that holds this building, not whichever window the 3D
+              // view happens to be cycling through — otherwise its plot falls outside the
+              // grid and the plan preview cannot replace it or show its surroundings.
+              const at = regionOfColumn(doc.settings.regionSize, placement.x, placement.z);
+              const target =
+                windows.find((entry) => areaHolds(entry, at.rx, at.rz)) ??
+                fitArea(doc, { rx0: at.rx, rz0: at.rz, rx1: at.rx, rz1: at.rz }).area;
+              const prefabs = new Map<string, Prefab>();
+              for (const [id, component] of library.catalogue) prefabs.set(id, component.prefab);
+              const snapshot = materializeArea(doc, target, prefabs);
+              offerPlot(plotFromView(snapshot.grid, target, doc.settings.regionSize, placement));
               void getBuild(placement.buildId)
                 .then((detail) => {
                   navigate(detail.plan ? `/studio?mode=arch&plan=lib:${placement.buildId}` : '/studio?mode=arch');

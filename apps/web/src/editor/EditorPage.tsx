@@ -310,22 +310,54 @@ export function EditorPage() {
 
   // A library build is the structure a placement points at. Writing the edited voxels
   // back to that row is what makes a wall change show up on the map, instead of a copy.
-  useEffect(() => {
-    if (!build.id.startsWith('lib:') || session.edits === 0) return;
+  // Also write when edits return to zero — otherwise undoing the last hand edit leaves the
+  // library (and map placements) showing blocks that are no longer in the editor.
+  const lastWrittenEdits = useRef<number | null>(null);
+  const exportEdits = session.exportEdits;
+  const editCount = session.edits;
+  const writeLibraryRow = useCallback(() => {
+    if (!build.id.startsWith('lib:')) return;
     const row = build.id.slice(4);
-    const timer = setTimeout(() => {
-      void saveToLibrary({
-        id: row,
-        name,
-        grid,
-        program: build.program,
-        detached: true,
-        edits: session.exportEdits(),
-        kind: 'structure',
-      }).catch(() => undefined);
-    }, 800);
+    lastWrittenEdits.current = editCount;
+    void saveToLibrary({
+      id: row,
+      name,
+      grid,
+      program: build.program,
+      detached: editCount > 0,
+      edits: exportEdits(),
+      keepPlan: true,
+      keepKind: true,
+    }).catch(() => undefined);
+  }, [build.id, build.program, grid, name, exportEdits, editCount]);
+
+  useEffect(() => {
+    if (!build.id.startsWith('lib:')) return;
+    // Skip the initial mount when there is nothing to push — avoid a needless write of an
+    // untouched row. Once we have written (or the user has edited), every change including
+    // clearing edits must land.
+    if (lastWrittenEdits.current === null && editCount === 0) {
+      lastWrittenEdits.current = 0;
+      return;
+    }
+    if (lastWrittenEdits.current === editCount) return;
+    const timer = setTimeout(writeLibraryRow, 800);
     return () => clearTimeout(timer);
-  }, [session.edits, session.exportEdits, build.id, build.program, grid, name]);
+  }, [editCount, build.id, writeLibraryRow]);
+
+  // Flush on the way out — leaving within the debounce window used to cancel the write.
+  const writeLibraryRef = useRef(writeLibraryRow);
+  writeLibraryRef.current = writeLibraryRow;
+  const editsRef = useRef(editCount);
+  editsRef.current = editCount;
+  useEffect(() => {
+    const id = build.id;
+    return () => {
+      if (!id.startsWith('lib:')) return;
+      if (lastWrittenEdits.current === editsRef.current) return;
+      writeLibraryRef.current();
+    };
+  }, [build.id]);
 
   const scalePreview = useMemo(() => previewScale(buildId, scale), [buildId, scale]);
   const scaleBase = useMemo(() => baseSize(buildId), [buildId]);

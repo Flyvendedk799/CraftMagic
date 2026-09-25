@@ -4,6 +4,7 @@ import {
   journalCanRedo,
   journalCanUndo,
   registerLive,
+  skipPending,
   subscribeJournal,
   takePending,
   type ZoomScope,
@@ -15,15 +16,22 @@ export function useZoomUndo(
   docId: string,
   undo: () => boolean,
   redo: () => boolean,
+  /** False while the document is still loading — applying undo against a temporary stand-in would be reversed when it lands. */
+  ready = true,
 ): void {
-  useEffect(() => registerLive({ scope, docId, undo, redo }), [scope, docId, undo, redo]);
+  useEffect(() => {
+    if (!ready) return;
+    return registerLive({ scope, docId, undo, redo });
+  }, [scope, docId, undo, redo, ready]);
 
   useEffect(() => {
+    if (!ready) return;
     const action = takePending(scope, docId);
     if (!action) return;
     const ok = action === 'undo' ? undo() : redo();
     if (ok) confirmPending(action);
-  }, [scope, docId, undo, redo]);
+    else skipPending(action);
+  }, [scope, docId, undo, redo, ready]);
 }
 
 /** Whether the project stack, not the open page, can move. */

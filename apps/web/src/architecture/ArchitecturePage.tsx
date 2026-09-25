@@ -200,14 +200,24 @@ export function ArchitecturePage() {
   /** True once the linked library row has been fetched into this session. */
   const [linkReady, setLinkReady] = useState(false);
   const loadedLink = useRef<string | null>(null);
+  /**
+   * The plan document id that belongs to the open linked row.
+   *
+   * `load()` swaps the drawing immediately, but the deferred compile lags by PREVIEW_DELAY.
+   * Without this, leaving Architecture in that window writes the *previous* plan's blocks
+   * into the newly opened library row. Writes wait until deferred and live plan share this id.
+   */
+  const linkedPlanId = useRef<string | null>(null);
   useEffect(() => {
     if (!linkedId) {
       loadedLink.current = null;
+      linkedPlanId.current = null;
       setLinkReady(false);
       return;
     }
     if (loadedLink.current === linkedId) return;
     setLinkReady(false);
+    linkedPlanId.current = null;
     let cancelled = false;
     getBuild(linkedId)
       .then((detail) => {
@@ -217,6 +227,7 @@ export function ArchitecturePage() {
         if (!detail.plan) {
           const blank = templateById('blank')!.build();
           blank.name = detail.name || blank.name;
+          linkedPlanId.current = blank.id;
           load(blank);
           setImportError(null);
           setNotice(
@@ -225,7 +236,9 @@ export function ArchitecturePage() {
           setLinkReady(true);
           return;
         }
-        load(normalizePlan(detail.plan));
+        const next = normalizePlan(detail.plan);
+        linkedPlanId.current = next.id;
+        load(next);
         setImportError(null);
         setLinkReady(true);
       })
@@ -236,6 +249,13 @@ export function ArchitecturePage() {
       cancelled = true;
     };
   }, [linkedId, load]);
+
+  // Keep the write-guard in step with any later load (template, import) while linked — otherwise
+  // a new drawing would never save because `linkedPlanId` still named the previous one.
+  useEffect(() => {
+    if (!linkedId || !linkReady) return;
+    linkedPlanId.current = plan.id;
+  }, [linkedId, linkReady, plan.id]);
 
   // A plan that lost a storey — an undo, a delete, an import — must not leave the canvas
   // editing a floor that no longer exists.
@@ -579,6 +599,11 @@ export function ArchitecturePage() {
     // Never write until the linked row has been loaded — otherwise a shared autosave with
     // another nonempty plan would overwrite the library drawing within the debounce window.
     if (!linkReady || loadedLink.current !== linkedId) return;
+    // And never write until the deferred compile is of *this* linked plan. `load()` swaps the
+    // drawing immediately; the preview lags, and an exit in that window used to save the
+    // previous building's blocks into the newly opened row.
+    const expected = linkedPlanId.current;
+    if (!expected || plan.id !== expected || deferred.id !== expected) return;
     const overlay = linkedEdits ? EditOverlay.fromJSON(linkedEdits) : null;
     const grid: VoxelGrid = {
       size: built.grid.size,
@@ -606,7 +631,7 @@ export function ArchitecturePage() {
     })
       .then(() => notifyLibraryRow(linkedId))
       .catch((error: unknown) => setImportError((error as Error).message));
-  }, [linkedId, auth.status, built, plan, linkedEdits, linkReady]);
+  }, [linkedId, auth.status, built, plan, deferred, linkedEdits, linkReady]);
 
   const handOff = useCallback(
     (where: 'editor' | 'guide') => {
@@ -622,15 +647,22 @@ export function ArchitecturePage() {
 
   useEffect(() => {
     return registerPlanHandoff(() => {
+      // A linked row stays the open build even when the layout is still empty — otherwise
+      // zooming to Build from "Open layout" lands on the default plot and drops the link.
+      if (linkedId) {
+        writeLinkedRow();
+        return `lib:${linkedId}`;
+      }
       if (built.blockCount === 0) return null;
       writeLinkedRow();
-      return linkedId ? `lib:${linkedId}` : registerGeneratedBuild(built.program);
+      return registerGeneratedBuild(built.program);
     });
   }, [built.program, built.blockCount, linkedId, writeLinkedRow]);
 
   const detachPlan = useCallback(() => {
     const id = linkedId;
     loadedLink.current = null;
+    linkedPlanId.current = null;
     setLinkReady(false);
     setLinkedEdits(null);
     setSearchParams(

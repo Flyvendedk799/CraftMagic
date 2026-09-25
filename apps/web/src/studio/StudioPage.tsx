@@ -171,14 +171,21 @@ function StudioShell() {
             if (id) {
               params.set('build', id);
               params.delete('plan');
+            } else {
+              // Empty untitled draft, or Architecture unmounted before handoff registered:
+              // keep a linked `plan=lib:` as the open build rather than dropping into Empty plot.
+              const row = libRowId(params.get('plan') ?? '');
+              if (row) {
+                params.set('build', libRef(row));
+                params.delete('plan');
+              }
             }
+          } else if (next === 'build') {
+            params.delete('plan');
           }
           if (next === 'world') {
             // Leaving the blocks or the plan for the map: the placement is already on it.
             params.delete('build');
-            params.delete('plan');
-          }
-          if (next === 'build') {
             params.delete('plan');
           }
           const value = modeParam(next);

@@ -122,6 +122,11 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
   const known = useRef(catalogue);
   known.current = catalogue;
   const inFlight = useRef(new Map<string, Promise<LoadedComponent | null>>());
+  /**
+   * Bumped on `reload` so an in-flight fetch that loses the race cannot write pre-edit blocks
+   * back into the catalogue after a library writeback, or clear the newer request's slot.
+   */
+  const fetchGen = useRef(new Map<string, number>());
 
   useEffect(() => {
     if (auth.status === 'loading') return;
@@ -155,6 +160,7 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
     const pending = inFlight.current.get(id);
     if (pending) return pending;
 
+    const gen = fetchGen.current.get(id) ?? 0;
     setLoading((prev) => new Set(prev).add(id));
     setFailed((prev) => {
       if (!prev.has(id)) return prev;
@@ -164,7 +170,11 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
     });
 
     const request = getBuild(id)
-      .then((detail): LoadedComponent => {
+      .then((detail): LoadedComponent | null => {
+        // A reload bumped the generation while we were in flight — drop this result.
+        if ((fetchGen.current.get(id) ?? 0) !== gen) {
+          return known.current.get(id) ?? null;
+        }
         const component: LoadedComponent = {
           id,
           name: detail.name,
@@ -177,16 +187,23 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
         return component;
       })
       .catch(() => {
+        if ((fetchGen.current.get(id) ?? 0) !== gen) {
+          return known.current.get(id) ?? null;
+        }
         setFailed((prev) => new Set(prev).add(id));
         return null;
       })
       .finally(() => {
-        inFlight.current.delete(id);
-        setLoading((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
+        // Only the request that still owns the slot may clear it — otherwise a superseded
+        // fetch would delete the newer reload's in-flight entry.
+        if (inFlight.current.get(id) === request) {
+          inFlight.current.delete(id);
+          setLoading((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }
       });
 
     inFlight.current.set(id, request);
@@ -195,6 +212,8 @@ export function useComponents(referencedIds: readonly string[]): ComponentLibrar
 
   const reload = useCallback(
     (id: string): Promise<LoadedComponent | null> => {
+      // Invalidate any in-flight fetch before clearing the cache so its late resolve is a no-op.
+      fetchGen.current.set(id, (fetchGen.current.get(id) ?? 0) + 1);
       inFlight.current.delete(id);
       // A new map, assigned to the ref *before* `load` runs, so the cache miss is visible in
       // this turn — `known.current = catalogue` only runs again on the next render.

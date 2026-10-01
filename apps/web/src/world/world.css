@@ -120,6 +120,22 @@
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: var(--radius-pill);
+  /* A button now — click to dismiss — so it must not look like one until hovered. */
+  font: inherit;
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  animation: world-notice-in 160ms ease-out;
+}
+
+.world__notice:hover {
+  border-color: var(--accent);
+}
+
+@keyframes world-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
 }
 
 .world__split {
@@ -233,11 +249,183 @@
   stroke-linejoin: round;
 }
 
-.worldmap__brush {
+.worldmap__place[data-hover='true'] rect {
+  fill: color-mix(in srgb, var(--accent) 28%, transparent);
+  stroke-width: 2.5;
+}
+
+/* The armed component's footprint under the pointer — dashed, because it is a proposal and not
+   yet a thing on the map. */
+.worldmap__ghost rect {
+  fill: color-mix(in srgb, #fff 14%, transparent);
+  stroke: #fff;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.worldmap__ghost text {
+  fill: #fff;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.worldmap__brush circle {
   fill: none;
   stroke: #fff;
   stroke-width: 1.5;
   opacity: 0.85;
+}
+
+.worldmap__brush .worldmap__brush-inner {
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.45;
+}
+
+/* Ctrl held over Raise or Lower: the ring turns to say the stroke will do the opposite. */
+.worldmap__brush[data-invert='true'] circle {
+  stroke: #ff9b8a;
+}
+
+/* What the pointer will do, said by the pointer. */
+.worldmap[data-tool='select'][data-over-placement='true'] {
+  cursor: move;
+}
+
+.worldmap[data-tool='place'] {
+  cursor: copy;
+}
+
+.worldmap[data-pan='ready'] {
+  cursor: grab;
+}
+
+.worldmap[data-pan='active'] {
+  cursor: grabbing;
+}
+
+/* --- on-map chrome: the readout, the zoom and the selection toolbar ----------------------- */
+
+.worldmap__hud {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-2);
+  /* The strip spans the map, but only its controls take the pointer — a stroke that runs
+     under the readout keeps painting. */
+  pointer-events: none;
+  z-index: 2;
+}
+
+.worldmap__readout,
+.worldmap__zoom,
+.worldmap__seltools {
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.3);
+}
+
+.worldmap__readout {
+  display: flex;
+  gap: 0.75rem;
+  min-height: 1.9rem;
+  align-items: center;
+  padding: 0.25rem 0.6rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.worldmap__readout b {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.worldmap__readout-ground {
+  color: var(--accent);
+}
+
+.worldmap__readout-idle {
+  font-family: var(--font-sans, inherit);
+  color: var(--muted);
+}
+
+.worldmap__zoom {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  pointer-events: auto;
+}
+
+.worldmap__zoom button,
+.worldmap__seltools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.worldmap__zoom button:hover,
+.worldmap__seltools button:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.worldmap__zoom-level {
+  min-width: 3.4rem;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.worldmap__seltools {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px 2px 2px 0.55rem;
+  transform: translate(-50%, -100%);
+  white-space: nowrap;
+}
+
+.worldmap__seltools[data-side='below'] {
+  transform: translate(-50%, 0);
+}
+
+.worldmap__seltools-name {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 0.35rem;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.worldmap__seltools .worldmap__seltools-danger:hover {
+  color: var(--danger, #ff7b72);
+  background: color-mix(in srgb, var(--danger, #ff7b72) 14%, transparent);
 }
 
 /* --- the 3D check ---------------------------------------------------------------------- */
@@ -283,17 +471,35 @@
 
 .world__tools {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.25rem;
 }
 
+.world__toolgroup + .world__toolgroup {
+  margin-top: 0.6rem;
+}
+
+.world__grouplabel {
+  margin: 0 0 0.35rem;
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* A tile, icon over word — the same shape Build's palette uses, so the two modes that share a
+   header share a hand as well. */
 .world__tool {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0.5rem 0.3rem;
+  gap: 4px;
+  height: 46px;
+  padding: 0 0.3rem;
   font-size: var(--text-2xs);
+  line-height: 1;
   color: var(--text);
   background: var(--raised);
   border: 1px solid var(--border);
@@ -302,29 +508,94 @@
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
+.world__tool svg {
+  display: block;
+  opacity: 0.9;
+}
+
 .world__tool:hover {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--raised));
 }
 
 .world__tool[aria-pressed='true'] {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--bg);
+  font-weight: 600;
+  border-color: transparent;
+  background: var(--accent);
 }
 
-/* The shortcut digit. Top-left rather than in the label, so nine tools stay one word wide. */
+.world__tool[aria-pressed='true'] svg {
+  opacity: 1;
+}
+
+/* The shortcut digit, top-right as in Build. The digits do not follow the visual order — the
+   groups reordered the palette and the keys stayed where fingers already were. */
 .world__tool-key {
   position: absolute;
-  top: 2px;
-  left: 4px;
+  top: 3px;
+  right: 5px;
   font-family: var(--font-mono);
-  font-size: 0.55rem;
+  font-size: 0.5625rem;
+  line-height: 1;
   color: var(--muted);
 }
 
 .world__tool[aria-pressed='true'] .world__tool-key {
-  color: color-mix(in srgb, var(--accent) 70%, transparent);
+  color: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+/* What the modifier keys do with the active tool. Quieter than the hint, because it is the
+   second thing to read, but on its own line so it is not lost in the first. */
+.world__modhint {
+  margin: 0.3rem 0 0;
+  font-size: var(--text-2xs);
+  color: color-mix(in srgb, var(--accent) 70%, var(--muted));
+}
+
+.world__modhint--inline {
+  margin: 0;
+}
+
+.world__dock kbd,
+.worldmap kbd {
+  display: inline-block;
+  min-width: 1.3em;
+  padding: 0 0.3em;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+.world__row--tight {
+  margin-top: 0;
+  margin-bottom: 0.35rem;
+}
+
+.world__turn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.2em;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* Undo and Redo as glyphs: they are the two most-pressed buttons on the bar and the two whose
+   meaning a glyph carries without a word. */
+.world__iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 0.5rem;
 }
 
 /* --- shared controls -------------------------------------------------------------------- */
@@ -341,6 +612,15 @@
    their natural widths read as a primary and an afterthought whether or not they are. */
 .world__row--actions > .ui-btn {
   flex: 1 1 0;
+}
+
+.world__savestate {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.world__savestate[data-dirty='true'] {
+  color: var(--pending);
 }
 
 .world__grid2 {

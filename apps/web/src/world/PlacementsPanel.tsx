@@ -34,6 +34,8 @@ export interface PlacementsPanelProps {
   onUpdate: (id: string, patch: Partial<WorldPlacement>) => void;
   onRemove: (id: string) => void;
   onDuplicate: (id: string) => void;
+  /** A quarter turn about the building's middle — see `turnedAboutCentre`. */
+  onRotate?: (id: string, by: 1 | -1) => void;
   onFrame: (placement: WorldPlacement) => void;
   /** Open the placed build in Build mode — carries any handoff prompt the map still holds. */
   onOpenBuild?: (placement: WorldPlacement) => void;
@@ -189,6 +191,7 @@ function PlacementInspector({
   onOpenBuild,
   onDrawPlan,
   onPathToRoad,
+  onRotate,
 }: PlacementsPanelProps & { placement: WorldPlacement }) {
   const box = placementFootprint(placement);
   const spacing = spacingToNearest(doc, placement);
@@ -232,18 +235,32 @@ function PlacementInspector({
 
       <div className="world__row">
         <span className="world__label">Turn</span>
-        <div className="ui-seg" role="group" aria-label="Rotation">
-          {([0, 1, 2, 3] as const).map((turns) => (
-            <button
-              key={turns}
-              type="button"
-              aria-pressed={placement.turns === turns}
-              onClick={() => onUpdate(placement.id, { turns })}
-            >
-              {turns * 90}°
+        {/* Turned about its middle, a quarter at a time, the way R and the toolbar on the map
+            turn it. Picking an absolute angle swung a long building round its corner. */}
+        {onRotate ? (
+          <div className="ui-seg" role="group" aria-label="Rotation">
+            <button type="button" title="Turn left  (Shift+R)" onClick={() => onRotate(placement.id, -1)}>
+              ⟲
             </button>
-          ))}
-        </div>
+            <span className="world__turn">{placement.turns * 90}°</span>
+            <button type="button" title="Turn right  (R)" onClick={() => onRotate(placement.id, 1)}>
+              ⟳
+            </button>
+          </div>
+        ) : (
+          <div className="ui-seg" role="group" aria-label="Rotation">
+            {([0, 1, 2, 3] as const).map((turns) => (
+              <button
+                key={turns}
+                type="button"
+                aria-pressed={placement.turns === turns}
+                onClick={() => onUpdate(placement.id, { turns })}
+              >
+                {turns * 90}°
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <dl className="world__facts">

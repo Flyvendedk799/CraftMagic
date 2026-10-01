@@ -283,7 +283,7 @@ try {
 	);
 
 	// --- the Terrainer paints material ------------------------------------------------------
-	check('Terrainer is selectable', await clickTool('Terrainer'));
+	check('Paint (the Terrainer) is selectable', await clickTool('Paint'));
 	const stratumBefore = await fact('hoverStratum');
 	const picked = await evaluate(
 		"(() => { const b = document.querySelectorAll('.world__stratum')[2]; if (b) b.click(); return !!b; })()",

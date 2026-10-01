@@ -28,7 +28,7 @@
  * a whole rectangle tall, and four flat regions genuinely are cheaper than one containing it.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useReportPresence } from '../studio/presence.js';
 import { openInBuild, libRef, openPlan } from '../studio/handoff.js';
@@ -84,7 +84,8 @@ import { redoProject, undoProject } from '../studio/journal.js';
 import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { WORLD_SHORTCUTS } from './shortcuts.js';
 import { ShortcutHelp } from '../editor/ShortcutHelp.js';
-import { WORLD_TOOLS, type WorldTool } from './toolset.js';
+import { WORLD_TOOLS, dropCorner, placementFootprint, turnedAboutCentre, type WorldTool } from './toolset.js';
+import { ActionIcon } from './WorldToolIcons.js';
 import './world.css';
 
 export function WorldPage() {
@@ -155,7 +156,23 @@ export function WorldPage() {
    * something else is picked, which is what makes a hub buildable at all.
    */
   const [armed, setArmed] = useState<ShelfEntry | null>(null);
+  /** Which way the armed component will face when it lands — R turns it before the drop. */
+  const [armedTurns, setArmedTurns] = useState<WorldPlacement['turns']>(0);
   const agents = useAgents();
+
+  /**
+   * Notices clear themselves.
+   *
+   * They used to stay until the next one replaced them, so "Opened “Hub”." sat in the stage bar
+   * for the rest of the session and a fresh notice was indistinguishable from a stale one.
+   * Long ones — a send in progress, an error — get longer, and a send keeps its notice until
+   * it is done, because that one is a progress bar.
+   */
+  useEffect(() => {
+    if (!notice || sending) return;
+    const timer = setTimeout(() => setNotice(null), Math.min(14_000, 4_000 + notice.length * 60));
+    return () => clearTimeout(timer);
+  }, [notice, sending]);
 
   /**
    * Which builds the map needs blocks for.
@@ -198,40 +215,33 @@ export function WorldPage() {
   useZoomUndo('world', 'open-world', session.undo, session.redo, !session.loading);
   const journal = useJournalFlags();
 
-  // Number-row tool shortcuts, matching the editor and Architecture. Ignored while a text
-  // field has focus, or typing a world's name would silently change the tool.
+  // The keyboard, through a ref so the listener is bound once and always sees this render's
+  // selection and tool. Ignored while a text field has focus, or typing a world's name would
+  // silently change the tool. Suppressed under the shortcut sheet, which has its own Escape.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (isTextEntry(event.target)) return;
-      if (event.key === '?') {
-        event.preventDefault();
-        setHelp(true);
-        return;
-      }
-      const match = WORLD_TOOLS.find((entry) => entry.key === event.key);
-      if (match) {
-        event.preventDefault();
-        setTool(match.id);
-      }
+      if (help) return;
+      keys.current(event);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [help]);
 
   /** Drop a component, centred on a column. */
   const placeAt = useCallback(
     (entry: ShelfEntry, cx: number, cz: number) => {
+      // The same corner the ghost on the map was drawn at, turned the way it was drawn.
+      const turned = armedTurns === 1 || armedTurns === 3;
+      const footprint = turned ? { w: entry.d, d: entry.w } : { w: entry.w, d: entry.d };
+      const corner = dropCorner(cx, cz, footprint, doc.settings.size);
       const placement: WorldPlacement = {
         id: worldId('p'),
         buildId: entry.id,
-        // Centred on the point rather than cornered at it: you aim a building at where you
-        // want it to stand, not at where its north-west corner should go.
-        x: Math.max(0, Math.min(doc.settings.size.x - 1, Math.round(cx - entry.w / 2))),
-        z: Math.max(0, Math.min(doc.settings.size.z - 1, Math.round(cz - entry.d / 2))),
+        x: corner.x,
+        z: corner.z,
         y: doc.settings.seaLevel,
         anchor: 'surface',
-        turns: 0,
+        turns: armedTurns,
         name: entry.name,
         w: entry.w,
         h: entry.h,
@@ -241,12 +251,13 @@ export function WorldPage() {
       setSelected(placement.id);
       void library.load(entry.id);
     },
-    [doc, session, library],
+    [doc, session, library, armedTurns],
   );
 
   /** Picking from the shelf arms the component and hands the pointer the Place tool. */
   const armComponent = useCallback((entry: ShelfEntry) => {
     setArmed(entry);
+    setArmedTurns(0);
     setTool('place');
   }, []);
 
@@ -369,6 +380,147 @@ export function WorldPage() {
     [doc, session],
   );
 
+  const removePlacement = useCallback(
+    (id: string) => {
+      const target = doc.placements.find((entry) => entry.id === id);
+      session.commitPlacements(doc.placements.filter((entry) => entry.id !== id));
+      setSelected(null);
+      if (target) setNotice(`Removed “${target.name || 'the building'}” — Ctrl+Z puts it back.`);
+    },
+    [doc, session],
+  );
+
+  const duplicatePlacement = useCallback(
+    (id: string) => {
+      const source = doc.placements.find((entry) => entry.id === id);
+      if (!source) return;
+      // Offset by its own width, so the copy is visibly a second building rather than one
+      // sitting exactly on top of the first.
+      const box = placementFootprint(source);
+      const x = Math.min(doc.settings.size.x - 1, source.x + box.w + 2);
+      const copy = { ...source, id: worldId('p'), x };
+      session.commitPlacements([...doc.placements, copy]);
+      setSelected(copy.id);
+    },
+    [doc, session],
+  );
+
+  const rotatePlacement = useCallback(
+    (id: string, by: 1 | -1 = 1) => {
+      const placement = doc.placements.find((entry) => entry.id === id);
+      if (!placement) return;
+      updatePlacement(id, turnedAboutCentre(placement, by));
+    },
+    [doc, updatePlacement],
+  );
+
+  /**
+   * The document's keys.
+   *
+   * World had digits and `?` and nothing else, so every verb on a selected building was a
+   * trip to the bottom of the right-hand dock — there was no way to delete one from the
+   * keyboard, turn it, or nudge it a block. These are the bindings every other editor in the
+   * studio, and every map editor outside it, has taught people to expect. The map owns the
+   * view's keys (Space, F, + and −); this owns the ones that change the document.
+   */
+  const keys = useRef<(event: KeyboardEvent) => void>(() => {});
+  keys.current = (event: KeyboardEvent) => {
+    if (isTextEntry(event.target)) return;
+    const mod = event.ctrlKey || event.metaKey;
+    const key = event.key;
+
+    if (mod && !event.altKey) {
+      const lower = key.toLowerCase();
+      if (lower === 's') {
+        // Without this the browser offers to save the page as HTML.
+        event.preventDefault();
+        if (session.dirty) {
+          session.save();
+          setNotice('Saved.');
+        } else {
+          setNotice('Nothing to save — every change is already kept.');
+        }
+      } else if (lower === 'd' && selected) {
+        event.preventDefault();
+        duplicatePlacement(selected);
+      }
+      return;
+    }
+    if (event.altKey) return;
+
+    if (key === '?') {
+      event.preventDefault();
+      setHelp(true);
+      return;
+    }
+    if (key === 'Escape') {
+      // One step back at a time: a disarmed Place tool first, then the selection.
+      if (armed) {
+        setArmed(null);
+        setTool('select');
+      } else if (selected) {
+        setSelected(null);
+      }
+      return;
+    }
+    if ((key === 'Delete' || key === 'Backspace') && selected) {
+      event.preventDefault();
+      removePlacement(selected);
+      return;
+    }
+    if (key === 'r' || key === 'R') {
+      const by = event.shiftKey ? -1 : 1;
+      // The thing about to be dropped turns first: with Place armed, the ghost is what you
+      // are looking at.
+      if (tool === 'place' && armed) {
+        setArmedTurns((turns) => ((((turns + by) % 4) + 4) % 4) as WorldPlacement['turns']);
+      } else if (selected) {
+        rotatePlacement(selected, by);
+      }
+      event.preventDefault();
+      return;
+    }
+    if (key.startsWith('Arrow') && selected) {
+      // Not when a control that owns the arrows has focus — the navigator's grid walks its
+      // cells with them and says so by preventing the default.
+      if (event.defaultPrevented || event.target instanceof HTMLInputElement) return;
+      const placement = doc.placements.find((entry) => entry.id === selected);
+      if (!placement) return;
+      event.preventDefault();
+      const step = event.shiftKey ? 8 : 1;
+      const dx = key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0;
+      const dz = key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0;
+      updatePlacement(selected, {
+        x: Math.max(0, Math.min(doc.settings.size.x - 1, placement.x + dx)),
+        z: Math.max(0, Math.min(doc.settings.size.z - 1, placement.z + dz)),
+      });
+      return;
+    }
+    // Brush size and strength, without leaving the map. `{` and `}` are what Shift turns the
+    // brackets into on most layouts; the code check covers the ones where it does not.
+    if (event.code === 'BracketLeft' || event.code === 'BracketRight' || key === '[' || key === ']' || key === '{' || key === '}') {
+      event.preventDefault();
+      const up = event.code === 'BracketRight' || key === ']' || key === '}';
+      if (event.shiftKey || key === '{' || key === '}') {
+        setBrush((current) => ({
+          ...current,
+          strength: Math.round(Math.max(0.1, Math.min(16, current.strength + (up ? 0.5 : -0.5))) * 10) / 10,
+        }));
+      } else {
+        setBrush((current) => {
+          const step = Math.max(1, Math.round(current.radius * 0.2));
+          return { ...current, radius: Math.max(0, Math.min(128, current.radius + (up ? step : -step))) };
+        });
+      }
+      return;
+    }
+    const match = WORLD_TOOLS.find((entry) => entry.key === key);
+    if (match) {
+      event.preventDefault();
+      setTool(match.id);
+    }
+  };
+
   /**
    * A live drag of a placement.
    *
@@ -376,11 +528,13 @@ export function WorldPage() {
    * undo instead of one per pointer move. `onCommitPlacements` from the map closes it.
    */
   const movePlacement = useCallback(
-    (id: string, x: number, z: number) => {
+    (id: string, x: number, z: number, free: boolean) => {
       const placement = doc.placements.find((entry) => entry.id === id);
       if (!placement) return;
-      // Snap to a 4-block grid so two buildings can share a spacing without typing it.
-      const snap = (value: number, limit: number) => Math.max(0, Math.min(limit, Math.round(value / 4) * 4));
+      // Snap to a 4-block grid so two buildings can share a spacing without typing it. Alt
+      // lets go of the grid for the one that has to sit against something that is not on it.
+      const step = free ? 1 : 4;
+      const snap = (value: number, limit: number) => Math.max(0, Math.min(limit, Math.round(value / step) * step));
       placement.x = snap(x, doc.settings.size.x - 1);
       placement.z = snap(z, doc.settings.size.z - 1);
       setSculpting(true);
@@ -760,7 +914,6 @@ export function WorldPage() {
             onStratum={setStratum}
             targetY={targetY}
             onTargetY={setTargetY}
-            hover={hover}
             onShowHelp={() => setHelp(true)}
           />
           </div>
@@ -776,21 +929,37 @@ export function WorldPage() {
             <div className="ui-bar">
               <button
                 type="button"
-                className="ui-btn"
+                className="ui-btn world__iconbtn"
                 onClick={undoProject}
                 disabled={!journal.canUndo}
                 title="Undo  (Ctrl+Z)"
+                aria-label="Undo"
               >
-                Undo
+                <ActionIcon glyph="undo" />
               </button>
               <button
                 type="button"
-                className="ui-btn"
+                className="ui-btn world__iconbtn"
                 onClick={redoProject}
                 disabled={!journal.canRedo}
                 title="Redo  (Ctrl+Shift+Z)"
+                aria-label="Redo"
               >
-                Redo
+                <ActionIcon glyph="redo" />
+              </button>
+              {/* Saving was a button in the third section of the right-hand dock, under the
+                  shelf and the placed list. It is the one verb every session ends on. */}
+              <button
+                type="button"
+                className={`ui-btn ${session.dirty ? 'ui-btn--primary' : ''}`}
+                onClick={() => {
+                  session.save();
+                  setNotice('Saved.');
+                }}
+                disabled={!session.dirty}
+                title={session.dirty ? 'Save this map  (Ctrl+S)' : 'No changes since the last save'}
+              >
+                {session.dirty ? 'Save' : 'Saved'}
               </button>
               <span className="ui-bar__sep" aria-hidden="true" />
               <label className="ui-check" title="Draw the region grid the map ships in">
@@ -817,9 +986,15 @@ export function WorldPage() {
             </div>
 
             {notice && (
-              <p className="world__notice" role="status">
+              <button
+                type="button"
+                className="world__notice"
+                role="status"
+                title={`${notice} — click to dismiss`}
+                onClick={() => setNotice(null)}
+              >
                 {notice}
-              </p>
+              </button>
             )}
 
             <span className="world__stage-spacer" />
@@ -844,6 +1019,18 @@ export function WorldPage() {
               selected={selected}
               onSelect={setSelected}
               onOpen={(placement) => openBuild(placement.buildId)}
+              onRotate={(placement) => rotatePlacement(placement.id)}
+              onDuplicate={(placement) => duplicatePlacement(placement.id)}
+              onRemove={(placement) => removePlacement(placement.id)}
+              armed={armed ? { name: armed.name, w: armed.w, d: armed.d, turns: armedTurns } : null}
+              onPickHeight={(y) => {
+                setTargetY(y);
+                setNotice(`${tool === 'carve' ? 'Ceiling' : 'Target height'} set to y ${y}.`);
+              }}
+              onPickStratum={(index) => {
+                setStratum(index);
+                setNotice(`Painting ${doc.settings.strata[index]?.label ?? 'that ground'}.`);
+              }}
               onMovePlacement={movePlacement}
               onCommitPlacements={() => {
                 setSculpting(false);
@@ -912,21 +1099,13 @@ export function WorldPage() {
             selected={selected}
             onSelect={setSelected}
             onAdd={armComponent}
-            armed={armed?.id ?? null}
+            // Only while Place is the tool: an armed component under Select said "click the map to
+            // drop it" over a map where a click would select instead.
+            armed={tool === 'place' ? armed?.id ?? null : null}
             onUpdate={updatePlacement}
-            onRemove={(id) => {
-              session.commitPlacements(doc.placements.filter((entry) => entry.id !== id));
-              setSelected(null);
-            }}
-            onDuplicate={(id) => {
-              const source = doc.placements.find((entry) => entry.id === id);
-              if (!source) return;
-              // Offset by its own width, so the copy is visibly a second building rather than
-              // one sitting exactly on top of the first.
-              const copy = { ...source, id: worldId('p'), x: source.x + source.w + 2 };
-              session.commitPlacements([...doc.placements, copy]);
-              setSelected(copy.id);
-            }}
+            onRemove={removePlacement}
+            onDuplicate={duplicatePlacement}
+            onRotate={(id, by) => rotatePlacement(id, by)}
             onFrame={(placement) => {
               const at = regionOfColumn(doc.settings.regionSize, placement.x, placement.z);
               showRegion(at.rx, at.rz);
@@ -980,7 +1159,6 @@ export function WorldPage() {
             onRename={session.rename}
             onResize={resize}
             onSettings={patchSettings}
-            onSave={session.save}
             onOpen={(id) => {
               void store.load(id).then((opened) => {
                 if (opened) session.open(opened);

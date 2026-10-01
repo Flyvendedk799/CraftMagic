@@ -20,6 +20,7 @@ import { classicMaterials, enhancedMaterials } from './materials.js';
 import { VoxelWorld, type ClipBox } from './VoxelWorld.js';
 import type { Preview } from './preview.js';
 import { raycastVoxel, type VoxelHit } from './raycast.js';
+import { isTextEntry } from '../studio/undoKeys.js';
 
 /** Camera presets. `iso` is the framing a build opens on. */
 export type ViewKind = 'iso' | 'top' | 'front' | 'side';
@@ -165,6 +166,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
         zoomSpeed={0.9}
         // Stop just short of horizontal so the build never flips below the ground plane.
         maxPolarAngle={Math.PI * 0.495}
+        // Scroll towards what the pointer is on, not towards the orbit centre: zooming in on a
+        // window at the edge of a build used to mean zooming, then panning to find it.
+        zoomToCursor
         /*
          * Right orbits, middle pans, and the left button is left for the tools.
          *
@@ -693,8 +697,7 @@ function Fly() {
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (isTextEntry(event.target)) return;
       const key = event.key.toLowerCase();
       if (FLY_KEYS.has(key)) held.current.add(key);
     };
@@ -975,6 +978,17 @@ function Picker({
 
     const down = (event: PointerEvent) => {
       downAt = { x: event.clientX, y: event.clientY, button: event.button };
+
+      // A slider or a button that still holds focus keeps the keyboard: the layer slider
+      // walked by the arrow keys, the last-clicked tool pressed again by Space. Pressing the
+      // viewport is the moment to hand the keys back to the editor.
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body && !isTextEntry(focused)) focused.blur();
+
+      // Alt-click picks the block under the pointer, from any tool — the sheet has always said
+      // so. The tool branches below claimed the press first, so in Box it started a 1×1×1 box
+      // and in Line it set an endpoint; leaving it to the release is what makes it a pick.
+      if (event.button === 0 && event.altKey) return;
 
       // A selection drag, when a selection tool is active and the press landed on something.
       // Pressing empty space still orbits, which is what keeps the camera usable without a

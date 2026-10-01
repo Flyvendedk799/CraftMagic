@@ -38,9 +38,9 @@ const ACTIONS: readonly { id: RegionAction; label: string; title: string }[] = [
     title: 'Only cells that already hold something — re-skin a wall without filling the room',
   },
   { id: 'hollow', label: 'Hollow', title: 'The six faces of the box, leaving the inside as it is' },
-  { id: 'clear', label: 'Clear', title: 'Empty the box' },
-  { id: 'copy', label: 'Copy', title: 'Take the contents to the clipboard and switch to Stamp' },
-  { id: 'cut', label: 'Cut', title: 'Copy the contents to the clipboard and empty the box' },
+  { id: 'clear', label: 'Clear', title: 'Empty the box (Delete)' },
+  { id: 'copy', label: 'Copy', title: 'Take the contents to the clipboard and switch to Stamp (Ctrl+C)' },
+  { id: 'cut', label: 'Cut', title: 'Copy the contents to the clipboard and empty the box (Ctrl+X)' },
   { id: 'rotate', label: '↻ 90°', title: 'Rotate the contents in place, about the box centre' },
   { id: 'mirrorX', label: '⇋ X', title: 'Flip the contents east–west, in place' },
   { id: 'mirrorZ', label: '⇅ Z', title: 'Flip the contents north–south, in place' },
@@ -48,12 +48,12 @@ const ACTIONS: readonly { id: RegionAction; label: string; title: string }[] = [
 
 /** Label, then the axis and sign it nudges along. */
 const NUDGES: readonly { label: string; title: string; d: [number, number, number] }[] = [
-  { label: '−X', title: 'Move one block west', d: [-1, 0, 0] },
-  { label: '+X', title: 'Move one block east', d: [1, 0, 0] },
-  { label: '−Y', title: 'Move one block down', d: [0, -1, 0] },
-  { label: '+Y', title: 'Move one block up', d: [0, 1, 0] },
-  { label: '−Z', title: 'Move one block north', d: [0, 0, -1] },
-  { label: '+Z', title: 'Move one block south', d: [0, 0, 1] },
+  { label: '−X', title: 'Move one block west (←)', d: [-1, 0, 0] },
+  { label: '+X', title: 'Move one block east (→)', d: [1, 0, 0] },
+  { label: '−Y', title: 'Move one block down (Page Down)', d: [0, -1, 0] },
+  { label: '+Y', title: 'Move one block up (Page Up)', d: [0, 1, 0] },
+  { label: '−Z', title: 'Move one block north (↑)', d: [0, 0, -1] },
+  { label: '+Z', title: 'Move one block south (↓)', d: [0, 0, 1] },
 ];
 
 export interface RegionPanelProps {

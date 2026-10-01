@@ -107,6 +107,7 @@ import { useAuth } from '../library/auth.js';
 import { AppNav } from '../shell/AppNav.js';
 import { placeOnMap } from '../studio/handoff.js';
 import type { VoxelHit } from './raycast.js';
+import { isTextEntry } from '../studio/undoKeys.js';
 import './editor.css';
 import '../image/image.css';
 
@@ -669,6 +670,19 @@ export function EditorPage() {
   const regionNudge = useCallback(
     (dx: number, dy: number, dz: number) => {
       if (!region) return;
+      // Stop at the edge rather than through it. A move past the grid used to drop whatever
+      // crossed the boundary, silently — and with the arrow keys bound, holding one down was
+      // enough to delete a wall a column at a time.
+      const bounds = boxBounds(grid, region.min, region.max);
+      const { size } = grid;
+      if (
+        bounds.min.x + dx < 0 || bounds.max.x + dx >= size.x ||
+        bounds.min.y + dy < 0 || bounds.max.y + dy >= size.y ||
+        bounds.min.z + dz < 0 || bounds.max.z + dz >= size.z
+      ) {
+        setNotice('The box is at the edge of the build — grow the plot under Scale to move it further.');
+        return;
+      }
       const op = moveEdit(grid, region.min, region.max, dx, dy, dz);
       session.apply(op);
       // The box travels with what it holds. A move that left the box behind would leave the
@@ -969,10 +983,74 @@ export function EditorPage() {
     // key that still does something, and the sheet handles that itself.
     if (help) return;
 
+    // Ctrl and Cmd combinations first. The listener used to drop every one of them so Ctrl+Z
+    // could reach undo — which also meant Ctrl+C did nothing, Ctrl+A selected the page's text,
+    // and Ctrl+S offered to save the page as HTML. Z and Y still fall through to the studio's
+    // undo binding; only these are claimed.
+    if (event.ctrlKey || event.metaKey) {
+      if (event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === 'c' && region) {
+        event.preventDefault();
+        regionAction('copy');
+      } else if (key === 'x' && region) {
+        event.preventDefault();
+        regionAction('cut');
+      } else if (key === 'v') {
+        event.preventDefault();
+        if (clip) {
+          onTool('stamp');
+          setNotice('Click the build to stamp the clipboard. R rotates it, M mirrors it.');
+        } else {
+          setNotice('The clipboard is empty — select a box and press Ctrl+C first.');
+        }
+      } else if (key === 'a') {
+        event.preventDefault();
+        setTool('select');
+        setAnchor(null);
+        setRegion({
+          min: { x: 0, y: 0, z: 0 },
+          max: { x: grid.size.x - 1, y: grid.size.y - 1, z: grid.size.z - 1 },
+        });
+        setNotice('Selected the whole build. Esc lets go.');
+      } else if (key === 's') {
+        // A library save makes a new copy each time, so the key does not fire one blind — but
+        // it must not hand the page to the browser's "save as HTML" either.
+        event.preventDefault();
+        setNotice('Save to library is under Save on the right — each save keeps a copy.');
+      }
+      return;
+    }
+    if (event.altKey) return;
+
     const picked = toolForKey(event.key);
     if (picked) {
       onTool(picked);
       return;
+    }
+
+    // The standing box moves with the arrows: east–west and north–south on the arrows,
+    // up and down on Page Up and Page Down, four at a time with Shift. Six buttons in the
+    // panel did this before, and nothing on the keyboard did.
+    if (region) {
+      const step = event.shiftKey ? 4 : 1;
+      const move: Record<string, [number, number, number]> = {
+        ArrowLeft: [-step, 0, 0],
+        ArrowRight: [step, 0, 0],
+        ArrowUp: [0, 0, -step],
+        ArrowDown: [0, 0, step],
+        PageUp: [0, step, 0],
+        PageDown: [0, -step, 0],
+      };
+      const by = move[event.key];
+      if (by) {
+        regionNudge(by[0], by[1], by[2]);
+        return;
+      }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        regionAction('clear');
+        return;
+      }
     }
 
     switch (event.key) {
@@ -1014,7 +1092,14 @@ export function EditorPage() {
         return;
       case 'f':
       case 'F':
-        setViewKind('iso');
+        // The selection when there is one — that is what you are looking at — and the whole
+        // build otherwise.
+        if (region) {
+          const bounds = boxBounds(grid, region.min, region.max);
+          setView((prev) => ({ kind: 'iso', nonce: (prev?.nonce ?? 0) + 1, focus: bounds }));
+        } else {
+          setViewKind('iso');
+        }
         return;
       case '?':
         setHelp(true);
@@ -1036,16 +1121,19 @@ export function EditorPage() {
    */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (target?.isContentEditable) return;
+      // Typing is left alone. A slider or a checkbox is not typing — counting them used to
+      // leave every shortcut dead from the moment one was touched until focus moved.
+      if (isTextEntry(event.target)) return;
+      // Arrows and Page keys still belong to a focused slider: that is how it is adjusted.
+      if (event.target instanceof HTMLInputElement && /^(Arrow|Page)/.test(event.key)) return;
 
       const before = event.defaultPrevented;
       shortcuts.current(event);
       // Only swallow keys a shortcut actually claimed — anything else still reaches the
       // browser, which is what keeps Tab, F5 and the like working.
-      if (!before && HANDLED.test(event.key)) event.preventDefault();
+      if (!before && !event.ctrlKey && !event.metaKey && !event.altKey && HANDLED.test(event.key)) {
+        event.preventDefault();
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -1632,7 +1720,11 @@ export function EditorPage() {
             {/* Two facts, and which two depends on the tool. A line that still said "drag to
                 orbit" under a tool whose drag paints would be teaching the wrong gesture, and
                 one that said all four wrapped onto a second row. */}
-            {TOOL_BY_ID[tool].dragVerb ? (
+            {/* A standing box changes what the keyboard does, and nothing on screen said so —
+                the arrows, Delete and Ctrl+C were found by accident or not at all. */}
+            {region ? (
+              <>arrows move it · Del clears · Ctrl+C copies · F frames · Esc lets go</>
+            ) : TOOL_BY_ID[tool].dragVerb ? (
               <>
                 drag to {TOOL_BY_ID[tool].dragVerb} · click to {TOOL_BY_ID[tool].verb} ·
                 right-drag to orbit
@@ -1725,7 +1817,7 @@ export function EditorPage() {
  * build into stone.
  */
 /** Keys a shortcut claims, so everything else still reaches the browser. */
-const HANDLED = /^([1-9]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape)$/;
+const HANDLED = /^([1-9]|\[|\]|\\|[iI]|-|_|=|\+|[bB]|[rR]|[mM]|[fF]|\?|Escape|Delete|Backspace|Arrow(Left|Right|Up|Down)|Page(Up|Down))$/;
 
 const VERB: Record<string, string> = {
   fill: 'Filled',

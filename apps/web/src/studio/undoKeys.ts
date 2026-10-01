@@ -26,8 +26,14 @@ export function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
   const tag = target.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  // A slider, a checkbox or a radio is an `INPUT` too, and none of them take typing. Counting
+  // them killed every shortcut from the moment one was clicked until something else took focus:
+  // nudge the brush radius, press 3 for Lower, and nothing happened.
+  if (tag === 'INPUT') return !NON_TEXT_INPUTS.has((target as HTMLInputElement).type);
+  return tag === 'TEXTAREA' || tag === 'SELECT';
 }
+
+const NON_TEXT_INPUTS = new Set(['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image']);
 
 export interface UndoKeyOptions {
   undo: () => void;

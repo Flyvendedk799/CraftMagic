@@ -35,8 +35,10 @@ import {
   type WorldDoc,
   type WorldPlacement,
 } from '@craftmagic/core';
+import { isTextEntry } from '../studio/undoKeys.js';
 import { interpolate, type TerrainStroke } from './stroke.js';
-import { placementFootprint, type WorldTool } from './toolset.js';
+import { dropCorner, isBrushTool, placementFootprint, type WorldTool } from './toolset.js';
+import { ActionIcon } from './WorldToolIcons.js';
 
 export interface WorldMapProps {
   doc: WorldDoc;
@@ -63,14 +65,24 @@ export interface WorldMapProps {
   /** Double-click a placed building to open its blocks. */
   onOpen?: (placement: WorldPlacement) => void;
   /**
-   * Right-click a placed building.
-   *
-   * Defaults to selecting it (and opening the inspector). Callers that want “open blocks”
-   * can pass the same handler as `onOpen`.
+   * A drag on a placement, live; committed by the page on release. `free` is true while Alt is
+   * held, which takes the move off the 4-block grid for the one building that will not line up.
    */
-  onContextOpen?: (placement: WorldPlacement) => void;
-  /** A drag on a placement, live; committed by the page on release. */
-  onMovePlacement: (id: string, x: number, z: number) => void;
+  onMovePlacement: (id: string, x: number, z: number, free: boolean) => void;
+  /**
+   * The component the Place tool will drop, so the map can draw its footprint under the
+   * pointer before the click. Without it, Place was a crosshair and a guess: you learned how
+   * big a building was, and which way it faced, only after it had landed.
+   */
+  armed?: { name: string; w: number; d: number; turns: number } | null;
+  /** The selection toolbar's verbs — the same ones the inspector has, where the building is. */
+  onRotate?: (placement: WorldPlacement) => void;
+  onDuplicate?: (placement: WorldPlacement) => void;
+  onRemove?: (placement: WorldPlacement) => void;
+  /** Alt-click with Flatten or Carve: take the height under the pointer as the target. */
+  onPickHeight?: (y: number) => void;
+  /** Alt-click with Paint: take the ground under the pointer as the material. */
+  onPickStratum?: (index: number) => void;
   onCommitPlacements: () => void;
   onBeginStroke: () => TerrainStroke;
   onEndStroke: (stroke: TerrainStroke) => void;
@@ -100,6 +112,20 @@ export function WorldMap(props: WorldMapProps) {
   const [view, setView] = useState({ zoom: 1, x: 0, z: 0 });
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [cursor, setCursor] = useState<{ x: number; z: number } | null>(null);
+  /** The placement under the pointer, so Select can say what a click would take. */
+  const [hoverId, setHoverId] = useState<string | null>(null);
+  /** Ctrl held over the map — the brush ring says so before the stroke does. */
+  const [inverted, setInverted] = useState(false);
+  /**
+   * Space held: the map pans from any tool, the way every canvas application does it.
+   *
+   * Shift-drag already panned, and stays — but Space is the key people reach for to move the
+   * paper, and a map that only knew Shift was one where the expected gesture painted a hill.
+   */
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const spaceRef = useRef(false);
+  /** Which gesture is live, for the chrome that should get out of the way while it is. */
+  const [gesture, setGesture] = useState<'pan' | 'edit' | null>(null);
 
   /**
    * Live gesture state, in a ref rather than in state.
@@ -144,18 +170,112 @@ export function WorldMap(props: WorldMapProps) {
 
   // Centre the map the first time it is measured, and whenever the plot changes size — an
   // opened world whose camera sits off its own corner reads as an empty map.
-  useEffect(() => {
-    setView((current) => {
-      const fit = Math.min(size.w / settings.size.x, size.h / settings.size.z) * 0.9;
-      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fit));
-      return {
-        zoom,
-        x: (size.w - settings.size.x * zoom) / 2,
-        z: (size.h - settings.size.z * zoom) / 2,
-      };
+  const fitAll = useCallback(() => {
+    const fit = Math.min(size.w / settings.size.x, size.h / settings.size.z) * 0.9;
+    const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fit));
+    setView({
+      zoom,
+      x: (size.w - settings.size.x * zoom) / 2,
+      z: (size.h - settings.size.z * zoom) / 2,
     });
-    // Deliberately not `current.zoom`: this is the reset, and it runs only on these three.
   }, [settings.size.x, settings.size.z, size.w, size.h]);
+
+  useEffect(() => {
+    fitAll();
+    // Deliberately not on the view: this is the reset, and it runs only when the map or the
+    // box it is drawn in changes size.
+  }, [fitAll]);
+
+  /** Bring one building to the middle of the map at a zoom where it is a thing, not a dot. */
+  const frame = useCallback(
+    (placement: WorldPlacement) => {
+      const box = placementFootprint(placement);
+      const span = Math.max(box.w, box.d, 8);
+      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min(size.w, size.h) / (span * 3)));
+      setView({
+        zoom,
+        x: size.w / 2 - (box.x + box.w / 2) * zoom,
+        z: size.h / 2 - (box.z + box.d / 2) * zoom,
+      });
+    },
+    [size.w, size.h],
+  );
+
+  /** Zoom by a factor about a point on screen — the middle, when it is a button. */
+  const zoomBy = useCallback(
+    (factor: number, px = size.w / 2, pz = size.h / 2) => {
+      setView((current) => {
+        const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current.zoom * factor));
+        // Keep the column under the pointer under the pointer. Zooming to the centre instead
+        // means every zoom is followed by a pan to find what you were looking at.
+        const k = zoom / current.zoom;
+        return { zoom, x: px - (px - current.x) * k, z: pz - (pz - current.z) * k };
+      });
+    },
+    [size.w, size.h],
+  );
+
+  // The document is mutated in place, so this is looked up per render rather than memoised on
+  // an identity that never changes.
+  const selectedPlacement = selected ? doc.placements.find((entry) => entry.id === selected) ?? null : null;
+  const selectedRef = useRef(selectedPlacement);
+  selectedRef.current = selectedPlacement;
+
+  /**
+   * The map's own keys: Space to pan, F to frame, + and − to zoom.
+   *
+   * Here rather than on the page because they are about this view and nothing else — the page
+   * owns the document's keys (tools, delete, rotate), the map owns where you are looking.
+   */
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (isTextEntry(event.target)) return;
+      if (event.key === ' ') {
+        // Not on a focused button, where Space is "press me" and taking it would make the
+        // button unpressable from the keyboard.
+        if (event.target instanceof HTMLButtonElement || event.target instanceof HTMLInputElement) return;
+        event.preventDefault();
+        if (!spaceRef.current) {
+          spaceRef.current = true;
+          setSpaceHeld(true);
+        }
+        return;
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === 'f' || event.key === 'F') {
+        event.preventDefault();
+        if (selectedRef.current) frame(selectedRef.current);
+        else fitAll();
+      } else if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        zoomBy(1.25);
+      } else if (event.key === '-' || event.key === '_') {
+        event.preventDefault();
+        zoomBy(0.8);
+      }
+    };
+    const up = (event: KeyboardEvent) => {
+      if (event.key === ' ' && spaceRef.current) {
+        spaceRef.current = false;
+        setSpaceHeld(false);
+      }
+      if (event.key === 'Control' || event.key === 'Meta') setInverted(false);
+    };
+    // A window that loses focus mid-hold never sees the key come up.
+    const blur = () => {
+      spaceRef.current = false;
+      setSpaceHeld(false);
+      setInverted(false);
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, [fitAll, frame, zoomBy]);
 
   /**
    * Repaint the terrain raster.
@@ -242,14 +362,17 @@ export function WorldMap(props: WorldMapProps) {
 
   /** Which columns a stroke should touch between two samples, brush applied at each. */
   const applyTerrain = useCallback(
-    (stroke: TerrainStroke, fromX: number, fromZ: number, toX: number, toZ: number) => {
+    (stroke: TerrainStroke, fromX: number, fromZ: number, toX: number, toZ: number, invert = false) => {
       const { terrain } = doc;
+      // Ctrl swaps Raise and Lower for as long as it is held, so cutting a moat round a hill is
+      // one tool and a held key rather than two trips to the panel.
+      const lifting = tool === 'raise' ? !invert : tool === 'lower' ? invert : null;
       interpolate(fromX, fromZ, toX, toZ, (x, z) => {
         // Note before writing: the recorder keeps the value from the column's *first* touch,
         // and a brush dragged in a circle crosses its own path constantly.
         stampDisc(terrain, settings, x, z, brush, (column) => stroke.note(terrain, column.index));
-        if (tool === 'raise') raiseDisc(terrain, settings, x, z, brush);
-        else if (tool === 'lower') raiseDisc(terrain, settings, x, z, { ...brush, strength: -brush.strength });
+        if (lifting === true) raiseDisc(terrain, settings, x, z, brush);
+        else if (lifting === false) raiseDisc(terrain, settings, x, z, { ...brush, strength: -brush.strength });
         else if (tool === 'level') levelDisc(terrain, settings, x, z, brush, targetY);
         else if (tool === 'smooth') smoothDisc(doc, x, z, brush);
         else if (tool === 'paint') {
@@ -278,26 +401,41 @@ export function WorldMap(props: WorldMapProps) {
       const pz = event.clientY - rect.top;
       const world = toWorld(px, pz);
 
-      // Middle button and space-drag pan regardless of tool, so a sculpting session never has
-      // to leave the brush to look somewhere else.
-      if (event.button === 1 || event.shiftKey || tool === 'pan') {
+      // Whatever had focus — a slider just dragged, a tool button just clicked — gives it up to
+      // the map. Otherwise the keys stay with it: Space presses the last button again, and the
+      // arrows walk a slider instead of the building you just selected.
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body && !isTextEntry(focused)) focused.blur();
+
+      // Middle button, Space and Shift pan regardless of tool, so a sculpting session never
+      // has to leave the brush to look somewhere else.
+      if (event.button === 1 || event.shiftKey || spaceRef.current || tool === 'pan') {
         drag.current = { kind: 'pan', startX: px, startY: pz, fromX: view.x, fromZ: view.z };
+        setGesture('pan');
         capture(host, event.pointerId);
         return;
       }
 
-      // Right-click a placement: select it and open its blocks. Without this the browser menu
-      // ate the gesture and the building did nothing — the inspector's "Open these blocks"
-      // was the only way in from the map besides double-click.
+      // Right-click a placement selects it. It used to open its blocks — which navigates away
+      // from the map, on the button people press to see what *can* be done with a thing. The
+      // selection toolbar that appears is that answer; double-click still opens.
       if (event.button === 2) {
         const hit = hitPlacement(doc, world.x, world.z);
-        if (hit) {
-          props.onSelect(hit.id);
-          (props.onContextOpen ?? props.onOpen)?.(hit);
-        }
+        props.onSelect(hit?.id ?? null);
         return;
       }
       if (event.button !== 0) return;
+
+      // Alt-click samples instead of sculpting: the height for the tools that aim at one, the
+      // ground for the one that paints it. Sampling used to be a panel button that only existed
+      // while the pointer was on the map, and so could never be pressed.
+      if (event.altKey && (tool === 'level' || tool === 'carve' || tool === 'paint')) {
+        const index = columnIndex(settings, world.x, world.z);
+        if (index < 0) return;
+        if (tool === 'paint') props.onPickStratum?.(doc.terrain.strata[index] ?? 0);
+        else props.onPickHeight?.(doc.terrain.height[index] ?? settings.seaLevel);
+        return;
+      }
 
       if (tool === 'select') {
         const hit = hitPlacement(doc, world.x, world.z);
@@ -312,6 +450,7 @@ export function WorldMap(props: WorldMapProps) {
             grabX: world.x, grabZ: world.z, originX: hit.x, originZ: hit.z,
             lastX: world.x, lastZ: world.z,
           };
+          setGesture('edit');
           capture(host, event.pointerId);
         }
         return;
@@ -333,17 +472,19 @@ export function WorldMap(props: WorldMapProps) {
 
       if (tool === 'carve') {
         drag.current = { kind: 'carve', cells: [world], lastX: world.x, lastZ: world.z };
+        setGesture('edit');
         capture(host, event.pointerId);
         return;
       }
 
       const stroke = props.onBeginStroke();
-      applyTerrain(stroke, world.x, world.z, world.x, world.z);
+      applyTerrain(stroke, world.x, world.z, world.x, world.z, event.ctrlKey || event.metaKey);
       drag.current = { kind: 'terrain', stroke, lastX: world.x, lastZ: world.z };
+      setGesture('edit');
       capture(host, event.pointerId);
       props.onTouch();
     },
-    [doc, tool, view.x, view.z, toWorld, applyTerrain, props],
+    [doc, settings, tool, view.x, view.z, toWorld, applyTerrain, props],
   );
 
   const onPointerMove = useCallback(
@@ -355,9 +496,11 @@ export function WorldMap(props: WorldMapProps) {
       const pz = event.clientY - rect.top;
       const world = toWorld(px, pz);
       setCursor(world);
+      setInverted(event.ctrlKey || event.metaKey);
 
       const active = drag.current;
       if (!active) {
+        setHoverId(tool === 'select' ? hitPlacement(doc, world.x, world.z)?.id ?? null : null);
         const index = columnIndex(settings, world.x, world.z);
         props.onHover(
           index < 0
@@ -387,6 +530,7 @@ export function WorldMap(props: WorldMapProps) {
           active.id,
           active.originX + (world.x - active.grabX),
           active.originZ + (world.z - active.grabZ),
+          event.altKey,
         );
         return;
       }
@@ -402,18 +546,19 @@ export function WorldMap(props: WorldMapProps) {
         return;
       }
 
-      applyTerrain(active.stroke, active.lastX, active.lastZ, world.x, world.z);
+      applyTerrain(active.stroke, active.lastX, active.lastZ, world.x, world.z, event.ctrlKey || event.metaKey);
       active.lastX = world.x;
       active.lastZ = world.z;
       props.onTouch();
     },
-    [doc, settings, brush, toWorld, applyTerrain, props],
+    [doc, settings, tool, brush, toWorld, applyTerrain, props],
   );
 
   const onPointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       const active = drag.current;
       drag.current = null;
+      setGesture(null);
       try {
         hostRef.current?.releasePointerCapture(event.pointerId);
       } catch {
@@ -436,21 +581,50 @@ export function WorldMap(props: WorldMapProps) {
       const rect = host.getBoundingClientRect();
       const px = event.clientX - rect.left;
       const pz = event.clientY - rect.top;
-      setView((current) => {
-        const factor = Math.exp(-event.deltaY * 0.0015);
-        const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, current.zoom * factor));
-        // Keep the column under the pointer under the pointer. Zooming to the centre instead
-        // means every zoom is followed by a pan to find what you were looking at.
-        const k = zoom / current.zoom;
-        return { zoom, x: px - (px - current.x) * k, z: pz - (pz - current.z) * k };
-      });
+      zoomBy(Math.exp(-event.deltaY * 0.0015), px, pz);
     },
-    [],
+    [zoomBy],
   );
 
   const regions = useMemo(() => (props.showRegions ? regionCount(settings) : null), [props.showRegions, settings]);
 
   const placements = props.showPlacements ? doc.placements : [];
+
+  /** The Place tool's outline under the pointer, at exactly the corner a click would use. */
+  const ghost = useMemo(() => {
+    if (tool !== 'place' || !props.armed || !cursor) return null;
+    const turned = props.armed.turns === 1 || props.armed.turns === 3;
+    const footprint = turned ? { w: props.armed.d, d: props.armed.w } : { w: props.armed.w, d: props.armed.d };
+    const corner = dropCorner(cursor.x, cursor.z, footprint, settings.size);
+    return { ...corner, ...footprint, name: props.armed.name };
+  }, [tool, props.armed, cursor, settings.size]);
+
+  const hoverIndex = cursor ? columnIndex(settings, cursor.x, cursor.z) : -1;
+  const hoverHeight = hoverIndex >= 0 ? doc.terrain.height[hoverIndex] ?? settings.minY : null;
+  const hoverGround = hoverIndex >= 0 ? settings.strata[doc.terrain.strata[hoverIndex] ?? 0]?.label ?? '—' : null;
+
+  /**
+   * Where the selection toolbar sits: centred over the building, flipped below it when the
+   * building's top edge is too near the top of the map to leave room.
+   */
+  const toolbarAt = useMemo(() => {
+    if (!selectedPlacement || gesture === 'edit') return null;
+    const box = placementFootprint(selectedPlacement);
+    const left = view.x + (box.x + box.w / 2) * scale;
+    const top = view.z + box.z * scale;
+    const bottom = view.z + (box.z + box.d) * scale;
+    if (left < 0 || left > size.w || bottom < 0 || top > size.h) return null;
+    const above = top > 52;
+    return {
+      left: Math.max(90, Math.min(size.w - 90, left)),
+      top: above ? top - 8 : Math.min(size.h - 44, bottom + 8),
+      above,
+    };
+    // `revision` stands in for the placement's own fields, which are mutated in place mid-drag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlacement, gesture, view.x, view.z, scale, size.w, size.h, revision]);
+
+  const panning = gesture === 'pan' || spaceHeld || tool === 'pan';
 
   return (
     <div
@@ -458,12 +632,15 @@ export function WorldMap(props: WorldMapProps) {
       className="worldmap"
       data-tool={tool}
       data-columns={settings.size.x * settings.size.z}
+      data-pan={panning ? (gesture === 'pan' ? 'active' : 'ready') : undefined}
+      data-over-placement={hoverId ? 'true' : undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onContextMenu={(event) => event.preventDefault()}
       onPointerLeave={() => {
         setCursor(null);
+        setHoverId(null);
         props.onHover(null);
       }}
       onWheel={onWheel}
@@ -520,30 +697,133 @@ export function WorldMap(props: WorldMapProps) {
                 key={placement.id}
                 className="worldmap__place"
                 data-selected={placement.id === selected ? 'true' : undefined}
+                data-hover={placement.id === hoverId ? 'true' : undefined}
               >
                 <rect
                   x={box.x} y={box.z} width={box.w} height={box.d}
                   vectorEffect="non-scaling-stroke"
                 />
                 {scale >= 0.5 && (
-                  <text x={box.x + box.w / 2} y={box.z + box.d / 2} fontSize={Math.min(box.d / 2, 12 / scale)}>
+                  <text x={box.x + box.w / 2} y={box.z + box.d / 2} fontSize={Math.min(box.d / 2, 12 / scale)} vectorEffect="non-scaling-stroke">
                     {placement.name}
                   </text>
                 )}
               </g>
             );
           })}
+
+          {ghost && (
+            <g className="worldmap__ghost">
+              <rect x={ghost.x} y={ghost.z} width={ghost.w} height={ghost.d} vectorEffect="non-scaling-stroke" />
+              {scale >= 0.5 && (
+                <text x={ghost.x + ghost.w / 2} y={ghost.z + ghost.d / 2} fontSize={Math.min(ghost.d / 2, 12 / scale)} vectorEffect="non-scaling-stroke">
+                  {ghost.name}
+                </text>
+              )}
+            </g>
+          )}
         </g>
 
-        {cursor && isBrushTool(tool) && (
-          <circle
-            className="worldmap__brush"
-            cx={view.x + (cursor.x + 0.5) * scale}
-            cy={view.z + (cursor.z + 0.5) * scale}
-            r={Math.max(3, brush.radius * scale)}
-          />
+        {cursor && isBrushTool(tool) && !panning && (
+          <g className="worldmap__brush" data-invert={inverted && (tool === 'raise' || tool === 'lower') ? 'true' : undefined}>
+            <circle
+              cx={view.x + (cursor.x + 0.5) * scale}
+              cy={view.z + (cursor.z + 0.5) * scale}
+              r={Math.max(3, brush.radius * scale)}
+            />
+            {/* The soft brush's half-strength ring, so "falloff" is something you can see
+                rather than a word in the panel. */}
+            {brush.falloff === 'smooth' && brush.radius * scale > 10 && (
+              <circle
+                className="worldmap__brush-inner"
+                cx={view.x + (cursor.x + 0.5) * scale}
+                cy={view.z + (cursor.z + 0.5) * scale}
+                r={brush.radius * scale * 0.5}
+              />
+            )}
+          </g>
         )}
       </svg>
+
+      {/* The selected building's verbs, on the building. They existed only at the bottom of
+          the right-hand dock, under the shelf and the placed list — a long way from the thing
+          you had just clicked. */}
+      {toolbarAt && selectedPlacement && (
+        <div
+          className="worldmap__seltools"
+          data-side={toolbarAt.above ? 'above' : 'below'}
+          style={{ left: toolbarAt.left, top: toolbarAt.top }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+        >
+          <span className="worldmap__seltools-name">{selectedPlacement.name || 'Building'}</span>
+          {props.onRotate && (
+            <button type="button" title="Turn a quarter  (R)" onClick={() => props.onRotate?.(selectedPlacement)}>
+              <ActionIcon glyph="rotate" />
+            </button>
+          )}
+          {props.onDuplicate && (
+            <button type="button" title="Duplicate  (Ctrl+D)" onClick={() => props.onDuplicate?.(selectedPlacement)}>
+              <ActionIcon glyph="copy" />
+            </button>
+          )}
+          {props.onOpen && (
+            <button type="button" title="Open its blocks in Build  (double-click)" onClick={() => props.onOpen?.(selectedPlacement)}>
+              <ActionIcon glyph="open" />
+            </button>
+          )}
+          {props.onRemove && (
+            <button
+              type="button"
+              className="worldmap__seltools-danger"
+              title="Remove from the map  (Delete)"
+              onClick={() => props.onRemove?.(selectedPlacement)}
+            >
+              <ActionIcon glyph="trash" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* The readout and the view controls, on the map rather than in a collapsed panel on the
+          other side of the screen. Where the pointer is and how high the ground is there are
+          the two facts you want *while* sculpting, so they sit where your eyes already are. */}
+      <div className="worldmap__hud" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="worldmap__readout" aria-live="off">
+          {cursor && hoverHeight !== null ? (
+            <>
+              <span><b>x</b> {cursor.x}</span>
+              <span><b>z</b> {cursor.z}</span>
+              <span><b>y</b> {hoverHeight}</span>
+              <span className="worldmap__readout-ground">{hoverGround}</span>
+            </>
+          ) : (
+            <span className="worldmap__readout-idle">
+              {tool === 'place' && !props.armed
+                ? 'Pick a component on the right to place it'
+                : 'Scroll to zoom · Space-drag to pan · F to fit'}
+            </span>
+          )}
+        </div>
+        <div className="worldmap__zoom" role="group" aria-label="Map zoom">
+          <button type="button" title="Zoom out  (−)" onClick={() => zoomBy(0.8)}>
+            <ActionIcon glyph="minus" size={12} />
+          </button>
+          <span className="worldmap__zoom-level" title="Screen pixels per block">
+            {formatZoom(scale)}
+          </span>
+          <button type="button" title="Zoom in  (+)" onClick={() => zoomBy(1.25)}>
+            <ActionIcon glyph="plus" size={12} />
+          </button>
+          <button
+            type="button"
+            title={selectedPlacement ? 'Frame the selected building  (F)' : 'Fit the whole map  (F)'}
+            onClick={() => (selectedPlacement ? frame(selectedPlacement) : fitAll())}
+          >
+            <ActionIcon glyph="fit" size={12} />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -572,9 +852,6 @@ function range(n: number): number[] {
   return Array.from({ length: Math.max(0, n) }, (_, i) => i);
 }
 
-function isBrushTool(tool: WorldTool): boolean {
-  return tool !== 'select' && tool !== 'pan' && tool !== 'place';
-}
 
 /**
  * Average a disc towards its own neighbourhood.
@@ -619,4 +896,10 @@ function hitPlacement(doc: WorldDoc, x: number, z: number): WorldPlacement | nul
     if (x >= box.x && z >= box.z && x < box.x + box.w && z < box.z + box.d) return placement;
   }
   return null;
+}
+
+/** Pixels per block, said the way a zoom control says it. */
+function formatZoom(scale: number): string {
+  const percent = scale * 100;
+  return percent >= 100 ? `${Math.round(percent)}%` : `${percent.toFixed(percent < 10 ? 1 : 0)}%`;
 }

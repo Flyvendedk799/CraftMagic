@@ -49,7 +49,6 @@ export interface WorldPanelProps {
   onRename: (name: string) => void;
   onResize: (size: { x: number; z: number }) => void;
   onSettings: (patch: { seaLevel?: number; minY?: number; maxY?: number; regionSize?: number }) => void;
-  onSave: () => void;
   onOpen: (id: string) => void;
   onRemove: (id: string) => void;
   onNew: () => void;
@@ -120,21 +119,15 @@ export function WorldPanel(props: WorldPanelProps) {
           <input value={doc.name} onChange={(event) => props.onRename(event.target.value)} />
         </label>
 
-        {/* Saving is the one verb this section exists for, so it is the one filled button —
-            and it stops being one once there is nothing to save, which is the honest way to
-            say "saved" without a second widget. */}
+        {/* Save moved to the bar over the map (and Ctrl+S), where it is reachable without
+            scrolling past the shelf. Two filled Save buttons on one screen was one too many;
+            this section keeps the map's identity — its name, its siblings, a fresh one. */}
         <div className="world__row world__row--actions">
-          <button
-            type="button"
-            className={`ui-btn ${dirty ? 'ui-btn--primary' : ''}`}
-            onClick={props.onSave}
-            disabled={!dirty}
-            title={dirty ? 'Keep this map' : 'No changes since the last save'}
-          >
-            {dirty ? 'Save world' : 'Saved'}
-          </button>
+          <span className="world__hint world__savestate" data-dirty={dirty ? 'true' : undefined}>
+            {dirty ? 'Unsaved changes — Ctrl+S' : 'All changes saved'}
+          </span>
           <button type="button" className="ui-btn" onClick={props.onNew} title="Start an empty map">
-            New
+            New map
           </button>
         </div>
 
@@ -161,7 +154,7 @@ export function WorldPanel(props: WorldPanelProps) {
         )}
       </Section>
 
-      <Section id="world-extent" title="Extent" summary={`${settings.size.x}×${settings.size.z}`}>
+      <Section id="world-extent" title="Extent" summary={`${settings.size.x}×${settings.size.z}`} defaultOpen={false}>
         <div className="world__grid2">
           <label className="world__field">
             <span className="world__label">Width (x)</span>

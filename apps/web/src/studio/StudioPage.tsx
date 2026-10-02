@@ -1,54 +1,55 @@
 /**
- * The studio: one address for three ways of making something.
+ * One workbench for three document types: voxel builds, floorplans, and maps.
  *
- * Three modes, not three products. **Build** is the voxel editor — you place blocks and the
- * building is what they add up to. **Architecture** draws rooms and the blocks are a
- * consequence. **World** sculpts terrain and places the other two on it, as saved builds.
- * Build and Architecture compile to the same `BuildProgram` and reach the same exports; World
- * does neither, because a world is a description that materialises into ordinary builds one
- * region at a time — which is the only reason a map can exist at all here.
- *
- * (This paragraph described two modes for a while after there were three, and said that both
- * compiled to a `BuildProgram`. Worth naming: a shell whose own docstring has not noticed a
- * whole mode is a shell that is not being read as the shell.)
- *
- * What the shell owns is which mode is mounted, the switcher pill, and the Ctrl+K palette.
- * Each page renders here *intact* — its own HUD, its own tools, its own autosave. What they no
- * longer each own is the undo stack's machinery and its keybinding: those live in `studio/` so
- * that Ctrl+Z means the same thing whichever pill is lit. Each mode still keeps its own
- * history, so undo in Architecture never unwinds a Build edit.
- *
- * Everything the palette does is a navigation, so a page reacts to a command exactly as it
- * would to a typed URL — which is also why the palette can offer so little for World, whose
- * state is not in the URL at all.
- *
- * Mode lives in the query (`?mode=arch`) rather than the path so that `/editor?build=…` links —
- * the product's main way of spreading — redirect here with their whole query intact and land
- * in the right mode by default.
+ * The shell owns document navigation, File actions, project history, and the command palette.
+ * Each mounted editor owns the format and tools for its document and registers its live Save
+ * and New operations with the workbench. Handoffs are canonical Studio links, so work can be
+ * reopened from the file manager or a shared address.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { STYLE_PACKS } from '@craftmagic/core';
-import { BUILD_IDS, generatedBuilds } from '../editor/builds.js';
+import { BUILD_IDS, forgetLibraryBuild, forgetLocalBuild, generatedBuilds, importedBuilds, muralBuilds, renameLocalBuild } from '../editor/builds.js';
 import { EditorPage } from '../editor/EditorPage.js';
 import { ArchitecturePage } from '../architecture/ArchitecturePage.js';
+import { deleteSaved, listSaved, savePlan } from '../architecture/storage.js';
 import { WorldPage } from '../world/WorldPage.js';
 import { NavCenterProvider } from '../shell/NavCenter.js';
 import { useAuth } from '../library/auth.js';
-import { listBuilds, type LibraryBuild } from '../library/library.js';
+import { deleteBuild, listBuilds, renameBuild, type LibraryBuild } from '../library/library.js';
 import { localStore, remoteStore, type SavedWorld } from '../world/api.js';
 import { CommandPalette, type Command } from './CommandPalette.js';
-import { composeMap, libRef, libRowId, openGuide, openInBuild, openMap, openPlan, placeOnMap, planForBuild } from './handoff.js';
+import { StudioFiles, type StudioFileKind } from './StudioFiles.js';
+import { composeMap, drawFloorplan, libRef, libRowId, openGuide, openInBuild, openMap, openPlan, placeOnMap, planForBuild } from './handoff.js';
 import { takePlanHandoff } from './handoffBridge.js';
 import { bindZoom, redoProject, undoProject, type JournalFrame } from './journal.js';
 import { useUndoKeys } from './undoKeys.js';
+import { useJournalFlags } from './useZoomUndo.js';
+import { WorkbenchProvider, useWorkbenchActions } from './workbench.js';
 import { PresenceProvider, useConfirmLeave, useStudioPresence } from './presence.js';
-import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, parseMode, type StudioMode } from './mode.js';
+import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, ownsParam, parseMode, type StudioMode } from './mode.js';
 import './studio.css';
 
 /** Enough recent library builds for the palette to offer without becoming the library. */
 const PALETTE_LIBRARY_LIMIT = 5;
+const RETURN_TO_KEY = 'craftmagic.studio.openDocuments';
+
+function restoreOpenDocuments(): Partial<Record<StudioMode, string>> {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(RETURN_TO_KEY) ?? '{}') as Record<string, unknown>;
+    const result: Partial<Record<StudioMode, string>> = {};
+    for (const mode of STUDIO_MODES) {
+      const href = stored[mode];
+      if (typeof href !== 'string') continue;
+      const url = new URL(href, window.location.origin);
+      if (url.origin === window.location.origin && url.pathname === '/studio' && parseMode(url.searchParams.get('mode')) === mode) {
+        result[mode] = `${url.pathname}${url.search}`;
+      }
+    }
+    return result;
+  } catch { return {}; }
+}
 
 export type { StudioMode } from './mode.js';
 
@@ -68,7 +69,7 @@ const MODE_PAGES: Readonly<Record<StudioMode, () => JSX.Element>> = {
 export function StudioPage() {
   return (
     <PresenceProvider>
-      <StudioShell />
+      <WorkbenchProvider><StudioShell /></WorkbenchProvider>
     </PresenceProvider>
   );
 }
@@ -78,7 +79,26 @@ function StudioShell() {
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = parseMode(searchParams.get('mode'));
   const [palette, setPalette] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [, setFilesRevision] = useState(0);
+  const [documentRevision, setDocumentRevision] = useState(0);
+  const [mobilePane, setMobilePane] = useState<'canvas' | 'tools' | 'project'>('canvas');
+  useEffect(() => setMobilePane('canvas'), [mode]);
   const auth = useAuth();
+  // Every editor gets its own return address. A mode switch must not quietly turn a named
+  // map into the browser draft or a selected build into the empty plot.
+  const returnTo = useRef<Partial<Record<StudioMode, string>>>(restoreOpenDocuments());
+  useEffect(() => {
+    const own = new URLSearchParams();
+    for (const [key, value] of searchParams) {
+      if (ownsParam(mode, key)) own.set(key, value);
+    }
+    const modeValue = modeParam(mode);
+    if (modeValue) own.set('mode', modeValue);
+    returnTo.current[mode] = `/studio${own.size ? `?${own}` : ''}`;
+    try { sessionStorage.setItem(RETURN_TO_KEY, JSON.stringify(returnTo.current)); } catch { /* Navigation still works without storage. */ }
+  }, [mode, searchParams]);
 
   /**
    * What the palette can name that is not in the bundle: the account's maps and its recent
@@ -90,46 +110,55 @@ function StudioShell() {
   const [maps, setMaps] = useState<SavedWorld[]>([]);
   const [libraryBuilds, setLibraryBuilds] = useState<LibraryBuild[]>([]);
   useEffect(() => {
-    if (!palette || auth.status === 'loading') return;
+    if ((!palette && !filesOpen) || auth.status === 'loading') return;
     let live = true;
+    if (filesOpen) setFilesLoading(true);
     const store = auth.status === 'signedIn' ? remoteStore : localStore;
-    void store.list().then((rows) => live && setMaps(rows), () => undefined);
+    const mapRequest = store.list().then((rows) => { if (live) setMaps(rows); }, () => undefined);
     if (auth.status === 'signedIn') {
-      void listBuilds().then(
-        (rows) => live && setLibraryBuilds(
-          [...rows].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, PALETTE_LIBRARY_LIMIT),
-        ),
+      const buildRequest = listBuilds().then(
+        (rows) => { if (live) setLibraryBuilds([...rows].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))); },
         () => undefined,
       );
+      void Promise.allSettled([mapRequest, buildRequest]).then(() => { if (live) setFilesLoading(false); });
     } else {
       setLibraryBuilds([]);
+      void mapRequest.finally(() => { if (live) setFilesLoading(false); });
     }
     return () => {
       live = false;
     };
-  }, [palette, auth.status]);
+  }, [palette, filesOpen, auth.status]);
 
   const presence = useStudioPresence();
+  const currentPresence = presence.mode === mode ? presence : null;
+  const journal = useJournalFlags();
+  const workbench = useWorkbenchActions(mode);
+  const workbenchRef = useRef(workbench);
+  workbenchRef.current = workbench;
+  useEffect(() => {
+    const onSave = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 's') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const action = workbenchRef.current;
+      if (action?.canSave) void action.save();
+    };
+    window.addEventListener('keydown', onSave, true);
+    return () => window.removeEventListener('keydown', onSave, true);
+  }, []);
   const confirmLeave = useConfirmLeave();
 
   const openFrame = useCallback(
     (frame: JournalFrame) => {
-      setSearchParams(
-        (params) => {
-          if (frame.scope === 'build') {
-            params.delete('mode');
-            params.set('build', frame.docId);
-          } else if (frame.scope === 'arch') {
-            params.set('mode', 'arch');
-          } else {
-            params.set('mode', 'world');
-          }
-          return params;
-        },
-        { replace: true },
-      );
+      const href = frame.scope === 'build'
+        ? openInBuild(frame.docId)
+        : frame.scope === 'arch'
+          ? returnTo.current.arch ?? drawFloorplan()
+          : returnTo.current.world ?? composeMap();
+      navigate(href, { replace: true });
     },
-    [setSearchParams],
+    [navigate],
   );
 
   useEffect(() => bindZoom(openFrame), [openFrame]);
@@ -155,48 +184,30 @@ function StudioShell() {
    */
   const setMode = useCallback(
     (next: StudioMode) => {
-      if (next === 'arch' && mode !== 'arch') {
-        const fromPresence = presence.structureRowId;
-        const fromUrl = libRowId(searchParams.get('build') ?? '');
-        const row = fromPresence ?? fromUrl;
-        if (row) {
-          navigate(openPlan(row));
-          return;
-        }
+      if (next === mode) return;
+      setMobilePane('canvas');
+      if (next === 'world') {
+        navigate(returnTo.current.world ?? composeMap());
+        return;
       }
-      setSearchParams(
-        (params) => {
-          if (mode === 'arch' && next === 'build') {
-            const id = takePlanHandoff();
-            if (id) {
-              params.set('build', id);
-              params.delete('plan');
-            } else {
-              // Empty untitled draft, or Architecture unmounted before handoff registered:
-              // keep a linked `plan=lib:` as the open build rather than dropping into Empty plot.
-              const row = libRowId(params.get('plan') ?? '');
-              if (row) {
-                params.set('build', libRef(row));
-                params.delete('plan');
-              }
-            }
-          } else if (next === 'build') {
-            params.delete('plan');
+      if (next === 'build') {
+        if (mode === 'arch') {
+          const id = takePlanHandoff() ?? (libRowId(searchParams.get('plan') ?? '') ? searchParams.get('plan') : null);
+          if (id) {
+            navigate(openInBuild(id));
+            return;
           }
-          if (next === 'world') {
-            // Leaving the blocks or the plan for the map: the placement is already on it.
-            params.delete('build');
-            params.delete('plan');
-          }
-          const value = modeParam(next);
-          if (value === null) params.delete('mode');
-          else params.set('mode', value);
-          return params;
-        },
-        { replace: true },
-      );
+        }
+        navigate(returnTo.current.build ?? '/studio');
+        return;
+      }
+      const row = mode === 'build'
+        ? presence.structureRowId ?? libRowId(searchParams.get('build') ?? '')
+        : null;
+      if (row) navigate(openPlan(row));
+      else navigate(returnTo.current.arch ?? drawFloorplan());
     },
-    [mode, setSearchParams, navigate, presence.structureRowId, searchParams],
+    [mode, navigate, presence.structureRowId, searchParams],
   );
 
   const openStructurePlan = useCallback(() => {
@@ -221,12 +232,86 @@ function StudioShell() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  const openOutput = useCallback(() => {
+    setMobilePane(mode === 'arch' ? 'tools' : 'project');
+    requestAnimationFrame(() => {
+      const section = document.getElementById('studio-section-export');
+      section?.dispatchEvent(new Event('studio:open-section'));
+      section?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }, [mode]);
+
+  const openFile = useCallback((href: string) => {
+    if (currentPresence?.dirty && !window.confirm(`Open another document? Save changes to ${currentPresence.dirtyLabel} first if you need this version.`)) return;
+    setFilesOpen(false);
+    navigate(href);
+  }, [navigate, currentPresence?.dirty, currentPresence?.dirtyLabel]);
+
+  const isOpenFile = useCallback((kind: StudioFileKind, id: string) => {
+    if (kind === 'map') return mode === 'world' && searchParams.get('world') === id;
+    if (kind === 'library') return (mode === 'build' && searchParams.get('build') === `lib:${id}`)
+      || (mode === 'arch' && searchParams.get('plan') === `lib:${id}`);
+    if (kind === 'plan') return mode === 'arch' && searchParams.get('plan') === `local:${id}`;
+    return mode === 'build' && searchParams.get('build') === id;
+  }, [mode, searchParams]);
+
+  const refreshFiles = useCallback(async () => {
+    const store = auth.status === 'signedIn' ? remoteStore : localStore;
+    const [mapsResult, buildsResult] = await Promise.allSettled([
+      store.list(),
+      auth.status === 'signedIn' ? listBuilds() : Promise.resolve([]),
+    ]);
+    if (mapsResult.status === 'fulfilled') setMaps(mapsResult.value);
+    if (buildsResult.status === 'fulfilled') setLibraryBuilds(buildsResult.value);
+    setFilesRevision((value) => value + 1);
+  }, [auth.status]);
+
+  const guardActiveFile = useCallback((kind: StudioFileKind, id: string) => {
+    if (isOpenFile(kind, id) && currentPresence?.dirty) {
+      throw new Error('Save your changes to this open document before renaming or deleting it.');
+    }
+  }, [isOpenFile, currentPresence?.dirty]);
+
+  const renameFile = useCallback(async (kind: StudioFileKind, id: string, name: string) => {
+    guardActiveFile(kind, id);
+    if (kind === 'library') { await renameBuild(id, name); forgetLibraryBuild(id); }
+    else if (kind === 'plan') {
+      const entry = listSaved().find((item) => item.id === id);
+      if (!entry) throw new Error('This floorplan is no longer saved here.');
+      savePlan({ ...entry.plan, name });
+    } else if (kind === 'browserBuild') {
+      if (!renameLocalBuild(id, name)) throw new Error('This build is no longer saved here.');
+    } else {
+      const store = auth.status === 'signedIn' ? remoteStore : localStore;
+      const doc = await store.load(id);
+      if (!doc || !(await store.save({ ...doc, name }))) throw new Error('Could not rename this map.');
+    }
+    await refreshFiles();
+    if (isOpenFile(kind, id)) setDocumentRevision((value) => value + 1);
+  }, [auth.status, guardActiveFile, isOpenFile, refreshFiles]);
+
+  const deleteFile = useCallback(async (kind: StudioFileKind, id: string) => {
+    guardActiveFile(kind, id);
+    if (kind === 'library') { await deleteBuild(id); forgetLibraryBuild(id); }
+    else if (kind === 'plan') deleteSaved(id);
+    else if (kind === 'browserBuild') {
+      if (!forgetLocalBuild(id)) throw new Error('This build is no longer saved here.');
+    } else {
+      const store = auth.status === 'signedIn' ? remoteStore : localStore;
+      if (!(await store.remove(id))) throw new Error('Could not delete this map.');
+    }
+    if (isOpenFile(kind, id)) {
+      const fallback = mode === 'world' ? composeMap() : mode === 'arch' ? drawFloorplan() : '/studio';
+      returnTo.current[mode] = fallback;
+      navigate(fallback, { replace: true });
+      setDocumentRevision((value) => value + 1);
+    }
+    await refreshFiles();
+  }, [auth.status, guardActiveFile, isOpenFile, mode, navigate, refreshFiles]);
+
   /**
-   * The command list, rebuilt when the palette opens.
-   *
-   * Every command is a navigation into state the pages already read from the URL — builds,
-   * style packs, modes, routes — so the palette needs no channel into either page's
-   * internals, and a command can never do something a link could not.
+   * The command list, rebuilt when the palette opens. Document actions use the mounted
+   * editor's registered callbacks; opening other work uses canonical Studio links.
    */
   const commands = useMemo<Command[]>(() => {
     if (!palette) return [];
@@ -292,7 +377,7 @@ function StudioShell() {
 
     // The account's recent library builds: open, guide, or arm on a map. Every one of these
     // carries a `lib:` id, which is the one kind of id that still resolves tomorrow.
-    for (const build of libraryBuilds) {
+    for (const build of libraryBuilds.slice(0, PALETTE_LIBRARY_LIMIT)) {
       list.push({
         id: `lib-open-${build.id}`,
         label: `Open build: ${build.name}`,
@@ -357,6 +442,15 @@ function StudioShell() {
       });
     }
 
+    if (workbench) {
+      if (workbench.canSave) list.unshift({ id: 'file-save', label: workbench.saveLabel, hint: workbench.saveHint ?? 'Save the current document', run: () => void workbench.save() });
+      list.unshift({ id: 'file-new', label: 'New document', hint: 'Start a new document in this workspace', run: workbench.create });
+    }
+    list.unshift(
+      { id: 'file-open', label: 'Open Studio work', hint: 'Maps, builds, and browser floorplans', run: () => setFilesOpen(true) },
+      { id: 'file-export', label: 'Export current view', hint: 'Schematic, program, guide, and game delivery', run: openOutput },
+    );
+
     list.push(
       {
         id: 'go-library',
@@ -385,7 +479,7 @@ function StudioShell() {
     );
 
     return list;
-  }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds, confirmLeave, presence.structureRowId, presence.hasPlan]);
+  }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds, confirmLeave, presence.structureRowId, presence.hasPlan, workbench, openOutput]);
 
   // Resolved once per render rather than inside the JSX: mounting through a variable is what
   // keeps "which page" and "which pill is lit" reading from the same table.
@@ -394,10 +488,9 @@ function StudioShell() {
   /**
    * Parameters in the address bar that this mode does not read.
    *
-   * A pill switch keeps the whole query on purpose — flip to World and back and your `?build=`
-   * is still there — but that silence also let a link like `/studio?mode=world&build=lib:x`
-   * look as though it had placed the build on the map. It had not. One line says which
-   * parameter is waiting for which mode; "Clear" drops it for anyone who meant to move on.
+   * Mode switching now opens each editor's own return address. An external link can still
+   * arrive with mixed parameters, such as `/studio?mode=world&build=lib:x`; this notice
+   * explains that the build has not been placed on the map and offers the relevant actions.
    */
   const foreign = foreignParams(mode, searchParams);
   const foreignKey = `${mode}|${foreign.map((entry) => entry.key).join(',')}`;
@@ -420,62 +513,65 @@ function StudioShell() {
    * that used to land on Architecture's zoom controls and World's toolbar.
    */
   const placeBuild = searchParams.get('build');
-  const canOpenPlan =
-    mode === 'arch' ||
-    Boolean(presence.structureRowId) ||
-    Boolean(libRowId(searchParams.get('build') ?? ''));
-  const planLabel = mode === 'arch' ? 'Plan' : presence.hasPlan ? 'Plan' : 'Open layout';
+  const documentName = mode === 'world'
+    ? currentPresence?.project ?? 'Opening map…'
+    : mode === 'arch'
+      ? currentPresence?.structure ? `${currentPresence.structure} · floorplan` : 'Untitled floorplan'
+      : currentPresence?.structure ?? 'Untitled build';
   const switcher = (
-    <div className="studio__switch" role="navigation" aria-label="Where you are in the project">
-      <button type="button" aria-pressed={mode === 'world'} title="The map" onClick={() => setMode('world')}>
-        {presence.project}
-      </button>
-      {(mode === 'build' || mode === 'arch' || presence.structure) && (
-        <button
-          type="button"
-          aria-pressed={mode === 'build'}
-          title="The blocks"
-          onClick={() => setMode('build')}
-        >
-          {presence.structure ?? 'Structure'}
-        </button>
-      )}
-      {canOpenPlan && (
-        <button
-          type="button"
-          aria-pressed={mode === 'arch'}
-          title={
-            mode === 'arch'
-              ? 'The floorplan'
-              : presence.hasPlan
-                ? 'Open this build’s floorplan'
-                : 'Create a layout for this build'
-          }
-          onClick={openStructurePlan}
-        >
-          {planLabel}
-        </button>
-      )}
-      {presence.dirty && (
-        <span className="studio__dirty" title={`${presence.dirtyLabel} has unsaved changes`}>
-          Unsaved
+    <div className="studio__workbar">
+      <nav className="studio__switch" aria-label="Studio workspaces">
+        {STUDIO_MODES.map((id, index) => (
+          <button
+            key={id}
+            type="button"
+            data-mode={id}
+            aria-pressed={mode === id}
+            title={id === 'arch' && presence.hasPlan ? 'Open this build’s floorplan' : MODE_SPECS[id].hint}
+            onClick={id === 'arch' && mode === 'build' ? openStructurePlan : () => setMode(id)}
+          >
+            <span className="studio__mode-number" aria-hidden="true">0{index + 1}</span>
+            <span className="studio__mode-copy">
+              <strong>{MODE_SPECS[id].label}</strong>
+              <small>{id === 'world' ? 'Terrain & map' : id === 'build' ? 'Blocks & form' : 'Rooms & plan'}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
+      <div className="studio__document" title={documentName}>
+        <span className="studio__document-label">Current work</span>
+        <strong>{documentName}</strong>
+        <span className={`studio__document-state${currentPresence?.dirty ? ' is-dirty' : ''}`}>
+          {currentPresence?.dirty ? 'Changes pending' : 'Ready to work'}
         </span>
-      )}
-      <button
-        type="button"
-        className="studio__palette-key"
-        title="Command palette  (Ctrl+K)"
-        onClick={() => setPalette(true)}
-      >
-        ⌘K
-      </button>
+      </div>
+      <div className="studio__file-actions" aria-label="Document actions">
+        <button type="button" className="studio__file-action" onClick={() => workbench?.create()} disabled={!workbench} title="Start a new document in this workspace">New</button>
+        <button type="button" className="studio__file-action" onClick={() => setFilesOpen(true)} title="Open maps, builds, and floorplans">Open</button>
+        <button type="button" className="studio__file-action studio__file-action--save" onClick={() => { if (workbench?.canSave) void workbench.save(); }} disabled={!workbench?.canSave} title={workbench?.saveHint ?? 'Save the current document'}>{workbench?.saveLabel ?? 'Save'}</button>
+        <button type="button" className="studio__file-action" onClick={openOutput} title="Export or send the current view">Export</button>
+      </div>
+      <div className="studio__global-actions" aria-label="Workspace actions">
+        <button type="button" onClick={undoProject} disabled={!journal.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+        <button type="button" onClick={redoProject} disabled={!journal.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+        <button type="button" className="studio__search" onClick={() => setPalette(true)} title="Find a command (Ctrl+K)">
+          <span>Find anything</span><kbd>Ctrl K</kbd>
+        </button>
+      </div>
+      <nav className="studio__pane-switch" aria-label="Workspace view">
+        {(['canvas', 'tools', 'project'] as const).map((pane) => (
+          <button key={pane} type="button" aria-pressed={mobilePane === pane} onClick={() => setMobilePane(pane)}>
+            {pane === 'canvas' ? (mode === 'arch' ? 'Plan' : 'Canvas') : pane === 'tools' ? 'Tools' : mode === 'arch' ? '3D preview' : mode === 'world' ? 'Contents' : 'Create & export'}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 
   return (
-    <div className="studio">
+    <div className="studio" data-pane={mobilePane}>
       <NavCenterProvider node={switcher}>
-        <Mounted />
+        <Mounted key={`${mode}:${documentRevision}`} />
       </NavCenterProvider>
 
       {foreign.length > 0 && dismissed !== foreignKey && (
@@ -522,6 +618,18 @@ function StudioShell() {
       )}
 
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+      {filesOpen && <StudioFiles
+        builds={libraryBuilds}
+        maps={maps}
+        plans={listSaved()}
+        localBuilds={[...generatedBuilds(), ...muralBuilds(), ...importedBuilds()]}
+        loading={filesLoading}
+        signedIn={auth.status === 'signedIn'}
+        onOpen={openFile}
+        onClose={() => setFilesOpen(false)}
+        onRename={renameFile}
+        onDelete={deleteFile}
+      />}
     </div>
   );
 }

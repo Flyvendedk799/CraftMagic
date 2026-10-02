@@ -6,7 +6,7 @@
  * lands on an empty scene. This drives Edge over CDP instead and waits for a readiness
  * signal from the page itself.
  *
- *   node tools/shot.mjs <url> <output.png> [readySelector] [readyAttr] [readyValue]
+ *   node tools/shot.mjs <url> <output.png> [readySelector] [readyAttr] [readyValue] [width] [height]
  *
  * Defaults wait for `[data-remaining="0"]`, which the editor sets when every chunk is meshed.
  */
@@ -16,9 +16,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const [url, outFile, selector = '.editor', attr = 'data-remaining', want = '0'] = process.argv.slice(2);
+const [url, outFile, selector = '.editor', attr = 'data-remaining', want = '0', width = '1280', height = '900'] = process.argv.slice(2);
 if (!url || !outFile) {
-	console.error('usage: node tools/shot.mjs <url> <output.png> [selector] [attr] [value]');
+	console.error('usage: node tools/shot.mjs <url> <output.png> [selector] [attr] [value] [width] [height]');
 	process.exit(1);
 }
 
@@ -43,7 +43,7 @@ const child = spawn(
 		'--use-gl=swiftshader',
 		'--enable-unsafe-swiftshader',
 		'--hide-scrollbars',
-		'--window-size=1280,900',
+		`--window-size=${width},${height}`,
 		`--remote-debugging-port=${port}`,
 		`--user-data-dir=${profile}`,
 		'about:blank',

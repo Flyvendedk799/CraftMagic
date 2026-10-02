@@ -22,6 +22,7 @@
  * being discovered at the moment of a refusal.
  */
 
+import { useLayoutEffect, useRef } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { Logo } from '../brand/Logo.js';
 import { logout, useAuth } from '../library/auth.js';
@@ -90,9 +91,33 @@ export function AppNav({ current }: AppNavProps) {
   const account = auth.status === 'signedIn' ? auth.account : null;
   // Whatever the shell wants in the middle of the bar — in the studio, the mode switch.
   const center = useNavCenter();
+  const navRef = useRef<HTMLElement>(null);
+
+  // Studio's two-row header changes height as the viewport narrows. The Build canvas and its
+  // docks are positioned below it, so measure the real header instead of guessing a breakpoint.
+  useLayoutEffect(() => {
+    if (!center || !navRef.current) return;
+    const nav = navRef.current;
+    const host = nav.parentElement;
+    if (!host) return;
+    const studio = nav.closest<HTMLElement>('.studio');
+    const update = () => {
+      const height = `${nav.getBoundingClientRect().height}px`;
+      host.style.setProperty('--studio-chrome', height);
+      studio?.style.setProperty('--studio-chrome', height);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(nav);
+    update();
+    return () => {
+      observer.disconnect();
+      host.style.removeProperty('--studio-chrome');
+      studio?.style.removeProperty('--studio-chrome');
+    };
+  }, [Boolean(center)]);
 
   return (
-    <header className="nav">
+    <header ref={navRef} className={`nav${center ? ' nav--studio' : ''}`}>
       <div className="nav__inner">
         {/* Home is the dashboard once there is an account behind it, and the landing page
             before — the marketing pitch is not what a returning user wants from the logo. */}

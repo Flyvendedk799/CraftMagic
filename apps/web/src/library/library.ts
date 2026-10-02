@@ -195,6 +195,8 @@ export function saveToLibrary(input: {
   };
   if (!input.keepKind) body.kind = input.kind ?? 'structure';
   if (!input.keepPlan && 'plan' in input) body.plan = input.plan;
-  if (!input.keepEdits) body.edits = input.edits ?? undefined;
+  // Null is an intentional clear on an existing row. Omitting the key means "keep the old
+  // overlay", so `undefined` here would resurrect edits after the user undoes them all.
+  if (!input.keepEdits) body.edits = input.edits ?? null;
   return request('/api/builds', json('POST', body));
 }

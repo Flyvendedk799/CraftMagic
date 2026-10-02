@@ -31,13 +31,7 @@ export interface SaveToLibraryProps {
    * as things to drop on a hillside is offering the inside of a house with no house.
    */
   kind?: BuildKind;
-  /**
-   * The library row this build was opened from, if any.
-   *
-   * Saving always writes a new row — there is no "save over", and the server's PATCH only
-   * renames — so someone who opened a library build and pressed Save gets a second copy. That
-   * is not wrong, but it has to be said before the click rather than discovered in the list.
-   */
+  /** The library row this build was opened from. Save updates it; Save a copy creates a row. */
   libraryRowId?: string | null;
   /** Called with the new row's id. The page uses it to offer the next step with a durable id. */
   onSaved?: (id: string) => void;
@@ -66,7 +60,7 @@ export function SaveToLibrary({
   const auth = useAuth();
   const [state, setState] = useState<State>({ kind: 'idle' });
 
-  const save = useCallback(async () => {
+  const save = useCallback(async (copy = false) => {
     setState({ kind: 'saving' });
     try {
       const saved = await saveToLibrary({
@@ -78,6 +72,9 @@ export function SaveToLibrary({
         plan: plan ?? null,
         kind,
         generationId,
+        id: copy ? undefined : libraryRowId ?? undefined,
+        keepPlan: !copy && Boolean(libraryRowId) && plan === undefined,
+        keepKind: !copy && Boolean(libraryRowId),
       });
       setState({ kind: 'saved', id: saved.id });
       onSaved?.(saved.id);
@@ -88,7 +85,7 @@ export function SaveToLibrary({
           : (err as Error).message;
       setState({ kind: 'error', message });
     }
-  }, [name, grid, program, detached, getEdits, plan, kind, generationId, onSaved]);
+  }, [name, grid, program, detached, getEdits, plan, kind, generationId, libraryRowId, onSaved]);
 
   if (auth.status !== 'signedIn') {
     return (
@@ -107,18 +104,17 @@ export function SaveToLibrary({
     <div className="save">
       <div className="save__actions">
         <button type="button" onClick={() => void save()} disabled={state.kind === 'saving'}>
-          {state.kind === 'saving' ? 'Saving…' : 'Save to library'}
+          {state.kind === 'saving' ? 'Saving…' : libraryRowId ? 'Save changes' : 'Save to library'}
         </button>
+        {libraryRowId && (
+          <button type="button" onClick={() => void save(true)} disabled={state.kind === 'saving'}>
+            Save a copy
+          </button>
+        )}
         <Link className="export__link" to="/library">
           Library →
         </Link>
       </div>
-
-      {state.kind === 'idle' && libraryRowId && (
-        <p className="save__note">
-          Saves a new copy. The build you opened stays as it is in the library.
-        </p>
-      )}
 
       {state.kind === 'saved' && (
         <p className="save__note save__note--ok">

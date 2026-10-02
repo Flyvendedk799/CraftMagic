@@ -54,6 +54,21 @@ beforeEach(() => {
 });
 
 describe('generated builds across tabs', () => {
+  it('gives each new blank build its own document and edit layer', async () => {
+    const store = storage();
+    const editor = await openTab(store);
+    const first = editor.registerBlankBuild();
+    const second = editor.registerBlankBuild();
+    expect(first).not.toBe(second);
+    expect(first).not.toBe(editor.BLANK_BUILD);
+    expect(editor.expandBuild(first).name).toBe('Untitled build');
+    expect(editor.expandBuild(second).name).toBe('Untitled build');
+    expect(editor.editsOf(second)).toBeNull();
+    const reopened = await openTab(store);
+    expect(reopened.isBuildId(first)).toBe(true);
+    expect(reopened.isBuildId(second)).toBe(true);
+  });
+
   it('resolves in a tab that was opened by a link', async () => {
     const store = storage();
 

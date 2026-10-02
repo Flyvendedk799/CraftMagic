@@ -1,11 +1,9 @@
 /**
- * The Ctrl+K palette: every studio destination behind one keystroke.
+ * The Ctrl+K palette: Studio destinations and document actions behind one keystroke.
  *
  * A flat, filtered list — no nesting, no categories to navigate. The commands are assembled
- * by the page from what the product already exposes (URL-addressable builds, style packs,
- * routes), so the palette holds no state of its own and cannot drift from the pages it
- * drives: executing a command is a navigation, and the page that owns the thing reacts to
- * its URL exactly as if the user had typed it.
+ * by the workbench from the current document's registered actions and URL-addressable work.
+ * The palette holds no document state of its own.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -61,7 +59,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
           ref={inputRef}
           className="palette__input"
           type="text"
-          placeholder="Type a command — build, style, mode, page…"
+          placeholder="Find a file, action, workspace, or style…"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);

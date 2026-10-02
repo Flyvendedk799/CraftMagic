@@ -36,6 +36,9 @@ import { localStore, type WorldStore } from './api.js';
 
 /** Long enough that a drag writes once, short enough that a closed tab loses nothing real. */
 const AUTOSAVE_DELAY = 600;
+// IndexedDB writes are asynchronous. Keep the most recent unmounted document in memory so a
+// rapid World → Build → World trip cannot read the previous draft before the flush commits.
+let recentDraft: WorldDoc | null = null;
 
 export interface WorldSession {
   doc: WorldDoc;
@@ -72,9 +75,11 @@ export interface WorldSession {
   draftRevision: number;
 
   saved: SavedWorld[];
-  save: () => void;
+  save: () => Promise<boolean>;
+  saving: boolean;
+  saveError: string | null;
   open: (doc: WorldDoc) => void;
-  remove: (id: string) => void;
+  remove: (id: string) => Promise<boolean>;
   dirty: boolean;
 }
 
@@ -94,6 +99,11 @@ export function useWorldSession(
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState<SavedWorld[]>([]);
   const [savedRevision, setSavedRevision] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveInFlight = useRef<Promise<boolean> | null>(null);
+  const revisionRef = useRef(0);
+  const loadedRef = useRef(false);
   const [draftRevision, setDraftRevision] = useState(0);
 
   const historyRef = useRef<WorldHistory | null>(null);
@@ -102,7 +112,11 @@ export function useWorldSession(
   // hand back an empty stack every time you returned to the map.
   const history = (historyRef.current ??= worldHistoryFor('open-world'));
 
-  const bump = useCallback(() => setRevision((n) => n + 1), []);
+  const bump = useCallback(() => {
+    const next = ++revisionRef.current;
+    setRevision(next);
+    return next;
+  }, []);
 
   /**
    * The draft is read once, at mount, and this effect must never gain a dependency.
@@ -118,11 +132,15 @@ export function useWorldSession(
    */
   useEffect(() => {
     let live = true;
-    void loadDraft().then((draft) => {
+    void (recentDraft ? Promise.resolve(cloneWorld(recentDraft)) : loadDraft()).then((draft) => {
       if (!live) return;
       if (draft) docRef.current = draft;
+      loadedRef.current = true;
       setLoading(false);
-      bump();
+      const loadedRevision = bump();
+      // A fresh blank map has nothing to save yet. A recovered draft may differ from the
+      // named account save, so it stays dirty until the user saves it explicitly.
+      if (!draft) setSavedRevision(loadedRevision);
     });
     return () => {
       live = false;
@@ -170,7 +188,10 @@ export function useWorldSession(
   useEffect(
     () => () => {
       const doc = docRef.current;
-      if (doc) void saveDraft(doc);
+      if (doc && loadedRef.current) {
+        recentDraft = cloneWorld(doc);
+        void saveDraft(recentDraft);
+      }
     },
     [],
   );
@@ -308,18 +329,33 @@ export function useWorldSession(
     return true;
   }, [history, applyDelta, stamp, bump]);
 
-  const save = useCallback(() => {
+  const save = useCallback((): Promise<boolean> => {
     const doc = docRef.current;
-    if (!doc) return;
-    void store.save(doc).then((id) => {
-      // The server mints its own id on a first save, and the open document has to adopt it
-      // or the next save creates a second row instead of landing on the first.
-      if (id && docRef.current) docRef.current.id = id;
-      void store.list().then(setSaved);
-      setSavedRevision(revision);
-      bump();
+    if (!doc) return Promise.resolve(false);
+    if (saveInFlight.current) return saveInFlight.current;
+    const savingRevision = revisionRef.current;
+    setSaving(true);
+    setSaveError(null);
+    const task = store.save(doc).then(async (id) => {
+      if (!id) throw new Error('Storage did not accept this map.');
+      // A first account save gets a server id. A later edit during the request must still
+      // remain dirty, so only the revision actually sent is marked as saved.
+      if (docRef.current === doc) {
+        doc.id = id;
+        setSavedRevision(savingRevision);
+      }
+      try { setSaved(await store.list()); } catch { /* The save succeeded; the list can refresh later. */ }
+      return true;
+    }).catch((error: unknown) => {
+      setSaveError((error as Error).message);
+      return false;
+    }).finally(() => {
+      saveInFlight.current = null;
+      setSaving(false);
     });
-  }, [revision, store, bump]);
+    saveInFlight.current = task;
+    return task;
+  }, [store]);
 
   const open = useCallback(
     (doc: WorldDoc) => {
@@ -329,20 +365,23 @@ export function useWorldSession(
       // Opening a different map starts a fresh stack. Re-opening the one already on screen
       // — including the remount a mode switch causes — must not throw the sculpting away.
       if (!same) history.clear();
-      setSavedRevision(0);
-      bump();
+      const openedRevision = bump();
+      setSavedRevision(openedRevision);
+      setSaveError(null);
     },
     [history, bump],
   );
 
-  const remove = useCallback(
-    (id: string) => {
-      void store.remove(id).then(() => {
-        void store.list().then(setSaved);
-      });
-    },
-    [store],
-  );
+  const remove = useCallback(async (id: string) => {
+    try {
+      const ok = await store.remove(id);
+      if (!ok) return false;
+      setSaved(await store.list());
+      return true;
+    } catch {
+      return false;
+    }
+  }, [store]);
 
   return useMemo(
     () => ({
@@ -364,6 +403,8 @@ export function useWorldSession(
       draftRevision,
       saved,
       save,
+      saving,
+      saveError,
       open,
       remove,
       dirty: revision !== savedRevision,
@@ -371,7 +412,7 @@ export function useWorldSession(
     [
       revision, loading, beginStroke, endStroke, bump, commitCarve, commitPlacements,
       commitSettings, rename, undo, redo, history, saved, save, open, remove, savedRevision,
-      draftRevision,
+      draftRevision, saving, saveError,
     ],
   );
 }

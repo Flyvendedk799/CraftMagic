@@ -32,7 +32,7 @@ export interface PlanSession {
   /** Record the current state before a gesture that will only `preview` from here on. */
   mark: () => void;
   /** Replace the plan wholesale — a template, an import, a saved plan. Clears history. */
-  reset: (plan: LayoutPlan) => void;
+  reset: (plan: LayoutPlan, saved?: boolean) => void;
   undo: () => boolean;
   redo: () => boolean;
   canUndo: boolean;
@@ -58,6 +58,7 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
   const history = (historyRef.current ??= planHistoryFor('architecture'));
 
   const [revision, setRevision] = useState(0);
+  const revisionRef = useRef(0);
   const [saved, setSaved] = useState<SavedPlan[]>(() => listSaved());
   /**
    * The revision the plan was last saved at, or null if it never has been.
@@ -69,9 +70,15 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
    * only moves on a commit, which is the honest definition anyway: a drag in progress has not
    * changed anything until it is let go.
    */
-  const [savedRevision, setSavedRevision] = useState<number | null>(null);
+  // The initial plan is either the blank starting point or a recovered local autosave. Both
+  // are already kept on this device; opening Architecture should not show a false warning.
+  const [savedRevision, setSavedRevision] = useState(0);
 
-  const bump = useCallback(() => setRevision((n) => n + 1), []);
+  const bump = useCallback(() => {
+    const next = ++revisionRef.current;
+    setRevision(next);
+    return next;
+  }, []);
 
   const commit = useCallback(
     (next: LayoutPlan | ((plan: LayoutPlan) => LayoutPlan)) => {
@@ -101,10 +108,11 @@ export function usePlanSession(initial: () => LayoutPlan): PlanSession {
   }, [history, bump]);
 
   const reset = useCallback(
-    (next: LayoutPlan) => {
+    (next: LayoutPlan, saved = false) => {
       history.clear();
       setPlan(normalizePlan(next));
-      bump();
+      const nextRevision = bump();
+      if (saved) setSavedRevision(nextRevision);
     },
     [history, bump],
   );

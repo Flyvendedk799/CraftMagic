@@ -24,6 +24,7 @@ export const ARCHITECTURE_SHORTCUTS: readonly ShortcutGroup[] = [
       { keys: 'Esc', what: 'Deselect, and clear the message under the plan' },
       { keys: 'Ctrl + Z', what: 'Undo — one entry per gesture, not per frame of a drag' },
       { keys: 'Ctrl + Shift + Z', what: 'Redo' },
+      { keys: 'Ctrl + S', what: 'Save a named draft in this browser' },
     ],
   },
   {

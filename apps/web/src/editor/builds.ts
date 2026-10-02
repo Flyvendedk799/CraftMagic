@@ -357,6 +357,17 @@ export function registerGeneratedBuild(program: BuildProgram): string {
   return id;
 }
 
+/** A genuinely new editable document. Re-selecting the shared `blank` sample would reopen
+ * its edit overlay, so every New build gets its own browser identity. */
+export function registerBlankBuild(): string {
+  return registerGeneratedBuild({
+    ...blank,
+    meta: { ...blank.meta, name: 'Untitled build' },
+    palette: { ...blank.palette },
+    components: [],
+  });
+}
+
 /** Generated builds this browser still remembers, oldest first. */
 export function generatedBuilds(): { id: string; name: string }[] {
   return [...generated.entries()].map(([id, program]) => ({ id, name: program.meta.name }));
@@ -591,6 +602,31 @@ export function forgetLocalBuild(id: string): boolean {
     persistEdits();
   }
   return removed;
+}
+
+/** Rename a browser-owned build without changing its identity or hand edits. */
+export function renameLocalBuild(id: string, name: string): boolean {
+  const title = name.trim();
+  if (!title) return false;
+  const program = generated.get(id);
+  if (program) {
+    generated.set(id, { ...program, meta: { ...program.meta, name: title } });
+    persist();
+    return true;
+  }
+  const mural = murals.get(id);
+  if (mural) {
+    murals.set(id, { ...mural, name: title });
+    persistMurals();
+    return true;
+  }
+  const imported = imports.get(id);
+  if (imported) {
+    imports.set(id, { ...imported, name: title });
+    persistImports();
+    return true;
+  }
+  return false;
 }
 
 export function importedBuilds(): { id: string; name: string; source: ImportSource }[] {

@@ -37,6 +37,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { registerPlanHandoff } from '../studio/handoffBridge.js';
 import { useReportPresence } from '../studio/presence.js';
+import { useRegisterWorkbench } from '../studio/workbench.js';
 import { EditOverlay, expand, paletteColors, paletteFlags, voxelIndex, type BuildPart, type EditLayer, type VoxelGrid } from '@craftmagic/core';
 import { EditorCanvas, type ViewKind, type ViewRequest } from '../editor/EditorCanvas.js';
 import { readPlot, stampOnPlot } from '../world/plotContext.js';
@@ -79,7 +80,7 @@ import {
   type LayoutPlan,
   type PlanItem,
 } from './plan.js';
-import { downloadPlan, parsePlanFile, type SavedPlan } from './storage.js';
+import { downloadPlan, listSaved, parsePlanFile, type SavedPlan } from './storage.js';
 import { TEMPLATES, templateById } from './templates.js';
 import { LAYOUT_TOOLS, LAYOUT_TOOL_BY_ID, layoutToolForKey, type LayoutToolId } from './toolset.js';
 import { usePlanSession } from './usePlanSession.js';
@@ -176,8 +177,8 @@ export function ArchitecturePage() {
   }, []);
 
   const load = useCallback(
-    (next: LayoutPlan) => {
-      session.reset(next);
+    (next: LayoutPlan, saved = false) => {
+      session.reset(next, saved);
       setSelectedIds([]);
       setFloorIndex(0);
       setNotice(null);
@@ -187,6 +188,12 @@ export function ArchitecturePage() {
     },
     [session, frame],
   );
+  const loadFromUser = useCallback((next: LayoutPlan, saved = false) => {
+    const hasDrawing = plan.floors.some((floor) => floor.items.length > 0);
+    if (session.dirty && hasDrawing && !window.confirm('Replace this floorplan? Save a draft first if you want to keep these changes.')) return false;
+    load(next, saved);
+    return true;
+  }, [load, plan, session.dirty]);
 
   // Open a plan saved in the library: `/studio?mode=arch&plan=lib:<row>`. The param stays, so
   // the drawing and the library row are the same structure. Hand edits on that row are an
@@ -196,6 +203,17 @@ export function ArchitecturePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const planParam = searchParams.get('plan');
   const linkedId = planParam?.startsWith('lib:') ? planParam.slice(4) : null;
+  const localPlanId = planParam?.startsWith('local:') ? planParam.slice(6) : null;
+  const loadedLocal = useRef<string | null>(null);
+  useEffect(() => {
+    if (!localPlanId) { loadedLocal.current = null; return; }
+    if (loadedLocal.current === localPlanId) return;
+    const entry = listSaved().find((saved) => saved.id === localPlanId);
+    if (!entry) { setImportError('That browser floorplan is no longer available.'); return; }
+    loadedLocal.current = localPlanId;
+    load(entry.plan, true);
+    setImportError(null);
+  }, [localPlanId, load]);
   const [linkedEdits, setLinkedEdits] = useState<EditLayer | null>(null);
   /** True once the linked library row has been fetched into this session. */
   const [linkReady, setLinkReady] = useState(false);
@@ -228,7 +246,7 @@ export function ArchitecturePage() {
           const blank = templateById('blank')!.build();
           blank.name = detail.name || blank.name;
           linkedPlanId.current = blank.id;
-          load(blank);
+          load(blank, true);
           setImportError(null);
           setNotice(
             `No floorplan on “${detail.name || 'this build'}” yet — draw one here. Saving keeps it linked to the same blocks.`,
@@ -238,7 +256,7 @@ export function ArchitecturePage() {
         }
         const next = normalizePlan(detail.plan);
         linkedPlanId.current = next.id;
-        load(next);
+        load(next, true);
         setImportError(null);
         setLinkReady(true);
       })
@@ -457,6 +475,12 @@ export function ArchitecturePage() {
       if ((event.ctrlKey || event.metaKey) && !event.altKey) {
         const key = event.key.toLowerCase();
         // Undo and redo are bound once for the whole studio; see `useUndoKeys` below.
+        if (key === 's') {
+          event.preventDefault();
+          session.save();
+          setNotice('Draft saved in this browser. Use Save to library for access on other devices.');
+          return;
+        }
         if (key === 'c') {
           event.preventDefault();
           copy();
@@ -705,12 +729,29 @@ export function ArchitecturePage() {
   }, []);
 
   useReportPresence({
+    mode: 'arch',
     structure: plan.name || 'Structure',
     structureRowId: linkedId,
     hasPlan: Boolean(linkedId),
     plan: true,
     dirty: session.dirty,
     dirtyLabel: 'the floorplan',
+  });
+  useRegisterWorkbench('arch', {
+    saveLabel: 'Save draft',
+    save: () => {
+      session.save();
+      setNotice('Draft saved in this browser. Save to library for access on other devices.');
+    },
+    canSave: session.dirty,
+    saveHint: 'Keep a named floorplan draft in this browser. Use Save to library for account storage.',
+    create: () => {
+      if (!loadFromUser(templateById('blank')!.build(), true)) return;
+      setSearchParams((params) => {
+        params.delete('plan');
+        return params;
+      }, { replace: true });
+    },
   });
 
   // A finished AI pass lands in Build, exactly like the hand-off button: the result is a
@@ -731,13 +772,13 @@ export function ArchitecturePage() {
     async (file: File | undefined) => {
       if (!file) return;
       try {
-        load(parsePlanFile(await file.text()));
+        loadFromUser(parsePlanFile(await file.text()));
         setImportError(null);
       } catch (error) {
         setImportError((error as Error).message);
       }
     },
-    [load],
+    [loadFromUser],
   );
 
   /**
@@ -855,6 +896,7 @@ export function ArchitecturePage() {
             heading, and this column and World's look alike enough that losing the name of the
             one you are in is a real cost. */}
         <header className="arch__head">
+          <span className="studio__eyebrow">ARCHITECTURE / TOOLS</span>
           <h1 className="ui-dock__title">Architecture</h1>
           <p className="ui-dock__sub">Rooms, storeys and what goes in them</p>
         </header>
@@ -871,7 +913,7 @@ export function ArchitecturePage() {
               type="button"
               className="ui-btn"
               title={template.description}
-              onClick={() => load(template.build())}
+              onClick={() => loadFromUser(template.build())}
             >
               {template.name}
             </button>
@@ -1086,6 +1128,10 @@ export function ArchitecturePage() {
           plan={plan}
           // Everything Architecture mode compiles is the inside of a building.
           kind="interior"
+          libraryRowId={linkedId}
+          onSaved={(id) => {
+            if (linkedId !== id) navigate(openPlan(id));
+          }}
           // The guide is a verb rather than a link: it needs the compiled program registered
           // under an id first, and doing that on every keystroke would fill the generated-build
           // store with a hundred drafts of the same building. It used to be a button in a
@@ -1152,7 +1198,7 @@ export function ArchitecturePage() {
           <ul className="plans__list">
             {session.saved.map((entry) => (
               <li key={entry.id}>
-                <button type="button" onClick={() => load(entry.plan)}>
+                <button type="button" onClick={() => loadFromUser(entry.plan, true)}>
                   {entry.name}
                 </button>
                 {auth.status === 'signedIn' && (
@@ -1235,6 +1281,7 @@ export function ArchitecturePage() {
       </section>
 
       <div className="arch__plan">
+        <div className="studio__surface-tag" aria-hidden="true">FLOORPLAN <span>·</span> 2D</div>
         <PlanCanvas
           plan={plan}
           floorIndex={activeFloor}
@@ -1282,6 +1329,7 @@ export function ArchitecturePage() {
       </div>
 
       <div className="arch__model">
+        <div className="studio__surface-tag" aria-hidden="true">LIVE MODEL <span>·</span> 3D</div>
         <EditorCanvas
           grid={previewGrid}
           paletteColors={previewColors}

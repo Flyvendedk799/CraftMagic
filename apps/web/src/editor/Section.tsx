@@ -45,6 +45,13 @@ export function Section({ id, title, summary, defaultOpen = true, children }: Se
     setOpen(readOpen(id, defaultOpen));
   }, [id, defaultOpen]);
 
+  useEffect(() => {
+    const node = document.getElementById(`studio-section-${id}`);
+    const openFromWorkbench = () => setOpen(true);
+    node?.addEventListener('studio:open-section', openFromWorkbench);
+    return () => node?.removeEventListener('studio:open-section', openFromWorkbench);
+  }, [id]);
+
   const toggle = useCallback(() => {
     setOpen((wasOpen) => {
       const next = !wasOpen;
@@ -58,7 +65,7 @@ export function Section({ id, title, summary, defaultOpen = true, children }: Se
   }, [id]);
 
   return (
-    <div className={`section ${open ? 'section--open' : ''}`}>
+    <div id={`studio-section-${id}`} className={`section ${open ? 'section--open' : ''}`}>
       <button type="button" className="section__head" onClick={toggle} aria-expanded={open}>
         <span className="section__chevron" aria-hidden="true" />
         <span className="section__title">{title}</span>

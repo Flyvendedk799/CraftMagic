@@ -131,6 +131,12 @@
   border-color: var(--accent);
 }
 
+.world__save-error {
+  max-width: 30ch;
+  color: var(--fail);
+  font-size: var(--text-xs);
+}
+
 @keyframes world-notice-in {
   from {
     opacity: 0;

@@ -7,8 +7,11 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { StudioMode } from './mode.js';
 
 export interface StudioPresence {
+  /** Which mounted editor reported these values; prevents a mode switch showing the old document. */
+  mode: StudioMode | null;
   /** The open project — a world, even when you are inside one building. */
   project: string;
   /** The structure being edited, when zoomed in past the map. */
@@ -30,6 +33,7 @@ export interface StudioPresence {
 }
 
 const EMPTY: StudioPresence = {
+  mode: null,
   project: 'Map',
   structure: null,
   structureRowId: null,
@@ -58,6 +62,10 @@ function isStudioPath(to: string | undefined): boolean {
   }
 }
 
+function leavePrompt(label: string): string {
+  return `Leave Studio with changes to ${label}? Save a named copy if you need to return to this exact version.`;
+}
+
 export function PresenceProvider({ children }: { children: ReactNode }) {
   const [presence, setPresence] = useState<StudioPresence>(EMPTY);
   // Stable across presence updates — otherwise every report rebuilds `api`, re-runs the
@@ -69,9 +77,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
   const confirmLeave = useCallback(
     (to?: string) => {
       if (!presence.dirty || isStudioPath(to)) return true;
-      return window.confirm(
-        `Leave without saving ${presence.dirtyLabel}? Unsaved changes will be lost.`,
-      );
+      return window.confirm(leavePrompt(presence.dirtyLabel));
     },
     [presence.dirty, presence.dirtyLabel],
   );
@@ -110,7 +116,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       if (url.origin !== window.location.origin) return;
       // Staying inside the studio is a zoom, not a departure. The pages flush on the way out.
       if (url.pathname === '/studio') return;
-      const ok = window.confirm(`Leave without saving ${label}? Unsaved changes will be lost.`);
+      const ok = window.confirm(leavePrompt(label));
       if (!ok) {
         event.preventDefault();
         event.stopPropagation();
@@ -120,7 +126,7 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
     // has left the studio — a Back that stays on `/studio` is a zoom.
     const onPopState = () => {
       if (window.location.pathname === '/studio') return;
-      const ok = window.confirm(`Leave without saving ${label}? Unsaved changes will be lost.`);
+      const ok = window.confirm(leavePrompt(label));
       if (!ok) window.history.pushState(null, '', studioHrefRef.current);
     };
     window.addEventListener('beforeunload', onBefore);

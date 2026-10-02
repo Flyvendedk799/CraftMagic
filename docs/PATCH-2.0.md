@@ -1,5 +1,51 @@
 # Patch 2.0 — the editor, Architecture mode and generation engine, taken up a level
 
+## Studio completion pass
+
+- Studio File actions now have one home across all workspaces: **New**, **Open**, **Save**, and
+  **Export** in the workbench bar and Ctrl+K. The active editor registers its own live save and
+  new-document operation, so Ctrl+S invokes the same action as the visible Save control.
+- Files lists account maps and library builds alongside browser floorplans and browser builds,
+  with search, open, rename, and confirmed delete for each. Renaming an open document refreshes
+  its editor; deleting one returns to a clean workspace. A floorplan saved locally can be
+  reopened from Build or World through a durable browser draft link. New Build creates a
+  separate persisted document rather than reopening the shared blank sample and its edits.
+- Named World maps keep `?world=<id>` in the address after opening or saving. Refresh and mode
+  switches retain that identity, while a newer local draft of the same map is preserved.
+- Export in the workbench opens the current editor's output section, including on phones where
+  it first selects the appropriate tools or output pane.
+- Studio now uses a dedicated two-level workbench header: product navigation above, three
+  equally visible workspaces below, with the open document, change state, project Undo/Redo,
+  and command search in the same place across modes. The header is measured so Build's canvas
+  and docks sit below its actual height at every width.
+- Build, Architecture, and World share an opaque dock style, clearer section headings, canvas
+  labels, and a consistent tool/work surface hierarchy. Build opens with the editing tools,
+  Architecture distinguishes the 2D plan from the live 3D model, and World distinguishes
+  terrain tools, the map workspace, and project contents.
+- At tablet and phone widths, each mode opens on its canvas and has direct **Tools**, **Canvas**,
+  and **Output/Contents/3D preview** views. The controls remain available without a long page
+  scroll and the current work surface gets the available viewport.
+- World, Build, and Architecture stay visible in the Studio bar. Switching back restores the
+  last address for that editor, including the selected build or map, instead of opening a blank
+  document. Project undo uses those same clean return addresses.
+- Saving an open library build now updates its row. **Save a copy** is a separate choice. A
+  first save opens the new library identity, and a linked Architecture plan stays linked.
+- Build autosave follows every edit revision, including a replacement that leaves the edit
+  count unchanged, and writes are ordered. Its status reports saving, success, or an error with
+  Retry. Hidden components cannot be saved, exported, or sent as an incomplete build.
+- Save is visible near the top of Build's output controls. World distinguishes **Save map** from
+  **Save view to library**, waits for storage before reporting success, and keeps edits made
+  during the request dirty. A rapid tab switch reads the latest in-memory map while IndexedDB
+  finishes its draft write.
+- Replacing a drawn floorplan or an unsaved map asks first. Deleting a saved map asks first and
+  reports failure. A fresh blank floorplan and map no longer announce unsaved changes.
+
+Verification: TypeScript build, all runnable unit suites, desktop and narrow visual captures
+of all three workspaces, Studio mode navigation, all nine phone view transitions,
+create-save-open-rename-delete of a browser floorplan, separate new Build documents,
+rename-delete of an open build, map refresh, and rapid mode switch browser checks. The
+database-backed server suite still requires `DATABASE_URL`.
+
 This document is the working record of the 2.0 upgrade: what shipped on this branch, and the
 remainder of the approved roadmap for follow-up work.
 

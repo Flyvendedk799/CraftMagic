@@ -31,7 +31,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useReportPresence } from '../studio/presence.js';
-import { openInBuild, libRef, openPlan } from '../studio/handoff.js';
+import { useRegisterWorkbench } from '../studio/workbench.js';
+import { composeMap, openInBuild, libRef, openMap, openPlan } from '../studio/handoff.js';
 import {
   OVERLAY_AIR,
   createWorld,
@@ -99,8 +100,11 @@ export function WorldPage() {
   );
   const session = useWorldSession(undefined, store);
   const { doc } = session;
+  const mapHasSavedRow = session.saved.some((entry) => entry.id === doc.id);
+  const canSaveMap = session.dirty || !mapHasSavedRow;
   const navigate = useNavigate();
   useReportPresence({
+    mode: 'world',
     project: doc.name || 'Map',
     structure: null,
     structureRowId: null,
@@ -136,6 +140,24 @@ export function WorldPage() {
   const [showRegions, setShowRegions] = useState(true);
   const [showPreview, setShowPreview] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const worldOpenEpoch = useRef(0);
+  const saveMap = useCallback(async () => {
+    const ok = await session.save();
+    setNotice(ok ? 'Map saved.' : 'Could not save map. Please try again.');
+  }, [session]);
+  const newWorld = useCallback(() => {
+    if (session.dirty && !window.confirm('Start a new map? Unsaved changes in this map will be replaced.')) return;
+    worldOpenEpoch.current++;
+    session.open(createWorld());
+    navigate(composeMap(), { replace: true });
+  }, [session, navigate]);
+  useRegisterWorkbench('world', {
+    saveLabel: 'Save map',
+    save: saveMap,
+    canSave: !session.loading && !session.saving && canSaveMap,
+    saveHint: 'Save this named map to your account, or to this browser while signed out.',
+    create: newWorld,
+  });
   const [help, setHelp] = useState(false);
   const [sending, setSending] = useState(false);
   /**
@@ -264,9 +286,9 @@ export function WorldPage() {
   /**
    * The two ways in from elsewhere: `?world=<id>` opens a named map, `?place=<row>` arms a
    * saved build in the Place tool. Both are how the dashboard, the library and the other two
-   * modes hand work to this one — see `studio/handoff.ts` — and both are consumed once and
-   * dropped from the address bar, so a reload keeps whatever was done since rather than
-   * re-opening the map over it.
+   * modes hand work to this one — see `studio/handoff.ts`. A named map stays in the address
+   * bar so a refresh and a copied link reopen the same document; the local draft is preferred
+   * when it is already that map and may contain newer edits.
    */
   const [searchParams, setSearchParams] = useSearchParams();
   const worldParam = searchParams.get('world');
@@ -321,10 +343,11 @@ export function WorldPage() {
     // Not before the draft has been read: `useWorldSession` assigns the stored draft over the
     // live document when it lands, and a map opened a moment earlier would be overwritten.
     // Not before auth has settled either, or the store is the wrong one.
-    if (!worldParam || session.loading || auth.status === 'loading') return;
+    if (!worldParam || session.loading || auth.status === 'loading' || doc.id === worldParam) return;
     let live = true;
+    const epoch = ++worldOpenEpoch.current;
     void store.load(worldParam).then((opened) => {
-      if (!live) return;
+      if (!live || epoch !== worldOpenEpoch.current) return;
       if (opened) {
         session.open(opened);
         setNotice(`Opened “${opened.name}”.`);
@@ -335,7 +358,6 @@ export function WorldPage() {
             : 'That map is on an account. Sign in to open it; the draft in this browser is shown instead.',
         );
       }
-      dropParam('world');
     });
     return () => {
       live = false;
@@ -343,7 +365,17 @@ export function WorldPage() {
     // `session` is memoised on every change; only the id, the store and the loading flag decide
     // whether an open is due.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [worldParam, store, session.loading, auth.status]);
+  }, [worldParam, store, session.loading, auth.status, doc.id]);
+
+  // A first save may mint a server id. Give that named map a durable address immediately;
+  // the open effect above sees it is already on screen and does not reload over live edits.
+  useEffect(() => {
+    if (session.loading || !mapHasSavedRow || worldParam || !doc.id) return;
+    setSearchParams((params) => {
+      params.set('world', doc.id);
+      return params;
+    }, { replace: true });
+  }, [session.loading, mapHasSavedRow, worldParam, doc.id, setSearchParams]);
 
   useEffect(() => {
     if (!placeParam) return;
@@ -434,9 +466,8 @@ export function WorldPage() {
       if (lower === 's') {
         // Without this the browser offers to save the page as HTML.
         event.preventDefault();
-        if (session.dirty) {
-          session.save();
-          setNotice('Saved.');
+        if (canSaveMap) {
+          void saveMap();
         } else {
           setNotice('Nothing to save — every change is already kept.');
         }
@@ -883,6 +914,7 @@ export function WorldPage() {
       data-history={session.historyDepth}
       data-revision={session.revision}
       data-draft={session.draftRevision}
+      data-dirty={session.dirty}
       data-tool={tool}
       data-view={areaLabel(view)}
       data-view-regions={inViewCount}
@@ -900,6 +932,7 @@ export function WorldPage() {
             other surface in the studio puts its controls on a panel. */}
         <aside className="world__dock world__dock--left">
           <header className="world__dock-head">
+            <span className="studio__eyebrow">WORLD / TOOLS</span>
             <h1 className="ui-dock__title">World</h1>
             <p className="ui-dock__sub">Sculpt the ground, then place what you have built</p>
           </header>
@@ -920,6 +953,7 @@ export function WorldPage() {
         </aside>
 
         <main className="world__stage">
+          <div className="studio__stage-title"><span className="studio__eyebrow">WORLD / CANVAS</span><strong>Map workspace</strong></div>
           {/* The stage's own strip of chrome. One `ui-bar` group rather than five loose
               controls wearing whatever the global button rule gave them: history, then what
               the map draws, then what the 3D view is following. The notice is a chip beside
@@ -951,15 +985,12 @@ export function WorldPage() {
                   shelf and the placed list. It is the one verb every session ends on. */}
               <button
                 type="button"
-                className={`ui-btn ${session.dirty ? 'ui-btn--primary' : ''}`}
-                onClick={() => {
-                  session.save();
-                  setNotice('Saved.');
-                }}
-                disabled={!session.dirty}
-                title={session.dirty ? 'Save this map  (Ctrl+S)' : 'No changes since the last save'}
+                className={`ui-btn ${canSaveMap ? 'ui-btn--primary' : ''}`}
+                onClick={() => void saveMap()}
+                disabled={!canSaveMap || session.saving}
+                title={canSaveMap ? 'Save this map  (Ctrl+S)' : 'No changes since the last save'}
               >
-                {session.dirty ? 'Save' : 'Saved'}
+                {session.saving ? 'Saving map…' : canSaveMap ? 'Save map' : 'Map saved'}
               </button>
               <span className="ui-bar__sep" aria-hidden="true" />
               <label className="ui-check" title="Draw the region grid the map ships in">
@@ -996,6 +1027,7 @@ export function WorldPage() {
                 {notice}
               </button>
             )}
+            {session.saveError && <span className="world__save-error" role="alert">{session.saveError}</span>}
 
             <span className="world__stage-spacer" />
             <span className="world__stage-size" title="Map extent, in blocks">
@@ -1089,6 +1121,7 @@ export function WorldPage() {
 
         <aside className="world__dock world__dock--right">
           <header className="world__dock-head">
+            <span className="studio__eyebrow">WORLD / PROJECT</span>
             <h2 className="ui-dock__title">Contents</h2>
             <p className="ui-dock__sub">What stands on the map, and how it reaches the game</p>
           </header>
@@ -1160,12 +1193,22 @@ export function WorldPage() {
             onResize={resize}
             onSettings={patchSettings}
             onOpen={(id) => {
-              void store.load(id).then((opened) => {
-                if (opened) session.open(opened);
+              if (session.dirty && !window.confirm('Open another map? Unsaved changes in this map will be replaced.')) return;
+              worldOpenEpoch.current++;
+              navigate(openMap(id));
+            }}
+            onRemove={(id) => {
+              if (!window.confirm('Delete this saved map? This cannot be undone.')) return;
+              void session.remove(id).then((ok) => {
+                if (ok && doc.id === id) {
+                  worldOpenEpoch.current++;
+                  session.open(createWorld());
+                  navigate(composeMap(), { replace: true });
+                }
+                setNotice(ok ? 'Map deleted.' : 'Could not delete that map.');
               });
             }}
-            onRemove={session.remove}
-            onNew={() => session.open(createWorld())}
+            onNew={newWorld}
             onFrameRegion={(rx, rz) => showRegion(rx, rz)}
             onSendRegion={(region) => {
               // Named exactly, not framed with whatever span is in use: a send is about one

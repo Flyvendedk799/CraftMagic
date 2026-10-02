@@ -96,7 +96,7 @@ try {
 			await send('Page.captureScreenshot', { format: 'jpeg', quality: 1 });
 			await sleep(200);
 		}
-		throw new Error(`timed out waiting for ${label}`);
+		throw new Error(`timed out waiting for ${label}; URL=${await evaluate('location.href')}; ready=${await evaluate('document.readyState')}; body=${String(await evaluate('document.body?.innerText?.slice(0, 200)'))}; pressed=${await pressed()}; errors=${pageErrors.join(' | ')}`);
 	};
 
 	await send('Page.enable');
@@ -104,7 +104,7 @@ try {
 
 	const PRESSED =
 		"[...document.querySelectorAll('.studio__switch button')]" +
-		".find((b) => b.getAttribute('aria-pressed') === 'true')?.textContent?.trim() ?? null";
+		".find((b) => b.getAttribute('aria-pressed') === 'true')?.querySelector('strong')?.textContent?.trim() ?? null";
 	const pressed = () => evaluate(PRESSED);
 
 	const go = async (url, ready, label) => {
@@ -116,7 +116,7 @@ try {
 	const clickPill = (label) =>
 		evaluate(
 			`(() => { const b = [...document.querySelectorAll('.studio__switch button')]` +
-				`.find((x) => x.textContent.trim() === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`,
+				`.find((x) => x.querySelector('strong')?.textContent.trim() === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`,
 		);
 
 	// --- the three modes mount ----------------------------------------------------------
@@ -131,7 +131,7 @@ try {
 	check('?mode=arch mounts Architecture', (await pressed()) === 'Architecture');
 	check(
 		'and it is titled Architecture, not Layouter',
-		(await evaluate("document.querySelector('.arch .hud__title')?.textContent")) === 'Architecture',
+		(await evaluate("document.querySelector('.arch .ui-dock__title')?.textContent")) === 'Architecture',
 	);
 
 	await go(`${ORIGIN}/studio?mode=world`, "!!document.querySelector('.world')", 'World');
@@ -166,6 +166,18 @@ try {
 		!String(await evaluate('location.search')).includes('mode='),
 		String(await evaluate('location.search')),
 	);
+	check(
+		'returning from World reopens the build that was being edited',
+		String(await evaluate('location.search')).includes('build=tower'),
+		String(await evaluate('location.search')),
+	);
+	await clickPill('World');
+	await waitFor("!!document.querySelector('.world')", 'World before refresh');
+	await send('Page.reload');
+	await waitFor("!!document.querySelector('.world')", 'World after refresh');
+	await clickPill('Build');
+	await waitFor("!!document.querySelector('.editor')", 'Build after refresh');
+	check('a refresh keeps the open build in Studio', String(await evaluate('location.search')).includes('build=tower'));
 
 	// --- the palette -------------------------------------------------------------------------
 	await evaluate(
@@ -182,6 +194,92 @@ try {
 		Array.isArray(offered) && offered.length === 2,
 		Array.isArray(offered) ? offered.join(' / ') : String(offered),
 	);
+
+	// A named browser plan can be made, saved, found from another workspace, and reopened.
+	await go(`${ORIGIN}/studio?mode=arch`, "!!document.querySelector('.arch__templates')", 'Architecture files');
+	await evaluate("[...document.querySelectorAll('.arch__templates button')].find((b) => b.textContent.trim() === 'Studio')?.click()");
+	await waitFor("!document.querySelector('.arch__plan-empty')", 'the template plan');
+	await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }))");
+	await waitFor("!!localStorage.getItem('craftmagic.architecture.plans')", 'Ctrl+S saved a named floorplan');
+	await clickPill('Build');
+	await waitFor("!!document.querySelector('.editor')", 'Build after plan save');
+	await evaluate("localStorage.removeItem('craftmagic.architecture.autosave')");
+	await evaluate("[...document.querySelectorAll('.studio__file-action')].find((b) => b.textContent.trim() === 'Open')?.click()");
+	await waitFor("!!document.querySelector('.studio-files__panel')", 'the file manager');
+	await waitFor("[...document.querySelectorAll('.studio-files__group')].some((g) => g.querySelector('h3')?.textContent?.includes('Browser floorplans') && g.querySelector('.studio-files__row'))", 'the saved floorplan in Open');
+	fs.writeFileSync('out/verify-studio-files.png', Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+	check('Open shows browser floorplans from another workspace', (await evaluate("[...document.querySelectorAll('.studio-files__group')].some((g) => g.querySelector('h3')?.textContent?.includes('Browser floorplans') && g.querySelector('.studio-files__row'))")) === true);
+	await evaluate("window.prompt = () => 'Studio file workflow'; [...document.querySelectorAll('.studio-files__group')].find((g) => g.querySelector('h3')?.textContent?.includes('Browser floorplans'))?.querySelector('.studio-files__manage button:first-child')?.click()");
+	await waitFor("[...document.querySelectorAll('.studio-files__group')].find((g) => g.querySelector('h3')?.textContent?.includes('Browser floorplans'))?.textContent?.includes('Studio file workflow')", 'renamed floorplan in Files');
+	check('Files renames browser floorplans', (await evaluate("[...document.querySelectorAll('.studio-files__group')].find((g) => g.querySelector('h3')?.textContent?.includes('Browser floorplans'))?.textContent?.includes('Studio file workflow')")) === true);
+	await evaluate("[...document.querySelectorAll('.studio-files__group')].find((g) => g.querySelector('h3')?.textContent?.includes('Browser floorplans'))?.querySelector('.studio-files__row')?.click()");
+	await waitFor("location.search.includes('plan=local:') && !!document.querySelector('.arch')", 'the saved browser floorplan');
+	await waitFor("!document.querySelector('.arch__plan-empty')", 'the reopened floorplan drawing');
+	check('Open restores the plan drawing', (await evaluate("!document.querySelector('.arch__plan-empty')")) === true);
+	await waitFor("document.querySelector('.studio__document-state')?.textContent?.includes('Ready to work')", 'the saved plan state');
+	check('opening a saved floorplan is clean', (await evaluate("document.querySelector('.studio__document-state')?.textContent?.includes('Ready to work')")) === true);
+	await evaluate("window.confirm = () => true; [...document.querySelectorAll('.studio__file-action')].find((b) => b.textContent.trim() === 'Open')?.click()");
+	await waitFor("!!document.querySelector('.studio-files__panel')", 'Files before floorplan delete');
+	await evaluate("[...document.querySelectorAll('.studio-files__group')].find((g) => g.querySelector('h3')?.textContent?.includes('Browser floorplans'))?.querySelector('.studio-files__manage button:last-child')?.click()");
+	await waitFor("!location.search.includes('plan=local:')", 'blank floorplan after delete');
+	check('deleting the open floorplan returns to a new plan', (await evaluate("!location.search.includes('plan=local:') && !!document.querySelector('.arch')")) === true);
+	await evaluate("document.querySelector('.studio-files__close')?.click()");
+	await clickPill('Build');
+	await waitFor("!!document.querySelector('.editor')", 'Build before New');
+	const newBuild = () => evaluate("[...document.querySelectorAll('.studio__file-action')].find((b) => b.textContent.trim() === 'New')?.click()");
+	await newBuild();
+	await waitFor("new URLSearchParams(location.search).get('build')?.startsWith('gen:')", 'a new build document');
+	const firstDraft = await evaluate("new URLSearchParams(location.search).get('build')");
+	await newBuild();
+	await waitFor(`new URLSearchParams(location.search).get('build') !== ${JSON.stringify(firstDraft)}`, 'a second new build document');
+	check('New creates separate build documents', firstDraft !== await evaluate("new URLSearchParams(location.search).get('build')"));
+	await evaluate("[...document.querySelectorAll('.studio__file-action')].find((b) => b.textContent.trim() === 'Open')?.click()");
+	await waitFor("!!document.querySelector('.studio-files__panel')", 'Files for browser builds');
+	await evaluate("window.prompt = () => 'My working build'; [...document.querySelectorAll('.studio-files__group')].find((g) => g.querySelector('h3')?.textContent?.includes('Browser builds'))?.querySelector('.studio-files__row-wrap:last-child .studio-files__manage button:first-child')?.click()");
+	await waitFor("document.querySelector('.studio__document')?.textContent?.includes('My working build')", 'renamed open build');
+	check('renaming an open build refreshes its editor', (await evaluate("document.querySelector('.studio__document')?.textContent?.includes('My working build')")) === true);
+	await evaluate("[...document.querySelectorAll('.studio-files__group')].find((g) => g.querySelector('h3')?.textContent?.includes('Browser builds'))?.querySelector('.studio-files__row-wrap:last-child .studio-files__manage button:last-child')?.click()");
+	await waitFor("!new URLSearchParams(location.search).has('build')", 'blank Build after deleting open build');
+	check('deleting an open build returns to Build', (await evaluate("!!document.querySelector('.editor') && !new URLSearchParams(location.search).has('build')")) === true);
+	await evaluate("document.querySelector('.studio-files__close')?.click()");
+
+	// On a phone the canvas gets the viewport; every mode has a direct route back to its tools
+	// and its project/output panel without scrolling through the whole editor.
+	await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+	const mobileCheck = async (modeUrl, selector, panes) => {
+		await go(`${ORIGIN}${modeUrl}`, `!!document.querySelector('${selector}')`, modeUrl);
+		for (const [label, visible, hidden] of panes) {
+			await evaluate(`(() => { [...document.querySelectorAll('.studio__pane-switch button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)})?.click(); return true; })()`);
+			const state = await evaluate(`(() => {
+				const shown = document.querySelector(${JSON.stringify(visible)});
+				const gone = document.querySelector(${JSON.stringify(hidden)});
+				return !!shown && !!gone && getComputedStyle(shown).display !== 'none' && getComputedStyle(gone).display === 'none';
+			})()`);
+			check(`${modeUrl} phone ${label} view`, state);
+		}
+	};
+	await mobileCheck('/studio', '.editor', [
+		['Tools', '.hud--top', '.editor__canvas'],
+		['Create & export', '.hud-right', '.editor__canvas'],
+		['Canvas', '.editor__canvas', '.hud--top'],
+	]);
+	await evaluate("[...document.querySelectorAll('.studio__file-action')].find((b) => b.textContent.trim() === 'Export')?.click()");
+	await waitFor("document.querySelector('.studio')?.dataset.pane === 'project' && document.querySelector('#studio-section-export')?.classList.contains('section--open')", 'Build output from the common Export action');
+	check('common Export opens Build output on a phone', (await evaluate("document.querySelector('.studio')?.dataset.pane === 'project'")) === true);
+	await mobileCheck('/studio?mode=arch', '.arch', [
+		['Tools', '.arch__panel', '.arch__plan'],
+		['3D preview', '.arch__model', '.arch__plan'],
+		['Plan', '.arch__plan', '.arch__panel'],
+	]);
+	await evaluate("[...document.querySelectorAll('.studio__file-action')].find((b) => b.textContent.trim() === 'Export')?.click()");
+	await waitFor("document.querySelector('.studio')?.dataset.pane === 'tools' && document.querySelector('#studio-section-export')?.classList.contains('section--open')", 'Architecture output from the common Export action');
+	check('common Export opens Architecture output on a phone', (await evaluate("document.querySelector('.studio')?.dataset.pane === 'tools'")) === true);
+	await mobileCheck('/studio?mode=world', '.world', [
+		['Tools', '.world__dock--left', '.world__stage'],
+		['Contents', '.world__dock--right', '.world__stage'],
+		['Canvas', '.world__stage', '.world__dock--left'],
+	]);
+	check('phone header fits the viewport', (await evaluate('document.documentElement.scrollWidth <= innerWidth + 1')) === true);
 
 	check('no uncaught errors', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 

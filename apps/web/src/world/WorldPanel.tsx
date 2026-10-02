@@ -79,6 +79,7 @@ const BLOCKS_PER_SECOND = 800;
 
 export function WorldPanel(props: WorldPanelProps) {
   const { doc, saved, dirty } = props;
+  const hasSavedRow = saved.some((entry) => entry.id === doc.id);
   const { settings } = doc;
   const [draftX, setDraftX] = useState(String(settings.size.x));
   const [draftZ, setDraftZ] = useState(String(settings.size.z));
@@ -124,7 +125,7 @@ export function WorldPanel(props: WorldPanelProps) {
             this section keeps the map's identity — its name, its siblings, a fresh one. */}
         <div className="world__row world__row--actions">
           <span className="world__hint world__savestate" data-dirty={dirty ? 'true' : undefined}>
-            {dirty ? 'Unsaved changes — Ctrl+S' : 'All changes saved'}
+            {dirty ? 'Unsaved changes — Ctrl+S' : hasSavedRow ? 'All changes saved' : 'New map — Ctrl+S to save'}
           </span>
           <button type="button" className="ui-btn" onClick={props.onNew} title="Start an empty map">
             New map

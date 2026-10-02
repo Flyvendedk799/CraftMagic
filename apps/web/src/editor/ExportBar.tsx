@@ -112,6 +112,24 @@ export function ExportBar({
 
   return (
     <div className="export">
+      {!empty && (
+        <Section id="save-library-v2" title={scopeNote ? 'Save view to library' : 'Save to library'} summary={libraryRowId ? 'current build' : undefined}>
+          {scopeNote && <p className="export__note export__note--scope">{scopeNote}</p>}
+          <SaveToLibrary
+            name={name}
+            grid={grid}
+            program={program}
+            detached={detached}
+            getEdits={getEdits}
+            plan={plan}
+            kind={kind}
+            libraryRowId={libraryRowId ?? null}
+            onSaved={onSaved}
+            generationId={generationId ?? null}
+          />
+          {afterSave}
+        </Section>
+      )}
       <Section id="export" title="Export" defaultOpen={false}>
 
       {scopeNote && <p className="export__note export__note--scope">{scopeNote}</p>}
@@ -178,24 +196,7 @@ export function ExportBar({
           send is a bot that flies out and places nothing. */}
       {!empty && (
         <>
-          <Section id="save" title="Save" defaultOpen={false}>
-            <SaveToLibrary
-              name={name}
-              grid={grid}
-              program={program}
-              detached={detached}
-              getEdits={getEdits}
-              plan={plan}
-              kind={kind}
-              libraryRowId={libraryRowId ?? null}
-              onSaved={onSaved}
-              generationId={generationId ?? null}
-            />
-            {afterSave}
-          </Section>
-          {/* Open by default: this is the headline feature and it used to sit below the fold,
-              where nobody found it. */}
-          <Section id="sendtogame" title={sendTitle}>
+          <Section id="sendtogame" title={sendTitle} defaultOpen={false}>
             {scopeNote && <p className="export__note export__note--scope">{scopeNote}</p>}
             <SendToGame name={name} grid={grid} program={program} detached={detached} getEdits={getEdits} />
           </Section>

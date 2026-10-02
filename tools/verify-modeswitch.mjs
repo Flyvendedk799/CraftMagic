@@ -110,7 +110,7 @@ try {
 	const toMode = async (label, ready) => {
 		const clicked = await evaluate(
 			`(() => { const b = [...document.querySelectorAll('.studio__switch button')]` +
-				`.find((x) => x.textContent.trim() === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`,
+				`.find((x) => x.querySelector('strong')?.textContent.trim() === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`,
 		);
 		if (!clicked) throw new Error(`no mode pill labelled ${label}`);
 		await waitFor(ready, `${label} to mount`);
@@ -183,6 +183,17 @@ try {
 		(await groundAt()) === raised,
 		`${await groundAt()} vs ${raised}`,
 	);
+
+	await evaluate("[...document.querySelectorAll('.world__stage-bar button')].find((b) => b.textContent.trim() === 'Save map')?.click()");
+	await waitFor("document.querySelector('.world')?.dataset.dirty === 'false'", 'the map save to finish');
+	check('saving the map clears its unsaved state', (await evaluate("document.querySelector('.world')?.dataset.dirty")) === 'false');
+	await waitFor("[...document.querySelectorAll('.world__stage-bar button')].some((b) => b.textContent.trim() === 'Map saved')", 'the saved map state');
+	await waitFor("new URLSearchParams(location.search).has('world')", 'the named map address');
+	check('a saved map keeps a shareable document address', (await evaluate("new URLSearchParams(location.search).has('world')")) === true);
+	await send('Page.reload');
+	await waitFor("!!document.querySelector('.worldmap')", 'the saved map after refresh');
+	await sleep(900);
+	check('refresh reopens the same saved map', (await groundAt()) === raised, `${await groundAt()} vs ${raised}`);
 
 	// --- Architecture: draw a room, switch away instantly, come back --------------------------
 	await toMode('Architecture', "!!document.querySelector('.arch')");

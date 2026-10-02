@@ -21,8 +21,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useReportPresence } from '../studio/presence.js';
+import { useRegisterWorkbench } from '../studio/workbench.js';
 import { redoProject, undoProject } from '../studio/journal.js';
 import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { notifyLibraryRow } from '../studio/libraryEvents.js';
@@ -57,6 +58,7 @@ import {
   programScale,
   NO_SCALE,
   type ScalePercent,
+  registerBlankBuild,
   registerGeneratedBuild,
   registerImportedBuild,
 } from './builds.js';
@@ -105,7 +107,7 @@ import { useGeneration, type GenerationResult } from '../generate/useGeneration.
 import { AccountPanel } from '../library/AccountPanel.js';
 import { useAuth } from '../library/auth.js';
 import { AppNav } from '../shell/AppNav.js';
-import { placeOnMap } from '../studio/handoff.js';
+import { openInBuild, placeOnMap } from '../studio/handoff.js';
 import type { VoxelHit } from './raycast.js';
 import { isTextEntry } from '../studio/undoKeys.js';
 import './editor.css';
@@ -161,6 +163,7 @@ type PendingNav =
   | { kind: 'style'; style: string | null };
 
 export function EditorPage() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [hover, setHover] = useState<VoxelHit | null>(null);
   // -1 until the first frame reports, so `data-remaining="0"` unambiguously means "meshed".
@@ -303,67 +306,85 @@ export function EditorPage() {
   }, []);
 
   const { grid, name } = build;
-  useReportPresence({
-    structure: name,
-    structureRowId: libraryRowId(build.id),
-    hasPlan: fetching.hasPlan,
-    plan: false,
-    dirty: session.edits > 0,
-    dirtyLabel: 'this building',
-  });
-
   // A library build is the structure a placement points at. Writing the edited voxels
   // back to that row is what makes a wall change show up on the map, instead of a copy.
-  // Also write when edits return to zero — otherwise undoing the last hand edit leaves the
-  // library (and map placements) showing blocks that are no longer in the editor.
-  const lastWrittenEdits = useRef<number | null>(null);
+  // Revision is included because changing one already-edited cell does not change the size of
+  // the edit layer. URL shape and style settings also count as a change to the saved build.
+  const syncVersion = `${build.id}|${overrideKey}|${scaleKey}|${styleId ?? ''}|${session.revision}`;
+  const lastSeenBuild = useRef<string | null>(null);
+  const lastSavedVersion = useRef<string | null>(null);
+  const queuedVersion = useRef<string | null>(null);
+  const writeChain = useRef<Promise<void>>(Promise.resolve());
+  const latestVersion = useRef(syncVersion);
+  latestVersion.current = syncVersion;
+  const [librarySync, setLibrarySync] = useState<{ kind: 'idle' | 'saving' | 'saved' | 'error'; message?: string }>({ kind: 'idle' });
   const exportEdits = session.exportEdits;
   const editCount = session.edits;
   const writeLibraryRow = useCallback(() => {
-    if (!build.id.startsWith('lib:')) return;
+    if (!build.id.startsWith('lib:') || hiddenPaths.length > 0) return;
+    if (lastSavedVersion.current === syncVersion || queuedVersion.current === syncVersion) return;
     const row = build.id.slice(4);
-    lastWrittenEdits.current = editCount;
-    void saveToLibrary({
-      id: row,
-      name,
-      grid,
-      program: build.program,
-      detached: editCount > 0,
-      edits: exportEdits(),
-      keepPlan: true,
-      keepKind: true,
-    })
-      .then(() => notifyLibraryRow(row))
-      .catch(() => undefined);
-  }, [build.id, build.program, grid, name, exportEdits, editCount]);
+    queuedVersion.current = syncVersion;
+    setLibrarySync({ kind: 'saving' });
+    writeChain.current = writeChain.current.then(async () => {
+      // A newer edit can replace an older queued write before it has started. Writes already
+      // in flight finish in order, so a late network response cannot restore stale voxels.
+      if (latestVersion.current !== syncVersion) return;
+      await saveToLibrary({
+        id: row,
+        name,
+        grid,
+        program: build.program,
+        detached: editCount > 0,
+        edits: exportEdits(),
+        keepPlan: true,
+        keepKind: true,
+      });
+      lastSavedVersion.current = syncVersion;
+      notifyLibraryRow(row);
+      if (latestVersion.current === syncVersion) setLibrarySync({ kind: 'saved' });
+    }).catch((error: unknown) => {
+      if (latestVersion.current === syncVersion) setLibrarySync({ kind: 'error', message: (error as Error).message });
+    }).finally(() => {
+      if (queuedVersion.current === syncVersion) queuedVersion.current = null;
+    });
+  }, [build.id, build.program, grid, name, exportEdits, editCount, hiddenPaths.length, syncVersion]);
 
   useEffect(() => {
-    if (!build.id.startsWith('lib:')) return;
-    // Skip the initial mount when there is nothing to push — avoid a needless write of an
-    // untouched row. Once we have written (or the user has edited), every change including
-    // clearing edits must land.
-    if (lastWrittenEdits.current === null && editCount === 0) {
-      lastWrittenEdits.current = 0;
+    if (!build.id.startsWith('lib:') || hiddenPaths.length > 0) return;
+    if (lastSeenBuild.current !== build.id) {
+      lastSeenBuild.current = build.id;
+      lastSavedVersion.current = syncVersion;
+      setLibrarySync({ kind: 'idle' });
       return;
     }
-    if (lastWrittenEdits.current === editCount) return;
+    if (lastSavedVersion.current === syncVersion) return;
     const timer = setTimeout(writeLibraryRow, 800);
     return () => clearTimeout(timer);
-  }, [editCount, build.id, writeLibraryRow]);
+  }, [build.id, syncVersion, writeLibraryRow, hiddenPaths.length]);
 
   // Flush on the way out — leaving within the debounce window used to cancel the write.
   const writeLibraryRef = useRef(writeLibraryRow);
   writeLibraryRef.current = writeLibraryRow;
-  const editsRef = useRef(editCount);
-  editsRef.current = editCount;
   useEffect(() => {
     const id = build.id;
     return () => {
-      if (!id.startsWith('lib:')) return;
-      if (lastWrittenEdits.current === editsRef.current) return;
+      if (!id.startsWith('lib:') || hiddenPaths.length > 0) return;
       writeLibraryRef.current();
     };
-  }, [build.id]);
+  }, [build.id, hiddenPaths.length]);
+
+  useReportPresence({
+    mode: 'build',
+    structure: name,
+    structureRowId: libraryRowId(build.id),
+    hasPlan: fetching.hasPlan,
+    plan: false,
+    dirty: build.id.startsWith('lib:')
+      ? lastSavedVersion.current !== syncVersion
+      : session.edits > 0,
+    dirtyLabel: 'this building',
+  });
 
   const scalePreview = useMemo(() => previewScale(buildId, scale), [buildId, scale]);
   const scaleBase = useMemo(() => baseSize(buildId), [buildId]);
@@ -1014,10 +1035,15 @@ export function EditorPage() {
         });
         setNotice('Selected the whole build. Esc lets go.');
       } else if (key === 's') {
-        // A library save makes a new copy each time, so the key does not fire one blind — but
-        // it must not hand the page to the browser's "save as HTML" either.
         event.preventDefault();
-        setNotice('Save to library is under Save on the right — each save keeps a copy.');
+        if (build.id.startsWith('lib:')) {
+          writeLibraryRow();
+          setNotice(hiddenPaths.length > 0
+            ? 'Show all components before saving the complete build.'
+            : 'Saving changes to this library build.');
+        } else {
+          setNotice('Use Save to library on the right to keep this build.');
+        }
       }
       return;
     }
@@ -1306,6 +1332,41 @@ export function EditorPage() {
   // only so the dozen call sites did not all need rewriting for a behavioural no-op.
   const guard = useCallback((nav: PendingNav) => applyNav(nav, update), [update]);
 
+  useRegisterWorkbench('build', {
+    saveLabel: libraryRowId(build.id) ? 'Save build' : 'Save to library',
+    canSave: auth.status === 'signedIn' && session.blockCount > 0 && hiddenPaths.length === 0 && !fetching.loading,
+    saveHint: hiddenPaths.length > 0
+      ? 'Show every component before saving the complete build.'
+      : auth.status !== 'signedIn'
+        ? 'Sign in to save this build to your library.'
+        : 'Save the build and its hand edits to your library.',
+    save: async () => {
+      if (hiddenPaths.length > 0) { setNotice('Show all components before saving the complete build.'); return; }
+      if (session.blockCount === 0) { setNotice('Place blocks or generate a build before saving.'); return; }
+      if (auth.status !== 'signedIn') { setNotice('Sign in to save this build to your library.'); return; }
+      if (libraryRowId(build.id)) { writeLibraryRow(); return; }
+      setLibrarySync({ kind: 'saving' });
+      try {
+        const saved = await saveToLibrary({
+          name, grid, program: build.program, detached: session.detached,
+          edits: session.exportEdits(),
+          generationId: generated && buildId === generated.id ? generated.result.generationId : null,
+        });
+        notifyLibraryRow(saved.id);
+        navigate(openInBuild(`lib:${saved.id}`));
+      } catch (error) {
+        setLibrarySync({ kind: 'error', message: (error as Error).message });
+      }
+    },
+    create: () => {
+      if (session.edits > 0 && !libraryRowId(build.id) &&
+        !window.confirm('Start a new build? Save this one to your library first if you want to keep it.')) return;
+      const id = registerBlankBuild();
+      setSaved(generatedBuilds());
+      guard({ kind: 'build', build: id });
+    },
+  });
+
   const meshed = totalChunks === 0 ? 1 : 1 - remaining / totalChunks;
   const issues = [...build.errors, ...build.warnings];
   // "Air" would be true and useless. A ground hit is the floor, and saying so is what tells
@@ -1355,6 +1416,7 @@ export function EditorPage() {
       <AppNav current="editor" />
 
       <div className="editor__canvas">
+        <div className="studio__surface-tag" aria-hidden="true">BUILD SPACE <span>·</span> 3D</div>
         <EditorCanvas
           // Precedence: the streaming ghost while the model emits, then the opening reveal,
           // then the build itself. The ghost swaps grids at preview cadence; when the real
@@ -1394,7 +1456,11 @@ export function EditorPage() {
             generation, every mural, every import — above the tools. Choosing a build happens
             once a session; the tools are used every second, and each new generation pushed
             them further under the fold. `BuildMenu` says what is open and holds the rest. */}
-        <h1 className="hud__title hud__title--sr">Voxel editor</h1>
+        <header className="studio__dock-intro">
+          <span className="studio__eyebrow">BUILD / TOOLS</span>
+          <h1>Shape the structure</h1>
+          <p>Choose a tool, then work directly on the model.</p>
+        </header>
         <BuildMenu
           current={buildId}
           currentName={buildName}
@@ -1668,7 +1734,24 @@ export function EditorPage() {
           )}
 
         <section className="hud">
-        <ExportBar
+        {build.id.startsWith('lib:') && librarySync.kind !== 'idle' &&
+          (librarySync.kind !== 'saved' || lastSavedVersion.current === syncVersion) && (
+          <p className={`export__sync export__sync--${librarySync.kind}`} role="status">
+            {librarySync.kind === 'saving' && 'Saving changes to this library build…'}
+            {librarySync.kind === 'saved' && 'Changes saved to this library build.'}
+            {librarySync.kind === 'error' && (
+              <>Could not save changes: {librarySync.message ?? 'Unknown error.'}{' '}
+                <button type="button" onClick={writeLibraryRow}>Retry</button>
+              </>
+            )}
+          </p>
+        )}
+        {hiddenPaths.length > 0 ? (
+          <div className="export__hidden-note" role="status">
+            <p>Some components are hidden in the preview. Show them before saving, exporting, or sending the complete build.</p>
+            <button type="button" onClick={onPartsShowAll}>Show all components</button>
+          </div>
+        ) : <ExportBar
           grid={grid}
           program={build.program}
           name={name}
@@ -1680,6 +1763,9 @@ export function EditorPage() {
           // generation it came out of, so a save can link the two and a "Place on map" can
           // carry an id that still resolves tomorrow.
           libraryRowId={libraryRowId(buildId)}
+          onSaved={(id) => {
+            if (libraryRowId(buildId) !== id) navigate(openInBuild(`lib:${id}`));
+          }}
           generationId={generated && buildId === generated.id ? generated.result.generationId : null}
           afterSave={
             libraryRowId(buildId) ? (
@@ -1691,7 +1777,7 @@ export function EditorPage() {
               </p>
             ) : null
           }
-        />
+        />}
         </section>
 
         <section className="hud">

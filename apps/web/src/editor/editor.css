@@ -233,6 +233,42 @@
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
 }
 
+.export__sync,
+.export__hidden-note {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.export__sync--error {
+  border-color: var(--fail);
+  color: var(--text);
+}
+
+.export__sync--saved {
+  border-color: var(--accent);
+}
+
+.export__sync button,
+.export__hidden-note button {
+  margin-left: 0.35rem;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.export__hidden-note p {
+  margin: 0 0 0.4rem;
+}
+
 /* Secondary by default. The layer bar is a view control: nothing in it is the thing to do
    next, so `aria-pressed` is the only state that earns the accent. */
 .hud--layers button {

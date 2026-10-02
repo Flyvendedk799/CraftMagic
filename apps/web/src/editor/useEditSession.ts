@@ -51,6 +51,8 @@ export interface EditSession {
   blockCount: number;
   /** Hand-edited cells currently in the overlay — not an op count. */
   edits: number;
+  /** Advances for every edit, including replacements that leave the edit count unchanged. */
+  revision: number;
   /** Edits whose coordinates fall outside the current size. Shown, never dropped. */
   outside: number;
   /**
@@ -90,6 +92,7 @@ interface SessionState {
   paletteFlags: Uint8Array;
   blockCount: number;
   edits: number;
+  revision: number;
   outside: number;
   canUndo: boolean;
   canRedo: boolean;
@@ -109,6 +112,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
   const baselineRef = useRef<{ voxels: Uint16Array; paletteLength: number } | null>(null);
   const overlayRef = useRef<EditOverlay | null>(null);
   const lastIdRef = useRef<string | null>(null);
+  const revisionRef = useRef(0);
   /**
    * Which grid the overlay was last composited into, and what that did.
    *
@@ -128,6 +132,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
   const stateFor = (next: LoadedBuild, stack: EditHistory = history): SessionState => {
     if (lastIdRef.current !== next.id) {
       lastIdRef.current = next.id;
+      revisionRef.current = 0;
       overlayRef.current = EditOverlay.fromJSON(editsOf(next.id));
     }
     const overlay = (overlayRef.current ??= new EditOverlay());
@@ -153,6 +158,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
       paletteFlags: next.paletteFlags,
       blockCount: next.blockCount + (composited?.delta ?? 0),
       edits: overlay.size,
+      revision: revisionRef.current,
       outside: composited?.outside ?? 0,
       canUndo: stack.canUndo,
       canRedo: stack.canRedo,
@@ -230,12 +236,14 @@ export function useEditSession(build: LoadedBuild): EditSession {
       history.push(op);
       recordChange('build', build.id);
       overlay.recordOp(grid, op, baselineRef.current?.voxels);
+      revisionRef.current++;
 
       const delta = blockDelta(op);
       setState((prev) => ({
         ...prev,
         blockCount: prev.blockCount + delta,
         edits: overlay.size,
+        revision: revisionRef.current,
         canUndo: true,
         canRedo: false,
       }));
@@ -255,11 +263,13 @@ export function useEditSession(build: LoadedBuild): EditSession {
 
     world.revertEdit(op);
     overlay.recordRevert(grid, op, baselineRef.current?.voxels);
+    revisionRef.current++;
     const delta = blockDelta(op);
     setState((prev) => ({
       ...prev,
       blockCount: prev.blockCount - delta,
       edits: overlay.size,
+      revision: revisionRef.current,
       canUndo: history.canUndo,
       canRedo: true,
     }));
@@ -274,11 +284,13 @@ export function useEditSession(build: LoadedBuild): EditSession {
 
     world.applyEdit(op);
     overlay.recordOp(grid, op, baselineRef.current?.voxels);
+    revisionRef.current++;
     const delta = blockDelta(op);
     setState((prev) => ({
       ...prev,
       blockCount: prev.blockCount + delta,
       edits: overlay.size,
+      revision: revisionRef.current,
       canUndo: true,
       canRedo: history.canRedo,
     }));
@@ -296,6 +308,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
     baselineRef.current = null;
     history.clear();
     overlay.clear();
+    revisionRef.current++;
     rememberEdits(build.id, null);
 
     const colors = paletteColors(grid.palette);
@@ -311,6 +324,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
       paletteFlags: flags,
       blockCount: build.blockCount,
       edits: 0,
+      revision: revisionRef.current,
       outside: 0,
       canUndo: false,
       canRedo: false,
@@ -345,6 +359,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
     paletteFlags: state.paletteFlags,
     blockCount: state.blockCount,
     edits: state.edits,
+    revision: state.revision,
     outside: state.outside,
     detached: state.edits > 0,
     canUndo: state.canUndo,

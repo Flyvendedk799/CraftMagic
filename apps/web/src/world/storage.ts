@@ -27,6 +27,7 @@ const STORE = 'worlds';
 const DRAFT_KEY = '__draft__';
 
 export interface SavedWorld {
+  storage?: 'account' | 'device';
   id: string;
   name: string;
   sizeX: number;
@@ -83,25 +84,20 @@ function open(): Promise<IDBDatabase | null> {
   return dbPromise;
 }
 
-function run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
-  return open().then(
-    (db) =>
-      new Promise<T | null>((resolve) => {
-        if (!db) {
-          resolve(null);
-          return;
-        }
-        let request: IDBRequest<T>;
-        try {
-          request = work(db.transaction(STORE, mode).objectStore(STORE));
-        } catch {
-          resolve(null);
-          return;
-        }
-        request.onsuccess = () => resolve(request.result ?? null);
-        request.onerror = () => resolve(null);
-      }),
-  );
+function run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>): Promise<{ ok: boolean; value: T | null }> {
+  return open().then(db => new Promise(resolve => {
+    if (!db) { resolve({ok:false,value:null}); return; }
+    let transaction: IDBTransaction;
+    let value: T | null = null;
+    try {
+      transaction = db.transaction(STORE, mode);
+      const request = work(transaction.objectStore(STORE));
+      request.onsuccess = () => { value = request.result ?? null; };
+      request.onerror = () => { resolve({ok:false,value:null}); };
+      transaction.oncomplete = () => resolve({ok:true,value});
+      transaction.onerror = transaction.onabort = () => resolve({ok:false,value:null});
+    } catch { resolve({ok:false,value:null}); }
+  }));
 }
 
 function recordOf(key: string, doc: WorldDoc): WorldRecord {
@@ -137,17 +133,17 @@ function docOf(record: unknown): WorldDoc | null {
 }
 
 export function loadDraft(): Promise<WorldDoc | null> {
-  return run<WorldRecord>('readonly', (store) => store.get(DRAFT_KEY) as IDBRequest<WorldRecord>).then(docOf);
+  return run<WorldRecord>('readonly', (store) => store.get(DRAFT_KEY) as IDBRequest<WorldRecord>).then(result => result.ok ? docOf(result.value) : null);
 }
 
 export function saveDraft(doc: WorldDoc): Promise<boolean> {
-  return run('readwrite', (store) => store.put(recordOf(DRAFT_KEY, doc))).then(() => true, () => false);
+  return run('readwrite', (store) => store.put(recordOf(DRAFT_KEY, doc))).then(result => result.ok, () => false);
 }
 
 export function listWorlds(): Promise<SavedWorld[]> {
   return run<WorldRecord[]>('readonly', (store) => store.getAll() as IDBRequest<WorldRecord[]>).then(
-    (rows) =>
-      (rows ?? [])
+    (result) =>
+      (result.value ?? [])
         .filter((row) => row && row.key !== DRAFT_KEY)
         .map(({ id, name, sizeX, sizeZ, placements, updatedAt }) => ({
           id, name, sizeX, sizeZ, placements, updatedAt,
@@ -160,15 +156,15 @@ export function listWorlds(): Promise<SavedWorld[]> {
 
 /** Save under the document's own id, so saving twice updates rather than accumulates. */
 export function saveWorld(doc: WorldDoc): Promise<boolean> {
-  return run('readwrite', (store) => store.put(recordOf(doc.id, doc))).then(() => true, () => false);
+  return run('readwrite', (store) => store.put(recordOf(doc.id, doc))).then(result => result.ok, () => false);
 }
 
 export function loadWorld(id: string): Promise<WorldDoc | null> {
-  return run<WorldRecord>('readonly', (store) => store.get(id) as IDBRequest<WorldRecord>).then(docOf);
+  return run<WorldRecord>('readonly', (store) => store.get(id) as IDBRequest<WorldRecord>).then(result => result.ok ? docOf(result.value) : null);
 }
 
 export function deleteWorld(id: string): Promise<boolean> {
-  return run('readwrite', (store) => store.delete(id)).then(() => true, () => false);
+  return run('readwrite', (store) => store.delete(id)).then(result => result.ok, () => false);
 }
 
 /** Test seam: forget the cached connection so a fresh fake can be installed. */

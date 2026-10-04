@@ -150,13 +150,13 @@ export function savePlan(plan: LayoutPlan): SavedPlan[] {
     { id: stamped.id, name: stamped.name, updatedAt: stamped.updatedAt, plan: stamped },
     ...rest,
   ].slice(0, MAX_SAVED);
-  write(SAVED_KEY, next);
+  if (!write(SAVED_KEY, next)) throw new Error('This browser could not save the floorplan. Storage may be full or blocked; download a .layout.json copy.');
   return next;
 }
 
 export function deleteSaved(id: string): SavedPlan[] {
   const next = listSaved().filter((entry) => entry.id !== id);
-  write(SAVED_KEY, next);
+  if (!write(SAVED_KEY, next)) throw new Error('This browser could not save the floorplan. Storage may be full or blocked; download a .layout.json copy.');
   return next;
 }
 

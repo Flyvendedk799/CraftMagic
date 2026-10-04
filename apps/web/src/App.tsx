@@ -1,12 +1,13 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { AdminPage } from './admin/AdminPage.js';
+const AdminPage = lazy(() => import('./admin/AdminPage.js').then(module => ({default: module.AdminPage})));
 import { DashboardPage } from './dashboard/DashboardPage.js';
-import { GuidePage } from './guide/GuidePage.js';
+const GuidePage = lazy(() => import('./guide/GuidePage.js').then(module => ({default: module.GuidePage})));
 import { LandingPage } from './landing/LandingPage.js';
 import { LibraryPage } from './library/LibraryPage.js';
 import { ModPage } from './mod/ModPage.js';
 import { StatusPage } from './StatusPage.js';
-import { StudioPage } from './studio/StudioPage.js';
+const StudioPage = lazy(() => import('./studio/StudioPage.js').then(module => ({default: module.StudioPage})));
 import { modeParam, type StudioMode } from './studio/mode.js';
 
 /**
@@ -42,7 +43,7 @@ import { modeParam, type StudioMode } from './studio/mode.js';
 export function App() {
   return (
     <BrowserRouter>
-      <Routes>
+      <Suspense fallback={<div className="route-loading" role="status">Opening workspace…</div>}><Routes>
         <Route path="/" element={<Home />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/studio" element={<StudioPage />} />
@@ -55,7 +56,7 @@ export function App() {
         <Route path="/mod" element={<ModPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/status" element={<StatusPage />} />
-      </Routes>
+      </Routes></Suspense>
     </BrowserRouter>
   );
 }

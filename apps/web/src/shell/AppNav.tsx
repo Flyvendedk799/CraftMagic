@@ -22,6 +22,7 @@
  * being discovered at the moment of a refusal.
  */
 
+import { useDockedStudio } from '../studio/workspace/Docks.js';
 import { useLayoutEffect, useRef } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { Logo } from '../brand/Logo.js';
@@ -87,6 +88,7 @@ function entryFor(current: AppNavProps['current']): Destination['key'] | undefin
 }
 
 export function AppNav({ current }: AppNavProps) {
+  const docked = useDockedStudio();
   const auth = useAuth();
   const account = auth.status === 'signedIn' ? auth.account : null;
   // Whatever the shell wants in the middle of the bar — in the studio, the mode switch.
@@ -116,6 +118,7 @@ export function AppNav({ current }: AppNavProps) {
     };
   }, [Boolean(center)]);
 
+  if (docked) return null;
   return (
     <header ref={navRef} className={`nav${center ? ' nav--studio' : ''}`}>
       <div className="nav__inner">

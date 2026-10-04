@@ -36,3 +36,6 @@ tools/registry-gen/work/
 # straight after; two have reached main by being forgotten between the write and the commit.
 tools/_*.cjs
 tools/_*.mjs
+
+# Browser regression evidence
+/test-artifacts/

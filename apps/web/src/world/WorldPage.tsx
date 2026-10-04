@@ -67,7 +67,7 @@ import { pathToRoad } from './guides.js';
 import { offerPlot, plotFromView } from './plotContext.js';
 import { localStore, remoteStore } from './api.js';
 import { RegionNavigator, type RegionCell } from './RegionNavigator.js';
-import { MAX_VIEW_CELLS, areaHolds, coverArea, fitArea, regionOfColumn, spanOf } from './viewArea.js';
+import { areaHolds, coverArea, fitArea, regionOfColumn, spanOf } from './viewArea.js';
 import { useAgents } from '../agent/useAgents.js';
 import { runOf, sendRegion, waitForJob } from './send.js';
 import { WorldMap } from './WorldMap.js';
@@ -81,16 +81,19 @@ import { ExportBar } from '../editor/ExportBar.js';
 import { registerImportedBuild } from '../editor/builds.js';
 import { openGuide } from '../studio/handoff.js';
 import { isTextEntry } from '../studio/undoKeys.js';
-import { redoProject, undoProject } from '../studio/journal.js';
-import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
+import { useZoomUndo } from '../studio/useZoomUndo.js';
 import { WORLD_SHORTCUTS } from './shortcuts.js';
 import { ShortcutHelp } from '../editor/ShortcutHelp.js';
 import { WORLD_TOOLS, dropCorner, placementFootprint, turnedAboutCentre, type WorldTool } from './toolset.js';
-import { ActionIcon } from './WorldToolIcons.js';
 import './world.css';
 
 export function WorldPage() {
   const auth = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const worldParam = searchParams.get('world');
+  const [openingWorld, setOpeningWorld] = useState(false);
+  const [worldOpenError, setWorldOpenError] = useState<string | null>(null);
+  const [worldOpenAttempt, setWorldOpenAttempt] = useState(0);
   // Signed in, worlds live on the account and open from any machine; signed out they stay
   // in this browser. Memoised on the status alone so a re-render does not look like a
   // different store and re-list on every keystroke.
@@ -98,10 +101,11 @@ export function WorldPage() {
     () => (auth.status === 'signedIn' ? remoteStore : localStore),
     [auth.status],
   );
-  const session = useWorldSession(undefined, store);
+  const historyId = `/studio?mode=world${worldParam ? `&world=${encodeURIComponent(worldParam)}` : ''}`;
+  const session = useWorldSession(undefined, store, historyId);
   const { doc } = session;
   const mapHasSavedRow = session.saved.some((entry) => entry.id === doc.id);
-  const canSaveMap = session.dirty || !mapHasSavedRow;
+  const canSaveMap = !openingWorld && !worldOpenError && (!worldParam || doc.id === worldParam) && (session.dirty || !mapHasSavedRow);
   const navigate = useNavigate();
   useReportPresence({
     mode: 'world',
@@ -144,6 +148,7 @@ export function WorldPage() {
   const saveMap = useCallback(async () => {
     const ok = await session.save();
     setNotice(ok ? 'Map saved.' : 'Could not save map. Please try again.');
+    return ok;
   }, [session]);
   const newWorld = useCallback(() => {
     if (session.dirty && !window.confirm('Start a new map? Unsaved changes in this map will be replaced.')) return;
@@ -152,8 +157,11 @@ export function WorldPage() {
     navigate(composeMap(), { replace: true });
   }, [session, navigate]);
   useRegisterWorkbench('world', {
+    commands: WORLD_TOOLS.map(spec=>({id:`tool-${spec.id}`,label:`Tool: ${spec.label}`,hint:spec.hint,category:'Tools',shortcut:spec.key,checked:tool===spec.id,run:()=>setTool(spec.id)})),
     saveLabel: 'Save map',
-    save: saveMap,
+    saving: session.saving,
+    saveError: session.saveError,
+    save: async () => { if (!await saveMap()) throw new Error('Could not save this map. Your changes are still here; retry when storage or the connection is available.'); },
     canSave: !session.loading && !session.saving && canSaveMap,
     saveHint: 'Save this named map to your account, or to this browser while signed out.',
     create: newWorld,
@@ -234,8 +242,7 @@ export function WorldPage() {
     }
   }, [library.catalogue, doc, session]);
 
-  useZoomUndo('world', 'open-world', session.undo, session.redo, !session.loading);
-  const journal = useJournalFlags();
+  useZoomUndo('world', session.historyId, session.undo, session.redo, !session.loading && !openingWorld && !worldOpenError);
 
   // The keyboard, through a ref so the listener is bound once and always sees this render's
   // selection and tool. Ignored while a text field has focus, or typing a world's name would
@@ -290,8 +297,6 @@ export function WorldPage() {
    * bar so a refresh and a copied link reopen the same document; the local draft is preferred
    * when it is already that map and may contain newer edits.
    */
-  const [searchParams, setSearchParams] = useSearchParams();
-  const worldParam = searchParams.get('world');
   const placeParam = searchParams.get('place');
   const plotParam = searchParams.get('plot');
   // Dashboard's launcher carries the typed prompt through World into Build. Kept until a
@@ -346,26 +351,29 @@ export function WorldPage() {
     if (!worldParam || session.loading || auth.status === 'loading' || doc.id === worldParam) return;
     let live = true;
     const epoch = ++worldOpenEpoch.current;
+    setOpeningWorld(true); setWorldOpenError(null);
     void store.load(worldParam).then((opened) => {
       if (!live || epoch !== worldOpenEpoch.current) return;
+      setOpeningWorld(false);
       if (opened) {
         session.open(opened);
         setNotice(`Opened “${opened.name}”.`);
       } else {
+        setWorldOpenError('This map could not be opened. It may have been deleted or belong to another account.');
         setNotice(
           auth.status === 'signedIn'
             ? 'That map could not be opened — it may have been deleted, or belong to another account.'
             : 'That map is on an account. Sign in to open it; the draft in this browser is shown instead.',
         );
       }
-    });
-    return () => {
-      live = false;
-    };
+    }).catch((error: unknown) => {
+      if (live && epoch === worldOpenEpoch.current) setWorldOpenError(error instanceof Error ? error.message : 'Could not open this world.');
+    }).finally(() => { if (live && epoch === worldOpenEpoch.current) setOpeningWorld(false); });
+    return () => { live = false; };
     // `session` is memoised on every change; only the id, the store and the loading flag decide
     // whether an open is due.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [worldParam, store, session.loading, auth.status, doc.id]);
+  }, [worldParam, store, session.loading, auth.status, doc.id, worldOpenAttempt]);
 
   // A first save may mint a server id. Give that named map a durable address immediately;
   // the open effect above sees it is already on screen and does not reload over live edits.
@@ -816,7 +824,6 @@ export function WorldPage() {
    * online. So a world was the one thing in the studio you could not get blocks out of without
    * a running game server.
    */
-  const counts = regionCount(doc.settings);
   const windows = useMemo(
     () => coverArea(doc, requestedView),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -924,6 +931,11 @@ export function WorldPage() {
       data-hover-stratum={hover?.stratum}
     >
       <AppNav current="world" />
+      {worldParam && (worldOpenError || doc.id !== worldParam) && <div className="workspace-document-state" role={worldOpenError ? 'alert' : 'status'}>
+        <h2>{worldOpenError ? 'This world could not be opened' : 'Opening world…'}</h2>
+        <p>{worldOpenError ?? 'Loading the saved terrain and placements.'}</p>
+        {worldOpenError && <div><button onClick={() => setWorldOpenAttempt(value => value + 1)}>Retry opening world</button><button onClick={() => navigate(composeMap())}>Open browser draft</button></div>}
+      </div>}
 
       <div className="world__body">
         {/* Two docks, each a card with its own sticky title. They used to be bare columns of
@@ -953,7 +965,6 @@ export function WorldPage() {
         </aside>
 
         <main className="world__stage">
-          <div className="studio__stage-title"><span className="studio__eyebrow">WORLD / CANVAS</span><strong>Map workspace</strong></div>
           {/* The stage's own strip of chrome. One `ui-bar` group rather than five loose
               controls wearing whatever the global button rule gave them: history, then what
               the map draws, then what the 3D view is following. The notice is a chip beside
@@ -961,38 +972,6 @@ export function WorldPage() {
               goes and a row that reflows every time something is saved is unusable. */}
           <div className="world__stage-bar">
             <div className="ui-bar">
-              <button
-                type="button"
-                className="ui-btn world__iconbtn"
-                onClick={undoProject}
-                disabled={!journal.canUndo}
-                title="Undo  (Ctrl+Z)"
-                aria-label="Undo"
-              >
-                <ActionIcon glyph="undo" />
-              </button>
-              <button
-                type="button"
-                className="ui-btn world__iconbtn"
-                onClick={redoProject}
-                disabled={!journal.canRedo}
-                title="Redo  (Ctrl+Shift+Z)"
-                aria-label="Redo"
-              >
-                <ActionIcon glyph="redo" />
-              </button>
-              {/* Saving was a button in the third section of the right-hand dock, under the
-                  shelf and the placed list. It is the one verb every session ends on. */}
-              <button
-                type="button"
-                className={`ui-btn ${canSaveMap ? 'ui-btn--primary' : ''}`}
-                onClick={() => void saveMap()}
-                disabled={!canSaveMap || session.saving}
-                title={canSaveMap ? 'Save this map  (Ctrl+S)' : 'No changes since the last save'}
-              >
-                {session.saving ? 'Saving map…' : canSaveMap ? 'Save map' : 'Map saved'}
-              </button>
-              <span className="ui-bar__sep" aria-hidden="true" />
               <label className="ui-check" title="Draw the region grid the map ships in">
                 <input type="checkbox" checked={showRegions} onChange={(e) => setShowRegions(e.target.checked)} />
                 Regions

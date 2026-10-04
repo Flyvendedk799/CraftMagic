@@ -359,10 +359,12 @@ export function registerGeneratedBuild(program: BuildProgram): string {
 
 /** A genuinely new editable document. Re-selecting the shared `blank` sample would reopen
  * its edit overlay, so every New build gets its own browser identity. */
-export function registerBlankBuild(): string {
+export function registerBlankBuild(options: { name?: string; size?: number } = {}): string {
+  const width = [16,32,64,128].includes(options.size ?? 32) ? options.size ?? 32 : 32;
   return registerGeneratedBuild({
     ...blank,
-    meta: { ...blank.meta, name: 'Untitled build' },
+    meta: { ...blank.meta, name: options.name?.trim().slice(0,120) || 'Untitled build' },
+    size: options.size === undefined ? { ...blank.size } : {x:width,y:Math.min(width,64),z:width},
     palette: { ...blank.palette },
     components: [],
   });

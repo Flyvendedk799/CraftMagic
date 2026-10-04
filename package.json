@@ -15,9 +15,13 @@
     "dev": "npm run dev --workspace @craftmagic/server",
     "dev:web": "npm run dev --workspace @craftmagic/web",
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "tsc -b packages/core apps/server apps/web --pretty"
+    "typecheck": "tsc -b packages/core apps/server apps/web --pretty",
+    "test:browser": "node tools/verify-workspace.mjs",
+    "test:database": "node tools/test-database.mjs"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
     "pngjs": "^7.0.0",
     "typescript": "^5.7.2"
   },

@@ -108,9 +108,13 @@ export const localStore: WorldStore = {
  * difference, and it is also what a world deleted from another tab looks like — in which case
  * re-creating it is the right answer rather than an error.
  */
+export function isAccountWorldId(id: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id); }
+
 export const remoteStore: WorldStore = {
   list: listWorlds,
   async save(doc) {
+    // Browser-generated world IDs are not PostgreSQL UUIDs; create rather than issuing a failing UPDATE.
+    if (!isAccountWorldId(doc.id)) return createWorld(doc);
     try {
       await updateWorld(doc.id, doc);
       return doc.id;
@@ -119,6 +123,6 @@ export const remoteStore: WorldStore = {
       throw error;
     }
   },
-  load: (id) => getWorld(id).catch(() => null),
-  remove: (id) => deleteWorld(id).then(() => true, () => false),
+  load: (id) => !isAccountWorldId(id) ? local.loadWorld(id) : getWorld(id).catch(error => { if (error instanceof WorldApiError && error.status === 404) return null; throw error; }),
+  remove: (id) => !isAccountWorldId(id) ? local.deleteWorld(id) : deleteWorld(id).then(() => true, () => false),
 };

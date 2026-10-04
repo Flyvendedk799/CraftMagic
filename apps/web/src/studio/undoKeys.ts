@@ -24,7 +24,7 @@ import { useEffect } from 'react';
  */
 export function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
+  if (target.isContentEditable || target.closest('[aria-modal="true"]')) return true;
   const tag = target.tagName;
   // A slider, a checkbox or a radio is an `INPUT` too, and none of them take typing. Counting
   // them killed every shortcut from the moment one was clicked until something else took focus:

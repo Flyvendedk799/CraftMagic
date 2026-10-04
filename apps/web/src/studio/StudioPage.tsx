@@ -1,3 +1,5 @@
+import { invalidateWorkingPlan } from '../architecture/usePlanSession.js';
+import { invalidateWorkingWorld } from '../world/useWorldSession.js';
 /**
  * One workbench for three document types: voxel builds, floorplans, and maps.
  *
@@ -15,7 +17,6 @@ import { EditorPage } from '../editor/EditorPage.js';
 import { ArchitecturePage } from '../architecture/ArchitecturePage.js';
 import { deleteSaved, listSaved, savePlan } from '../architecture/storage.js';
 import { WorldPage } from '../world/WorldPage.js';
-import { NavCenterProvider } from '../shell/NavCenter.js';
 import { useAuth } from '../library/auth.js';
 import { deleteBuild, listBuilds, renameBuild, type LibraryBuild } from '../library/library.js';
 import { localStore, remoteStore, type SavedWorld } from '../world/api.js';
@@ -23,16 +24,22 @@ import { CommandPalette, type Command } from './CommandPalette.js';
 import { StudioFiles, type StudioFileKind } from './StudioFiles.js';
 import { composeMap, drawFloorplan, libRef, libRowId, openGuide, openInBuild, openMap, openPlan, placeOnMap, planForBuild } from './handoff.js';
 import { takePlanHandoff } from './handoffBridge.js';
-import { bindZoom, redoProject, undoProject, type JournalFrame } from './journal.js';
+import { bindZoom, redoProject, undoProject, invalidateJournalDocument, type JournalFrame } from './journal.js';
 import { useUndoKeys } from './undoKeys.js';
 import { useJournalFlags } from './useZoomUndo.js';
-import { WorkbenchProvider, useWorkbenchActions } from './workbench.js';
+import { WorkbenchProvider, useWorkbenchActions, requestWorkbenchSave } from './workbench.js';
 import { PresenceProvider, useConfirmLeave, useStudioPresence } from './presence.js';
 import { MODE_SPECS, STUDIO_MODES, foreignParams, modeParam, ownsParam, parseMode, type StudioMode } from './mode.js';
 import './studio.css';
+import { canonicalDocument } from './workspace/documents.js';
+import { WorkspaceFrame } from './workspace/WorkspaceFrame.js';
 
 /** Enough recent library builds for the palette to offer without becoming the library. */
 const PALETTE_LIBRARY_LIMIT = 5;
+async function listStudioMaps(signedIn: boolean): Promise<SavedWorld[]> {
+  const [device, account] = await Promise.all([localStore.list(), signedIn ? remoteStore.list() : Promise.resolve([])]);
+  return [...account.map(row=>({...row,storage:'account' as const})),...device.filter(row=>!account.some(saved=>saved.id===row.id)).map(row=>({...row,storage:'device' as const}))];
+}
 const RETURN_TO_KEY = 'craftmagic.studio.openDocuments';
 
 function restoreOpenDocuments(): Partial<Record<StudioMode, string>> {
@@ -81,10 +88,9 @@ function StudioShell() {
   const [palette, setPalette] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
+  const [filesError, setFilesError] = useState<string | null>(null);
   const [, setFilesRevision] = useState(0);
   const [documentRevision, setDocumentRevision] = useState(0);
-  const [mobilePane, setMobilePane] = useState<'canvas' | 'tools' | 'project'>('canvas');
-  useEffect(() => setMobilePane('canvas'), [mode]);
   const auth = useAuth();
   // Every editor gets its own return address. A mode switch must not quietly turn a named
   // map into the browser draft or a selected build into the empty plot.
@@ -113,12 +119,12 @@ function StudioShell() {
     if ((!palette && !filesOpen) || auth.status === 'loading') return;
     let live = true;
     if (filesOpen) setFilesLoading(true);
-    const store = auth.status === 'signedIn' ? remoteStore : localStore;
-    const mapRequest = store.list().then((rows) => { if (live) setMaps(rows); }, () => undefined);
+    setFilesError(null);
+    const mapRequest = listStudioMaps(auth.status === 'signedIn').then((rows) => { if (live) setMaps(rows); }, () => { if (live) setFilesError('Could not load maps. Your other files may still be available.'); });
     if (auth.status === 'signedIn') {
       const buildRequest = listBuilds().then(
         (rows) => { if (live) setLibraryBuilds([...rows].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))); },
-        () => undefined,
+        () => { if (live) setFilesError('Could not load account builds. Retry when your connection is available.'); },
       );
       void Promise.allSettled([mapRequest, buildRequest]).then(() => { if (live) setFilesLoading(false); });
     } else {
@@ -138,11 +144,12 @@ function StudioShell() {
   workbenchRef.current = workbench;
   useEffect(() => {
     const onSave = (event: KeyboardEvent) => {
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 's') return;
       event.preventDefault();
       event.stopImmediatePropagation();
       const action = workbenchRef.current;
-      if (action?.canSave) void action.save();
+      requestWorkbenchSave(action);
     };
     window.addEventListener('keydown', onSave, true);
     return () => window.removeEventListener('keydown', onSave, true);
@@ -151,7 +158,7 @@ function StudioShell() {
 
   const openFrame = useCallback(
     (frame: JournalFrame) => {
-      const href = frame.scope === 'build'
+      const href = frame.docId.startsWith('/studio?') ? frame.docId : frame.scope === 'build'
         ? openInBuild(frame.docId)
         : frame.scope === 'arch'
           ? returnTo.current.arch ?? drawFloorplan()
@@ -185,7 +192,6 @@ function StudioShell() {
   const setMode = useCallback(
     (next: StudioMode) => {
       if (next === mode) return;
-      setMobilePane('canvas');
       if (next === 'world') {
         navigate(returnTo.current.world ?? composeMap());
         return;
@@ -210,20 +216,13 @@ function StudioShell() {
     [mode, navigate, presence.structureRowId, searchParams],
   );
 
-  const openStructurePlan = useCallback(() => {
-    const row = presence.structureRowId ?? libRowId(searchParams.get('build') ?? '');
-    if (row) {
-      navigate(openPlan(row));
-      return;
-    }
-    setMode('arch');
-  }, [presence.structureRowId, searchParams, navigate, setMode]);
-
   // Ctrl+K (or ⌘K) from anywhere on the page, text fields included — the palette is how you
   // leave wherever you are, so no context may swallow it.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        const dialog = document.querySelector('[aria-modal="true"]');
+        if (dialog && dialog.getAttribute('aria-label') !== 'Command palette') return;
         event.preventDefault();
         setPalette((open) => !open);
       }
@@ -232,20 +231,13 @@ function StudioShell() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const openOutput = useCallback(() => {
-    setMobilePane(mode === 'arch' ? 'tools' : 'project');
-    requestAnimationFrame(() => {
-      const section = document.getElementById('studio-section-export');
-      section?.dispatchEvent(new Event('studio:open-section'));
-      section?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    });
-  }, [mode]);
+  const openOutput = useCallback(() => { window.dispatchEvent(new Event('studio:delivery')); }, []);
 
-  const openFile = useCallback((href: string) => {
-    if (currentPresence?.dirty && !window.confirm(`Open another document? Save changes to ${currentPresence.dirtyLabel} first if you need this version.`)) return;
+  const openFile = useCallback((href: string, confirmed = false) => {
+    if (!confirmed && canonicalDocument(href)?.key !== canonicalDocument(`/studio?${searchParams}`)?.key && currentPresence?.dirty && !window.confirm(`Open another document? Save changes to ${currentPresence.dirtyLabel} first if you need this version.`)) return;
     setFilesOpen(false);
     navigate(href);
-  }, [navigate, currentPresence?.dirty, currentPresence?.dirtyLabel]);
+  }, [navigate, searchParams, currentPresence?.dirty, currentPresence?.dirtyLabel]);
 
   const isOpenFile = useCallback((kind: StudioFileKind, id: string) => {
     if (kind === 'map') return mode === 'world' && searchParams.get('world') === id;
@@ -256,11 +248,11 @@ function StudioShell() {
   }, [mode, searchParams]);
 
   const refreshFiles = useCallback(async () => {
-    const store = auth.status === 'signedIn' ? remoteStore : localStore;
     const [mapsResult, buildsResult] = await Promise.allSettled([
-      store.list(),
+      listStudioMaps(auth.status === 'signedIn'),
       auth.status === 'signedIn' ? listBuilds() : Promise.resolve([]),
     ]);
+    setFilesError(mapsResult.status === 'rejected' || buildsResult.status === 'rejected' ? 'Some files could not be refreshed. Retry loading to get the latest list.' : null);
     if (mapsResult.status === 'fulfilled') setMaps(mapsResult.value);
     if (buildsResult.status === 'fulfilled') setLibraryBuilds(buildsResult.value);
     setFilesRevision((value) => value + 1);
@@ -279,27 +271,38 @@ function StudioShell() {
       const entry = listSaved().find((item) => item.id === id);
       if (!entry) throw new Error('This floorplan is no longer saved here.');
       savePlan({ ...entry.plan, name });
+      invalidateWorkingPlan(`/studio?mode=arch&plan=${encodeURIComponent(`local:${id}`)}`);
     } else if (kind === 'browserBuild') {
       if (!renameLocalBuild(id, name)) throw new Error('This build is no longer saved here.');
     } else {
-      const store = auth.status === 'signedIn' ? remoteStore : localStore;
+      const store = maps.find(row=>row.id===id)?.storage === 'device' ? localStore : auth.status === 'signedIn' ? remoteStore : localStore;
       const doc = await store.load(id);
       if (!doc || !(await store.save({ ...doc, name }))) throw new Error('Could not rename this map.');
+      invalidateWorkingWorld(`/studio?mode=world&world=${encodeURIComponent(id)}`);
     }
     await refreshFiles();
     if (isOpenFile(kind, id)) setDocumentRevision((value) => value + 1);
-  }, [auth.status, guardActiveFile, isOpenFile, refreshFiles]);
+  }, [auth.status, maps, guardActiveFile, isOpenFile, refreshFiles]);
 
   const deleteFile = useCallback(async (kind: StudioFileKind, id: string) => {
     guardActiveFile(kind, id);
-    if (kind === 'library') { await deleteBuild(id); forgetLibraryBuild(id); }
-    else if (kind === 'plan') deleteSaved(id);
+    if (kind === 'library') {
+      await deleteBuild(id); forgetLibraryBuild(id);
+      invalidateWorkingPlan(`/studio?mode=arch&plan=${encodeURIComponent(`lib:${id}`)}`);
+      invalidateJournalDocument('build',`lib:${id}`);
+      if (canonicalDocument(returnTo.current.build ?? '')?.key === `build:lib:${id}`) returnTo.current.build = '/studio';
+      if (canonicalDocument(returnTo.current.arch ?? '')?.key === `arch:lib:${id}`) returnTo.current.arch = drawFloorplan();
+    }
+    else if (kind === 'plan') { deleteSaved(id); invalidateWorkingPlan(`/studio?mode=arch&plan=${encodeURIComponent(`local:${id}`)}`); }
     else if (kind === 'browserBuild') {
       if (!forgetLocalBuild(id)) throw new Error('This build is no longer saved here.');
     } else {
-      const store = auth.status === 'signedIn' ? remoteStore : localStore;
+      const store = maps.find(row=>row.id===id)?.storage === 'device' ? localStore : auth.status === 'signedIn' ? remoteStore : localStore;
       if (!(await store.remove(id))) throw new Error('Could not delete this map.');
+      invalidateWorkingWorld(`/studio?mode=world&world=${encodeURIComponent(id)}`);
     }
+    const removedKeys = kind === 'library' ? [`build:lib:${id}`,`arch:lib:${id}`] : [kind === 'map' ? `world:${id}` : kind === 'plan' ? `arch:local:${id}` : `build:${id}`];
+    window.dispatchEvent(new CustomEvent('studio:files-removed',{detail:removedKeys}));
     if (isOpenFile(kind, id)) {
       const fallback = mode === 'world' ? composeMap() : mode === 'arch' ? drawFloorplan() : '/studio';
       returnTo.current[mode] = fallback;
@@ -307,7 +310,7 @@ function StudioShell() {
       setDocumentRevision((value) => value + 1);
     }
     await refreshFiles();
-  }, [auth.status, guardActiveFile, isOpenFile, mode, navigate, refreshFiles]);
+  }, [auth.status, maps, guardActiveFile, isOpenFile, mode, navigate, refreshFiles]);
 
   /**
    * The command list, rebuilt when the palette opens. Document actions use the mounted
@@ -443,8 +446,8 @@ function StudioShell() {
     }
 
     if (workbench) {
-      if (workbench.canSave) list.unshift({ id: 'file-save', label: workbench.saveLabel, hint: workbench.saveHint ?? 'Save the current document', run: () => void workbench.save() });
-      list.unshift({ id: 'file-new', label: 'New document', hint: 'Start a new document in this workspace', run: workbench.create });
+      if (workbench.canSave) list.unshift({ id: 'file-save', label: workbench.saveLabel, hint: workbench.saveHint ?? 'Save the current document', run: () => requestWorkbenchSave(workbench) });
+      list.unshift({ id: 'file-new', label: 'New document', hint: 'Start a new document in this workspace', run: () => window.dispatchEvent(new Event('studio:new-document')) });
     }
     list.unshift(
       { id: 'file-open', label: 'Open Studio work', hint: 'Maps, builds, and browser floorplans', run: () => setFilesOpen(true) },
@@ -478,6 +481,7 @@ function StudioShell() {
       },
     );
 
+    if (workbench?.commands) list.unshift(...workbench.commands);
     return list;
   }, [palette, mode, searchParams, navigate, setMode, maps, libraryBuilds, confirmLeave, presence.structureRowId, presence.hasPlan, workbench, openOutput]);
 
@@ -518,61 +522,15 @@ function StudioShell() {
     : mode === 'arch'
       ? currentPresence?.structure ? `${currentPresence.structure} · floorplan` : 'Untitled floorplan'
       : currentPresence?.structure ?? 'Untitled build';
-  const switcher = (
-    <div className="studio__workbar">
-      <nav className="studio__switch" aria-label="Studio workspaces">
-        {STUDIO_MODES.map((id, index) => (
-          <button
-            key={id}
-            type="button"
-            data-mode={id}
-            aria-pressed={mode === id}
-            title={id === 'arch' && presence.hasPlan ? 'Open this build’s floorplan' : MODE_SPECS[id].hint}
-            onClick={id === 'arch' && mode === 'build' ? openStructurePlan : () => setMode(id)}
-          >
-            <span className="studio__mode-number" aria-hidden="true">0{index + 1}</span>
-            <span className="studio__mode-copy">
-              <strong>{MODE_SPECS[id].label}</strong>
-              <small>{id === 'world' ? 'Terrain & map' : id === 'build' ? 'Blocks & form' : 'Rooms & plan'}</small>
-            </span>
-          </button>
-        ))}
-      </nav>
-      <div className="studio__document" title={documentName}>
-        <span className="studio__document-label">Current work</span>
-        <strong>{documentName}</strong>
-        <span className={`studio__document-state${currentPresence?.dirty ? ' is-dirty' : ''}`}>
-          {currentPresence?.dirty ? 'Changes pending' : 'Ready to work'}
-        </span>
-      </div>
-      <div className="studio__file-actions" aria-label="Document actions">
-        <button type="button" className="studio__file-action" onClick={() => workbench?.create()} disabled={!workbench} title="Start a new document in this workspace">New</button>
-        <button type="button" className="studio__file-action" onClick={() => setFilesOpen(true)} title="Open maps, builds, and floorplans">Open</button>
-        <button type="button" className="studio__file-action studio__file-action--save" onClick={() => { if (workbench?.canSave) void workbench.save(); }} disabled={!workbench?.canSave} title={workbench?.saveHint ?? 'Save the current document'}>{workbench?.saveLabel ?? 'Save'}</button>
-        <button type="button" className="studio__file-action" onClick={openOutput} title="Export or send the current view">Export</button>
-      </div>
-      <div className="studio__global-actions" aria-label="Workspace actions">
-        <button type="button" onClick={undoProject} disabled={!journal.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
-        <button type="button" onClick={redoProject} disabled={!journal.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
-        <button type="button" className="studio__search" onClick={() => setPalette(true)} title="Find a command (Ctrl+K)">
-          <span>Find anything</span><kbd>Ctrl K</kbd>
-        </button>
-      </div>
-      <nav className="studio__pane-switch" aria-label="Workspace view">
-        {(['canvas', 'tools', 'project'] as const).map((pane) => (
-          <button key={pane} type="button" aria-pressed={mobilePane === pane} onClick={() => setMobilePane(pane)}>
-            {pane === 'canvas' ? (mode === 'arch' ? 'Plan' : 'Canvas') : pane === 'tools' ? 'Tools' : mode === 'arch' ? '3D preview' : mode === 'world' ? 'Contents' : 'Create & export'}
-          </button>
-        ))}
-      </nav>
-    </div>
-  );
 
   return (
-    <div className="studio" data-pane={mobilePane}>
-      <NavCenterProvider node={switcher}>
-        <Mounted key={`${mode}:${documentRevision}`} />
-      </NavCenterProvider>
+    <div className="studio">
+      <WorkspaceFrame mode={mode} href={`/studio?${searchParams}`} title={documentName} presence={currentPresence}
+        workbench={workbench} signedIn={auth.status === 'signedIn'} canUndo={journal.canUndo} canRedo={journal.canRedo}
+        onMode={setMode} onOpen={openFile} onFiles={() => setFilesOpen(true)} onCommands={() => setPalette(true)}
+        onUndo={undoProject} onRedo={redoProject}>
+        <Mounted key={`${canonicalDocument(`/studio?${searchParams}`)?.key ?? mode}:${documentRevision}`} />
+      </WorkspaceFrame>
 
       {foreign.length > 0 && dismissed !== foreignKey && (
         <p className="studio__notice" role="status">
@@ -624,6 +582,8 @@ function StudioShell() {
         plans={listSaved()}
         localBuilds={[...generatedBuilds(), ...muralBuilds(), ...importedBuilds()]}
         loading={filesLoading}
+        error={filesError}
+        onRetry={() => void refreshFiles()}
         signedIn={auth.status === 'signedIn'}
         onOpen={openFile}
         onClose={() => setFilesOpen(false)}

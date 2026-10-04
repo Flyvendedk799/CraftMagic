@@ -234,7 +234,7 @@ export function useEditSession(build: LoadedBuild): EditSession {
       ensureBaseline();
       world.applyEdit(op);
       history.push(op);
-      recordChange('build', build.id);
+      recordChange('build', build.id, 'Edit blocks');
       overlay.recordOp(grid, op, baselineRef.current?.voxels);
       revisionRef.current++;
 

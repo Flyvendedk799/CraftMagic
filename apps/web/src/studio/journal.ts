@@ -18,6 +18,8 @@ export type ZoomScope = 'build' | 'arch' | 'world';
 export interface JournalFrame {
   scope: ZoomScope;
   docId: string;
+  label?: string;
+  at?: number;
 }
 
 export interface LiveUndo {
@@ -63,7 +65,7 @@ function discardFrame(frame: JournalFrame): void {
 }
 
 /** A committed edit on the document that is open. */
-export function recordChange(scope: ZoomScope, docId: string): void {
+export function recordChange(scope: ZoomScope, docId: string, label?: string): void {
   const dropped = frames.splice(cursor);
   const seen = new Set<string>();
   for (const frame of dropped) {
@@ -72,7 +74,7 @@ export function recordChange(scope: ZoomScope, docId: string): void {
     seen.add(key);
     discardFrame(frame);
   }
-  frames.push({ scope, docId });
+  frames.push({ scope, docId, ...(label ? { label, at: Date.now() } : {}) });
   cursor = frames.length;
   emit();
 }
@@ -190,5 +192,22 @@ export function resetJournal(): void {
   cursor = 0;
   live = null;
   pending = null;
+  emit();
+}
+
+/** Read-only timeline view. Undo is still applied by the owning editor, one committed step at a time. */
+export function journalSnapshot(): { frames: JournalFrame[]; cursor: number; pending: boolean } {
+  return { frames: frames.map(frame => ({ ...frame })), cursor, pending: pending !== null };
+}
+
+/** A replacement document invalidates its old entries, never another document's stack. */
+export function invalidateJournalDocument(scope: ZoomScope, docId: string): void {
+  for (let index = frames.length - 1; index >= 0; index--) {
+    if (frames[index]!.scope === scope && frames[index]!.docId === docId) {
+      frames.splice(index, 1);
+      if (index < cursor) cursor--;
+    }
+  }
+  if (pending?.frame.scope === scope && pending.frame.docId === docId) pending = null;
   emit();
 }

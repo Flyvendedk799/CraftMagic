@@ -13,6 +13,7 @@
  * `defaultOpen` decides only the first visit.
  */
 
+import { DockItem } from '../studio/workspace/Docks.js';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 export interface SectionProps {
@@ -50,7 +51,7 @@ export function Section({ id, title, summary, defaultOpen = true, children }: Se
     const openFromWorkbench = () => setOpen(true);
     node?.addEventListener('studio:open-section', openFromWorkbench);
     return () => node?.removeEventListener('studio:open-section', openFromWorkbench);
-  }, [id]);
+  });
 
   const toggle = useCallback(() => {
     setOpen((wasOpen) => {
@@ -65,15 +66,15 @@ export function Section({ id, title, summary, defaultOpen = true, children }: Se
   }, [id]);
 
   return (
-    <div id={`studio-section-${id}`} className={`section ${open ? 'section--open' : ''}`}>
-      <button type="button" className="section__head" onClick={toggle} aria-expanded={open}>
+    <DockItem id={id}><div id={`studio-section-${id}`} className={`section ${open ? 'section--open' : ''}`}>
+      <button type="button" className="section__head" onClick={toggle} aria-expanded={open} aria-controls={open ? `studio-section-body-${id}` : undefined}>
         <span className="section__chevron" aria-hidden="true" />
         <span className="section__title">{title}</span>
         {summary !== undefined && <span className="section__summary">{summary}</span>}
       </button>
       {/* Unmounted rather than hidden: the block picker and the agent panel both poll or hold
           canvases, and a collapsed section should cost nothing to keep closed. */}
-      {open && <div className="section__body">{children}</div>}
-    </div>
+      {open && <div id={`studio-section-body-${id}`} className="section__body">{children}</div>}
+    </div></DockItem>
   );
 }

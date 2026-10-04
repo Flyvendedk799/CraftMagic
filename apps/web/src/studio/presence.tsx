@@ -6,7 +6,17 @@
  * to warn.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import type { StudioMode } from './mode.js';
 
 export interface StudioPresence {
@@ -68,43 +78,57 @@ function leavePrompt(label: string): string {
 
 export function PresenceProvider({ children }: { children: ReactNode }) {
   const [presence, setPresence] = useState<StudioPresence>(EMPTY);
-  // Stable across presence updates — otherwise every report rebuilds `api`, re-runs the
-  // reporting effect, and the page never settles.
+  const current = useRef<StudioPresence>(EMPTY);
   const report = useCallback((patch: Partial<StudioPresence>) => {
-    setPresence((prev) => ({ ...prev, ...patch }));
+    current.current = { ...current.current, ...patch };
+    setPresence(current.current);
   }, []);
-
-  const confirmLeave = useCallback(
-    (to?: string) => {
-      if (!presence.dirty || isStudioPath(to)) return true;
-      return window.confirm(leavePrompt(presence.dirtyLabel));
-    },
-    [presence.dirty, presence.dirtyLabel],
-  );
-
+  const confirmLeave = useCallback((to?: string) => {
+    const value = current.current;
+    return (
+      !value.dirty ||
+      isStudioPath(to) ||
+      window.confirm(leavePrompt(value.dirtyLabel))
+    );
+  }, []);
   const api = useMemo<PresenceApi>(
     () => ({ presence, report, confirmLeave }),
     [presence, report, confirmLeave],
   );
-
-  // Remember the studio URL while we are in it, so a cancelled Back can restore it.
-  const studioHrefRef = useRef(window.location.href);
-  useEffect(() => {
-    if (window.location.pathname === '/studio') studioHrefRef.current = window.location.href;
+  const lastStudio = useRef({
+    href: window.location.href,
+    state: window.history.state,
   });
-
+  useLayoutEffect(() => {
+    if (window.location.pathname === '/studio')
+      lastStudio.current = {
+        href: window.location.href,
+        state: window.history.state,
+      };
+  });
   useEffect(() => {
     if (!presence.dirty) return;
-    const label = presence.dirtyLabel;
-    const onBefore = (event: BeforeUnloadEvent) => {
+    const before = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
-    const onClick = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    window.addEventListener('beforeunload', before);
+    return () => window.removeEventListener('beforeunload', before);
+  }, [presence.dirty]);
+  useEffect(() => {
+    const click = (event: MouseEvent) => {
+      if (
+        !current.current.dirty ||
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return;
       const anchor = (event.target as HTMLElement | null)?.closest?.('a');
-      if (!anchor) return;
-      if (anchor.target === '_blank') return;
+      if (!anchor || anchor.target === '_blank') return;
       const href = anchor.getAttribute('href');
       if (!href || href.startsWith('#')) return;
       let url: URL;
@@ -113,33 +137,45 @@ export function PresenceProvider({ children }: { children: ReactNode }) {
       } catch {
         return;
       }
-      if (url.origin !== window.location.origin) return;
-      // Staying inside the studio is a zoom, not a departure. The pages flush on the way out.
-      if (url.pathname === '/studio') return;
-      const ok = window.confirm(leavePrompt(label));
-      if (!ok) {
+      if (url.origin !== window.location.origin || url.pathname === '/studio')
+        return;
+      if (!window.confirm(leavePrompt(current.current.dirtyLabel))) {
         event.preventDefault();
         event.stopPropagation();
       }
     };
-    // Browser back/forward bypasses the click capture. Prompt only when the new location
-    // has left the studio — a Back that stays on `/studio` is a zoom.
-    const onPopState = () => {
-      if (window.location.pathname === '/studio') return;
-      const ok = window.confirm(leavePrompt(label));
-      if (!ok) window.history.pushState(null, '', studioHrefRef.current);
+    const pop = (event: PopStateEvent) => {
+      if (!current.current.dirty || window.location.pathname === '/studio')
+        return;
+      if (window.confirm(leavePrompt(current.current.dirtyLabel))) return;
+      // Run before the router's bubble listener. A cancelled traversal must not unmount
+      // the editor before the browser returns to its original history entry.
+      event.stopImmediatePropagation();
+      const from = window.history.state?.idx,
+        to = lastStudio.current.state?.idx;
+      if (Number.isInteger(from) && Number.isInteger(to) && from !== to)
+        window.history.go(to - from);
+      else {
+        window.history.pushState(
+          lastStudio.current.state,
+          '',
+          lastStudio.current.href,
+        );
+        window.dispatchEvent(
+          new PopStateEvent('popstate', { state: lastStudio.current.state }),
+        );
+      }
     };
-    window.addEventListener('beforeunload', onBefore);
-    document.addEventListener('click', onClick, true);
-    window.addEventListener('popstate', onPopState);
+    document.addEventListener('click', click, true);
+    window.addEventListener('popstate', pop, true);
     return () => {
-      window.removeEventListener('beforeunload', onBefore);
-      document.removeEventListener('click', onClick, true);
-      window.removeEventListener('popstate', onPopState);
+      document.removeEventListener('click', click, true);
+      window.removeEventListener('popstate', pop, true);
     };
-  }, [presence.dirty, presence.dirtyLabel]);
-
-  return <PresenceContext.Provider value={api}>{children}</PresenceContext.Provider>;
+  }, []);
+  return (
+    <PresenceContext.Provider value={api}>{children}</PresenceContext.Provider>
+  );
 }
 
 export function useStudioPresence(): StudioPresence {
@@ -156,7 +192,7 @@ export function useConfirmLeave(): (to?: string) => boolean {
 export function useReportPresence(patch: Partial<StudioPresence>): void {
   const report = useContext(PresenceContext)?.report;
   const key = JSON.stringify(patch);
-  useEffect(() => {
+  useLayoutEffect(() => {
     report?.(patch);
     // `patch` is a fresh object every render; `key` is its value. `report` is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,3 +1,5 @@
+import { MaterialBrowser } from '../studio/workspace/MaterialBrowser.js';
+import { DockItem } from '../studio/workspace/Docks.js';
 /**
  * The editor page.
  *
@@ -56,7 +58,6 @@ import {
   previewScale,
   baseSize,
   programScale,
-  NO_SCALE,
   type ScalePercent,
   registerBlankBuild,
   registerGeneratedBuild,
@@ -80,7 +81,7 @@ import { ShortcutHelp } from './ShortcutHelp.js';
 import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
 import { BuildMenu, type BuildOption } from './BuildMenu.js';
 import { ToolPalette, type RegionAction } from './ToolPalette.js';
-import { toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
+import { TOOLS, toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor, type Preview } from './preview.js';
 import { useAssembly } from './useAssembly.js';
 import { useEditSession } from './useEditSession.js';
@@ -322,7 +323,7 @@ export function EditorPage() {
   const editCount = session.edits;
   const writeLibraryRow = useCallback(() => {
     if (!build.id.startsWith('lib:') || hiddenPaths.length > 0) return;
-    if (lastSavedVersion.current === syncVersion || queuedVersion.current === syncVersion) return;
+    if (lastSavedVersion.current === syncVersion || queuedVersion.current === syncVersion) return writeChain.current;
     const row = build.id.slice(4);
     queuedVersion.current = syncVersion;
     setLibrarySync({ kind: 'saving' });
@@ -348,6 +349,7 @@ export function EditorPage() {
     }).finally(() => {
       if (queuedVersion.current === syncVersion) queuedVersion.current = null;
     });
+    return writeChain.current;
   }, [build.id, build.program, grid, name, exportEdits, editCount, hiddenPaths.length, syncVersion]);
 
   useEffect(() => {
@@ -457,6 +459,8 @@ export function EditorPage() {
             search.delete('layer');
             search.delete('only');
             search.delete(STYLE_PARAM);
+            // Snapshot keys: deleting from the live iterator would skip adjacent parameters.
+            // eslint-disable-next-line unicorn/no-useless-spread
             for (const key of [...search.keys()]) {
               if (key.startsWith(PARAM_PREFIX) || key.startsWith(SCALE_PREFIX)) search.delete(key);
             }
@@ -550,13 +554,14 @@ export function EditorPage() {
   const [ortho, setOrtho] = useState(false);
 
   const onTool = useCallback((next: ToolId) => {
+    assembly.skip();
     setTool(next);
     setAnchor(null);
     setNotice(null);
     // The box belongs to the Box tool. Leaving it drawn behind a brush would be a selection
     // nothing on screen could act on.
     if (next !== 'select') setRegion(null);
-  }, []);
+  }, [assembly.skip]);
 
   // The screenshot-taker the canvas hands over on mount. A ref, not state: nothing renders
   // differently for having it, and it changes on every canvas remount.
@@ -1333,6 +1338,16 @@ export function EditorPage() {
   const guard = useCallback((nav: PendingNav) => applyNav(nav, update), [update]);
 
   useRegisterWorkbench('build', {
+    commands: [
+      ...TOOLS.map(spec => ({ id: `tool-${spec.id}`, label: `Tool: ${spec.label}`, hint: spec.hint, category: 'Tools', shortcut: spec.key, checked: tool === spec.id, run: () => onTool(spec.id) })),
+      ...VIEWS.map(entry => ({ id: `view-${entry.kind}`, label: `View: ${entry.label}`, category: 'View', run: () => setView(prev => ({kind: entry.kind, nonce: (prev?.nonce ?? 0)+1})) })),
+      {id:'view-isolate',label:'Toggle isolated layer',category:'View',disabled:layer===null,run:()=>update({toggleIsolate:true})},
+      {id:'view-all-layers',label:'Show all layers',category:'View',run:()=>update({layer:null})},
+      {id:'tools-help',label:'Keyboard shortcuts',category:'Help',shortcut:'?',run:()=>setHelp(true)},
+    ],
+    saving: librarySync.kind === 'saving',
+    saveError: librarySync.kind === 'error' ? librarySync.message : null,
+    activity: generation.phase.kind !== 'idle' && generation.phase.kind !== 'failed' ? `AI · ${generation.phase.kind}` : null,
     saveLabel: libraryRowId(build.id) ? 'Save build' : 'Save to library',
     canSave: auth.status === 'signedIn' && session.blockCount > 0 && hiddenPaths.length === 0 && !fetching.loading,
     saveHint: hiddenPaths.length > 0
@@ -1344,7 +1359,7 @@ export function EditorPage() {
       if (hiddenPaths.length > 0) { setNotice('Show all components before saving the complete build.'); return; }
       if (session.blockCount === 0) { setNotice('Place blocks or generate a build before saving.'); return; }
       if (auth.status !== 'signedIn') { setNotice('Sign in to save this build to your library.'); return; }
-      if (libraryRowId(build.id)) { writeLibraryRow(); return; }
+      if (libraryRowId(build.id)) { await writeLibraryRow(); return; }
       setLibrarySync({ kind: 'saving' });
       try {
         const saved = await saveToLibrary({
@@ -1407,6 +1422,7 @@ export function EditorPage() {
       data-edits={session.edits}
       data-detached={session.detached}
       data-tool={tool}
+      data-assembling={assembly.assembling}
     >
       {/* The same bar every other signed-in page wears. It used to be withheld here on the
           grounds that the editor is a full-viewport canvas with its own HUD — but that made
@@ -1461,7 +1477,7 @@ export function EditorPage() {
           <h1>Shape the structure</h1>
           <p>Choose a tool, then work directly on the model.</p>
         </header>
-        <BuildMenu
+        <DockItem id="assets"><BuildMenu
           current={buildId}
           currentName={buildName}
           summary={`${session.grid.size.x}×${session.grid.size.y}×${session.grid.size.z}`}
@@ -1490,10 +1506,9 @@ export function EditorPage() {
             </label>
           }
         />
+        <MaterialBrowser value={block} onChange={setBlock}/></DockItem>
         {importError && (
-          <p className="tools__notice" role="alert">
-            {importError}
-          </p>
+          <DockItem id="assets"><p className="tools__notice" role="alert">{importError}</p></DockItem>
         )}
 
         <Section id="tools" title="Edit" summary={session.edits > 0 ? `${session.edits} edits` : undefined}>
@@ -1545,6 +1560,7 @@ export function EditorPage() {
 
 
 
+        <DockItem id="shape"><div className="workspace-panel-group">
         {build.program && (
           <ScalePanel
             scale={scale}
@@ -1608,6 +1624,8 @@ export function EditorPage() {
           </div>
         )}
 
+        </div></DockItem>
+        <DockItem id="stats"><div className="workspace-panel-group">
         {remaining > 0 && (
           <div className="hud__progress" title={`${remaining} chunks left to mesh`}>
             <span style={{ width: `${Math.round(meshed * 100)}%` }} />
@@ -1642,9 +1660,8 @@ export function EditorPage() {
           </p>
         )}
 
-        <div className="save">
-          <AccountPanel />
-        </div>
+        </div></DockItem>
+        <DockItem id="account"><div className="save"><AccountPanel /></div></DockItem>
 
         {/* Dashboard, Architecture mode and the mod page were all listed here. All three are one
             click away in the bar above now, and a link that repeats one already on screen is
@@ -1654,7 +1671,7 @@ export function EditorPage() {
       </section>
 
       <div className="hud-right">
-        <PromptPanel
+        <DockItem id="assistant"><PromptPanel
           phase={generation.phase}
           spend={generation.spend}
           estimate={generation.estimate}
@@ -1664,7 +1681,7 @@ export function EditorPage() {
           onCancel={generation.cancel}
           onRefine={refineTarget ? (instruction) => void generation.generate(instruction, refineTarget) : null}
           initialPrompt={seededPrompt}
-        />
+        /></DockItem>
 
         {/* Moved here from the left column, which had grown to hold the tools, the selection,
             the brush, the palette, the history, the shape sliders *and* everything below —
@@ -1678,7 +1695,7 @@ export function EditorPage() {
           // Size and block count in the header, because they are what changes while scaling —
           // collapsing this section must not cost the two numbers people watch.
           summary={`${grid.size.x}×${grid.size.y}×${grid.size.z} · ${session.blockCount.toLocaleString()}`}
-          defaultOpen={false}
+          defaultOpen={true}
         >
         <dl className="hud__stats">
           <dt>Build</dt>
@@ -1718,7 +1735,7 @@ export function EditorPage() {
                     ? `${outlineParts.length}`
                     : undefined
               }
-              defaultOpen={false}
+              defaultOpen={true}
             >
               <Outliner
                 parts={outlineParts}
@@ -1734,6 +1751,7 @@ export function EditorPage() {
           )}
 
         <section className="hud">
+        <DockItem id="delivery-state"><div>
         {build.id.startsWith('lib:') && librarySync.kind !== 'idle' &&
           (librarySync.kind !== 'saved' || lastSavedVersion.current === syncVersion) && (
           <p className={`export__sync export__sync--${librarySync.kind}`} role="status">
@@ -1778,7 +1796,7 @@ export function EditorPage() {
             ) : null
           }
         />}
-        </section>
+        </div></DockItem></section>
 
         <section className="hud">
           <Section id="picture" title="Picture to structure" defaultOpen={false}>

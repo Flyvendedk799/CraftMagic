@@ -1,3 +1,4 @@
+import { perspectiveResizeFactor, orthographicResizeFactor } from './viewport.js';
 /**
  * The r3f side of the viewer.
  *
@@ -412,6 +413,22 @@ function Framing({
 }) {
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as unknown as OrbitLike | null;
+  const viewportSize = useThree(state => state.size);
+  const previousViewport = useRef<{width:number;height:number;camera:THREE.Camera}|null>(null);
+  useEffect(() => {
+    const before = previousViewport.current;
+    previousViewport.current = {width:viewportSize.width,height:viewportSize.height,camera};
+    if (!before || before.camera !== camera || !controls) return;
+    if (camera instanceof THREE.PerspectiveCamera) {
+      const factor = perspectiveResizeFactor(before, viewportSize);
+      if (Math.abs(factor-1) > .001) camera.position.sub(controls.target).multiplyScalar(factor).add(controls.target);
+    } else if (camera instanceof THREE.OrthographicCamera) {
+      camera.zoom *= orthographicResizeFactor(before, viewportSize);
+      camera.updateProjectionMatrix();
+    }
+    controls.update();
+  }, [camera, controls, viewportSize.width, viewportSize.height]);
+
 
   // Read by the auto-frame below without being a dependency of it: a re-frame provoked by the
   // build changing shape must keep whatever the camera was pointed at, and taking the focus

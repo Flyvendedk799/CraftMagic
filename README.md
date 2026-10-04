@@ -12,6 +12,14 @@ The product path, which every door (landing, dashboard, studio) is meant to tell
 three studio modes one product rather than three demos; `docs/PATCH-2.0.md` is the record of
 the release before it.
 
+## Rebuilt Studio workspace
+
+The Studio is now a canvas-first workbench with document tabs, resizable task docks, a New document wizard, searchable commands and a unified file manager. Build has a material library and component inspector; Plan has separate drafting and inspection panels; World separates terrain, placements and delivery. AI remains available in its own dock.
+
+Use **Ctrl+K** for tools and commands, **F8** for focus mode, and **Deliver** for account saves, schematic/program downloads, guides and Minecraft delivery. Browser drafts stay on the current device; account documents require sign-in. Undo follows the document that owns the edit during the current session.
+
+See [Studio rebuild and verification](docs/STUDIO-REBUILD.md) for architecture, persistence boundaries and reproducible browser/database checks.
+
 ## How it works
 
 The AI does not generate voxels. It generates a **build program** — a small parametric

@@ -1,3 +1,4 @@
+import { WorkingCopies } from '../studio/workspace/retention.js';
 /**
  * World mode's session: the document, its undo stack, and where it is kept.
  *
@@ -29,7 +30,7 @@ import {
 } from '@craftmagic/core';
 import { WorldHistory, type WorldDelta } from './history.js';
 import { worldHistoryFor } from '../studio/retainHistory.js';
-import { recordChange } from '../studio/journal.js';
+import { invalidateJournalDocument, recordChange } from '../studio/journal.js';
 import { TerrainStroke, applyTerrainDelta } from './stroke.js';
 import { loadDraft, saveDraft, type SavedWorld } from './storage.js';
 import { localStore, type WorldStore } from './api.js';
@@ -38,10 +39,13 @@ import { localStore, type WorldStore } from './api.js';
 const AUTOSAVE_DELAY = 600;
 // IndexedDB writes are asynchronous. Keep the most recent unmounted document in memory so a
 // rapid World → Build → World trip cannot read the previous draft before the flush commits.
-let recentDraft: WorldDoc | null = null;
+const workingWorlds = new WorkingCopies<{doc:WorldDoc;dirty:boolean}>(12,64*1024*1024);
+
+export function invalidateWorkingWorld(documentKey: string): void { workingWorlds.invalidate(documentKey); invalidateJournalDocument('world',documentKey); }
 
 export interface WorldSession {
   doc: WorldDoc;
+  historyId: string;
   /** Bumped whenever the document changes, including in-place terrain writes. */
   revision: number;
   /** True until the stored draft has been read; the map should not paint over it meanwhile. */
@@ -91,9 +95,12 @@ export interface WorldSession {
 export function useWorldSession(
   initial?: () => WorldDoc,
   store: WorldStore = localStore,
+  documentKey = 'open-world',
 ): WorldSession {
+  const recovered = useRef(workingWorlds.get(documentKey));
+  const cacheVersion = useRef(workingWorlds.version(documentKey));
   const docRef = useRef<WorldDoc | null>(null);
-  if (docRef.current === null) docRef.current = normalizeWorld(initial ? initial() : createWorld());
+  if (docRef.current === null) docRef.current = recovered.current ? cloneWorld(recovered.current.doc) : normalizeWorld(initial ? initial() : createWorld());
 
   const [revision, setRevision] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -110,7 +117,7 @@ export function useWorldSession(
   // One stack for the world on screen. Keyed constantly rather than by document id: the id
   // is minted again on every remount, before the draft is read back, and keying on it would
   // hand back an empty stack every time you returned to the map.
-  const history = (historyRef.current ??= worldHistoryFor('open-world'));
+  const history = (historyRef.current ??= worldHistoryFor(documentKey));
 
   const bump = useCallback(() => {
     const next = ++revisionRef.current;
@@ -132,7 +139,7 @@ export function useWorldSession(
    */
   useEffect(() => {
     let live = true;
-    void (recentDraft ? Promise.resolve(cloneWorld(recentDraft)) : loadDraft()).then((draft) => {
+    void (recovered.current ? Promise.resolve(cloneWorld(recovered.current.doc)) : documentKey === 'open-world' || documentKey === '/studio?mode=world' ? loadDraft() : Promise.resolve(null)).then((draft) => {
       if (!live) return;
       if (draft) docRef.current = draft;
       loadedRef.current = true;
@@ -140,7 +147,7 @@ export function useWorldSession(
       const loadedRevision = bump();
       // A fresh blank map has nothing to save yet. A recovered draft may differ from the
       // named account save, so it stays dirty until the user saves it explicitly.
-      if (!draft) setSavedRevision(loadedRevision);
+      if (!draft || recovered.current && !recovered.current.dirty) setSavedRevision(loadedRevision);
     });
     return () => {
       live = false;
@@ -153,7 +160,7 @@ export function useWorldSession(
     let live = true;
     void store.list().then((rows) => {
       if (live) setSaved(rows);
-    });
+    }).catch(() => { if (live) setSaveError('Could not load your saved worlds. Open Your work and retry loading.'); });
     return () => {
       live = false;
     };
@@ -185,12 +192,15 @@ export function useWorldSession(
    * in the editor: the document is mutated in place and the ref points at the live one, so
    * there is no stale-identity problem to avoid.
    */
+  const dirtyRef = useRef(false);
+  dirtyRef.current = revision !== savedRevision;
   useEffect(
     () => () => {
       const doc = docRef.current;
       if (doc && loadedRef.current) {
-        recentDraft = cloneWorld(doc);
-        void saveDraft(recentDraft);
+        const snapshot = cloneWorld(doc);
+        workingWorlds.setIfCurrent(documentKey, {doc:snapshot,dirty:dirtyRef.current}, snapshot.terrain.height.byteLength + snapshot.terrain.strata.byteLength + JSON.stringify(snapshot.placements).length*2 + Object.values(snapshot.overlay).reduce((sum,chunk)=>sum+chunk.data.length*2 + JSON.stringify(chunk.palette).length*2,0), cacheVersion.current);
+        void saveDraft(snapshot);
       }
     },
     [],
@@ -203,7 +213,7 @@ export function useWorldSession(
 
   const beginStroke = useCallback(() => new TerrainStroke(), []);
 
-  const note = useCallback(() => recordChange('world', 'open-world'), []);
+  const note = useCallback(() => recordChange('world', documentKey, 'Edit world'), []);
 
   const endStroke = useCallback(
     (stroke: TerrainStroke) => {
@@ -364,7 +374,7 @@ export function useWorldSession(
       docRef.current = next;
       // Opening a different map starts a fresh stack. Re-opening the one already on screen
       // — including the remount a mode switch causes — must not throw the sculpting away.
-      if (!same) history.clear();
+      if (!same) { history.clear(); invalidateJournalDocument('world',documentKey); }
       const openedRevision = bump();
       setSavedRevision(openedRevision);
       setSaveError(null);
@@ -387,6 +397,7 @@ export function useWorldSession(
     () => ({
       doc: docRef.current!,
       revision,
+      historyId: documentKey,
       loading,
       beginStroke,
       endStroke,

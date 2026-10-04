@@ -78,3 +78,9 @@ describe('project journal', () => {
     resetJournal();
   });
 });
+
+import { invalidateJournalDocument, journalSnapshot } from './journal.js';
+describe('document replacement safety',()=>{
+ it('invalidates only the replaced document and adjusts the cursor',()=>{resetJournal();recordChange('build','a');recordChange('arch','/studio?mode=arch&plan=local%3Ap');recordChange('build','b');invalidateJournalDocument('build','a');expect(journalSnapshot().frames.map(f=>f.docId)).toEqual(['/studio?mode=arch&plan=local%3Ap','b']);expect(journalSnapshot().cursor).toBe(2);});
+ it('exposes copies rather than mutable internal history',()=>{resetJournal();recordChange('build','a','Place block');const copy=journalSnapshot();copy.frames.length=0;expect(journalSnapshot().frames).toHaveLength(1);});
+});

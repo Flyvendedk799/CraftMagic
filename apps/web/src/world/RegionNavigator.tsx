@@ -156,7 +156,7 @@ export function RegionNavigator(props: RegionNavigatorProps) {
               8×8 map and a 2×2 map both fill the panel instead of one of them being a stamp. */}
           <div
             className="regionnav__grid"
-            role="grid"
+            role="group"
             aria-label="Regions"
             tabIndex={0}
             onKeyDown={onKeyDown}
@@ -195,6 +195,7 @@ export function RegionNavigator(props: RegionNavigatorProps) {
                           (trimmed ? ' — asked for, but past the viewer’s budget' : '')
                         : `Region ${rx},${rz}`
                     }
+                    onClick={(event) => { if (event.detail === 0) pick(rx, rz, event.shiftKey); }}
                     onPointerDown={(event) => {
                       dragFrom.current = { rx, rz };
                       pick(rx, rz, event.shiftKey);

@@ -1,3 +1,4 @@
+import { DockItem } from '../studio/workspace/Docks.js';
 /**
  * Architecture mode.
  *
@@ -117,7 +118,10 @@ const EMPTY_GRID: VoxelGrid = {
 
 export function ArchitecturePage() {
   const navigate = useNavigate();
-  const session = usePlanSession(() => templateById('blank')!.build());
+  const [searchParams, setSearchParams] = useSearchParams();
+  const planParam = searchParams.get('plan');
+  const historyId = `/studio?mode=arch${planParam ? `&plan=${encodeURIComponent(planParam)}` : ''}`;
+  const session = usePlanSession(() => templateById('blank')!.build(), historyId);
   const { plan } = session;
 
   const [tool, setTool] = useState<LayoutToolId>('room');
@@ -149,7 +153,6 @@ export function ArchitecturePage() {
   const [importError, setImportError] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
 
-  useZoomUndo('arch', 'architecture', session.undo, session.redo);
   const journal = useJournalFlags();
   /** The saved build the Place tool will drop. Armed from the Components panel. */
   const [placeChoice, setPlaceChoice] = useState<PlaceChoice | null>(null);
@@ -200,23 +203,23 @@ export function ArchitecturePage() {
   // override: a recompile writes new voxels and leaves the layer where it is. A row with no
   // plan yet gets a blank layout still bound to that row — "create a layout for this build"
   // rather than dumping into an untitled disconnected draft.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const planParam = searchParams.get('plan');
   const linkedId = planParam?.startsWith('lib:') ? planParam.slice(4) : null;
   const localPlanId = planParam?.startsWith('local:') ? planParam.slice(6) : null;
   const loadedLocal = useRef<string | null>(null);
+  const [linkAttempt, setLinkAttempt] = useState(0);
   useEffect(() => {
     if (!localPlanId) { loadedLocal.current = null; return; }
     if (loadedLocal.current === localPlanId) return;
     const entry = listSaved().find((saved) => saved.id === localPlanId);
     if (!entry) { setImportError('That browser floorplan is no longer available.'); return; }
     loadedLocal.current = localPlanId;
-    load(entry.plan, true);
+    if (!session.recovered) load(entry.plan, true);
     setImportError(null);
   }, [localPlanId, load]);
   const [linkedEdits, setLinkedEdits] = useState<EditLayer | null>(null);
   /** True once the linked library row has been fetched into this session. */
   const [linkReady, setLinkReady] = useState(false);
+  useZoomUndo('arch', session.historyId, session.undo, session.redo, !linkedId || linkReady);
   const loadedLink = useRef<string | null>(null);
   /**
    * The plan document id that belongs to the open linked row.
@@ -246,7 +249,7 @@ export function ArchitecturePage() {
           const blank = templateById('blank')!.build();
           blank.name = detail.name || blank.name;
           linkedPlanId.current = blank.id;
-          load(blank, true);
+          if (!session.recovered) load(blank, true);
           setImportError(null);
           setNotice(
             `No floorplan on “${detail.name || 'this build'}” yet — draw one here. Saving keeps it linked to the same blocks.`,
@@ -256,7 +259,7 @@ export function ArchitecturePage() {
         }
         const next = normalizePlan(detail.plan);
         linkedPlanId.current = next.id;
-        load(next, true);
+        if (!session.recovered) load(next, true);
         setImportError(null);
         setLinkReady(true);
       })
@@ -266,7 +269,7 @@ export function ArchitecturePage() {
     return () => {
       cancelled = true;
     };
-  }, [linkedId, load]);
+  }, [linkedId, load, linkAttempt]);
 
   // Keep the write-guard in step with any later load (template, import) while linked — otherwise
   // a new drawing would never save because `linkedPlanId` still named the previous one.
@@ -737,22 +740,7 @@ export function ArchitecturePage() {
     dirty: session.dirty,
     dirtyLabel: 'the floorplan',
   });
-  useRegisterWorkbench('arch', {
-    saveLabel: 'Save draft',
-    save: () => {
-      session.save();
-      setNotice('Draft saved in this browser. Save to library for access on other devices.');
-    },
-    canSave: session.dirty,
-    saveHint: 'Keep a named floorplan draft in this browser. Use Save to library for account storage.',
-    create: () => {
-      if (!loadFromUser(templateById('blank')!.build(), true)) return;
-      setSearchParams((params) => {
-        params.delete('plan');
-        return params;
-      }, { replace: true });
-    },
-  });
+
 
   // A finished AI pass lands in Build, exactly like the hand-off button: the result is a
   // generated build, not a plan, and Build is where a generated build lives. The plan here is
@@ -767,6 +755,29 @@ export function ArchitecturePage() {
     [navigate],
   );
   const generation = useGeneration(onGenerated);
+  useRegisterWorkbench('arch', {
+    commands: [
+      ...LAYOUT_TOOLS.map(spec => ({id:`tool-${spec.id}`,label:`Tool: ${spec.label}`,hint:spec.hint,category:'Tools',shortcut:spec.key,checked:tool===spec.id,run:()=>setTool(spec.id)})),
+      {id:'plan-frame',label:'Fit floorplan to view',category:'View',run:()=>setFitNonce(n=>n+1)},
+      {id:'tools-help',label:'Keyboard shortcuts',category:'Help',shortcut:'?',run:()=>setHelp(true)},
+    ],
+    saveError: session.saveError,
+    activity: generation.phase.kind !== 'idle' && generation.phase.kind !== 'failed' ? `AI · ${generation.phase.kind}` : null,
+    saveLabel: 'Save draft',
+    save: () => {
+      if (!session.save()) throw new Error('Could not save the floorplan on this device. Download a copy or free storage and retry.');
+      setNotice('Draft saved in this browser. Save to library for access on other devices.');
+    },
+    canSave: session.dirty && (!linkedId || linkReady) && (!localPlanId || loadedLocal.current === localPlanId),
+    saveHint: 'Keep a named floorplan draft in this browser. Use Save to library for account storage.',
+    create: () => {
+      if (!loadFromUser(templateById('blank')!.build(), true)) return;
+      setSearchParams((params) => {
+        params.delete('plan');
+        return params;
+      }, { replace: true });
+    },
+  });
 
   const onImport = useCallback(
     async (file: File | undefined) => {
@@ -884,12 +895,17 @@ export function ArchitecturePage() {
   }, [focusKey]);
 
   return (
-    <div className="arch">
+    <div className="arch" data-plan-id={plan.id} data-dirty={session.dirty}>
       {/* The same bar the editor wears, for the same reason: this is a full-viewport tool, and
           without it the only way back out is whatever links its own panel happens to carry.
           The bar already lists this page as a destination, so arriving here and losing it was
           the one place the chrome contradicted itself. */}
       <AppNav current="architecture" />
+      {((linkedId && !linkReady) || (localPlanId && loadedLocal.current !== localPlanId)) && <div className="workspace-document-state" role={importError ? 'alert' : 'status'}>
+        <h2>{importError ? 'This floorplan could not be opened' : 'Opening floorplan…'}</h2>
+        <p>{importError ?? 'Loading the drawing for this structure.'}</p>
+        {importError && <div>{linkedId && <button onClick={() => {setImportError(null);setLinkAttempt(value => value + 1);}}>Retry opening floorplan</button>}<button onClick={() => navigate('/studio?mode=arch')}>Open browser draft</button></div>}
+      </div>}
 
       <section className="hud arch__panel">
         {/* The title stays put while the column scrolls. Nine sections is a long way past a
@@ -905,7 +921,7 @@ export function ArchitecturePage() {
         {/* Templates. They were a bare row of buttons above the tool rail, which read as five
             more tools — and each one silently replaces everything drawn. The eyebrow says
             what they are, and the hover says what each one contains. */}
-        <p className="ui-eyebrow">Start from</p>
+        <DockItem id="assets"><div className="workspace-panel-group"><p className="ui-eyebrow">Start from</p>
         <div className="arch__templates">
           {TEMPLATES.map((template) => (
             <button
@@ -920,6 +936,7 @@ export function ArchitecturePage() {
           ))}
         </div>
 
+        </div></DockItem>
         {/* The `layouter-` section ids are deliberately unchanged. `Section` persists each
             one's open state under `craftmagic.section.<id>`, so renaming them would silently
             reset every panel everyone had arranged, to buy nothing a user can see. */}
@@ -1271,9 +1288,8 @@ export function ArchitecturePage() {
           </p>
         </Section>
 
-        <div className="save">
-          <AccountPanel />
-        </div>
+        <DockItem id="delivery-state">{session.saveError && <p role="alert" className="workspace-files__error">{session.saveError}</p>}</DockItem>
+        <DockItem id="account"><div className="save"><AccountPanel /></div></DockItem>
 
         {/* The editor and the dashboard were listed here. Both are one click away in the bar
             above now, and a link that repeats one already on screen is furniture. */}

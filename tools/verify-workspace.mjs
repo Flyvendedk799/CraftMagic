@@ -923,6 +923,8 @@ try {
   await ready();
   await selectTab('left', 'Tools'); await selectTab('right', 'Inspect');
   await page.waitForFunction(() => document.querySelector('.editor')?.getAttribute('data-assembling') === 'false' && document.querySelector('.editor')?.getAttribute('data-remaining') === '0');
+  // Let the completed worker mesh reach the GPU before saving visual evidence.
+  await page.waitForTimeout(2000);
   await page.screenshot({path:path.join(output,'studio-finished.png')});
   console.log(
     `PASS: ${results.length} workspace browser scenarios. Screenshots: ${output}`,

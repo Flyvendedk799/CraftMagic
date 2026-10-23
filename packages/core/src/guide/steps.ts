@@ -23,11 +23,12 @@
  * matters when someone is following a printed copy.
  */
 
-import type { BuildPart, VoxelGrid } from '../ir/types.js';
+import type { BuildPart, Face, VoxelGrid } from '../ir/types.js';
 import { AIR_INDEX, voxelIndex } from '../ir/types.js';
-import { displayName, parseBlockRef } from '../registry/registry.js';
+import type { ParsedBlock } from '../registry/registry.js';
+import { displayName, formatRef, parseBlockRef } from '../registry/registry.js';
 import type { BuildGuideDesignSystem, Difficulty, GuidePart } from './design-system.js';
-import { DEFAULT_DESIGN_SYSTEM, anonymousStepTitle, difficultyFor, labelParts } from './design-system.js';
+import { DEFAULT_DESIGN_SYSTEM, anonymousStepTitle, bearing, difficultyFor, labelParts } from './design-system.js';
 
 /**
  * The default design system's step bounds, re-exported.
@@ -39,11 +40,31 @@ import { DEFAULT_DESIGN_SYSTEM, anonymousStepTitle, difficultyFor, labelParts } 
 export const MAX_BLOCKS_PER_STEP = DEFAULT_DESIGN_SYSTEM.step.maxBlocks;
 export const MIN_BLOCKS_PER_STEP = DEFAULT_DESIGN_SYSTEM.step.minBlocks;
 
+export type CameraOrientation = 'SE' | 'SW' | 'NW' | 'NE';
+
+export interface BlockstateGlyph {
+	kind: 'stairs' | 'slab' | 'pillar' | 'door' | 'trapdoor' | 'generic';
+	facing?: 'north' | 'south' | 'east' | 'west' | 'up' | 'down';
+	half?: 'top' | 'bottom' | 'upper' | 'lower';
+	shape?: 'straight' | 'inner_left' | 'inner_right' | 'outer_left' | 'outer_right';
+	axis?: 'x' | 'y' | 'z';
+}
+
+export interface StepTrayItem {
+	block: string;
+	displayName: string;
+	count: number;
+	canonicalRef: string;
+	states: Record<string, string>;
+	glyph: BlockstateGlyph;
+}
+
 export interface StepBlock {
 	x: number;
 	y: number;
 	z: number;
 	paletteIndex: number;
+	isOverhang?: boolean;
 }
 
 /** How much of one part a single step places. */
@@ -76,6 +97,10 @@ export interface BuildStep {
 	blocks: StepBlock[];
 	/** Per-blockstate counts for this step alone. */
 	materials: MaterialCount[];
+	trayItems: StepTrayItem[];
+	optimalOrientation: CameraOrientation;
+	hasOverhangs: boolean;
+	overhangCount: number;
 }
 
 export interface MaterialCount {
@@ -133,6 +158,7 @@ export function buildGuide(grid: VoxelGrid, name = 'Build', options: GuideOption
 
 	const steps: BuildStep[] = [];
 	let totalBlocks = 0;
+	const placedVoxels = new Uint8Array(grid.voxels.length);
 
 	for (let y = 0; y < grid.size.y; y++) {
 		const cells = layerCells(grid, y, origin);
@@ -142,14 +168,50 @@ export function buildGuide(grid: VoxelGrid, name = 'Build', options: GuideOption
 		const groups = segmentLayer(cells, design, hasParts);
 		groups.forEach((group, part) => {
 			const stepParts = tallyParts(group, byId);
+			const primaryPart = stepParts[0] ? byId.get(stepParts[0].id) : undefined;
+			let face: Face | undefined = primaryPart?.face;
+			if (!face && primaryPart) {
+				const b = bearing(primaryPart, grid.size, design);
+				if (b === 'north' || b === 'south' || b === 'east' || b === 'west') {
+					face = b;
+				}
+			}
+
+			const blocks: StepBlock[] = group.map((c) => ({
+				x: c.x,
+				y,
+				z: c.z,
+				paletteIndex: c.paletteIndex,
+				isOverhang: isOverhangBlock(grid, c.x, y, c.z),
+			}));
+
+			const hasOverhangs = blocks.some((b) => b.isOverhang);
+			const overhangCount = blocks.filter((b) => b.isOverhang).length;
+
+			const trayItems = buildTrayItems(grid, blocks);
+			const optimalOrientation = calculateOptimalOrientation(
+				blocks,
+				grid.size,
+				placedVoxels,
+				face,
+			);
+
+			for (const b of blocks) {
+				placedVoxels[voxelIndex(grid.size, b.x, b.y, b.z)] = 1;
+			}
+
 			steps.push({
 				index: steps.length + 1,
 				layer: y,
 				...(groups.length > 1 ? { partOfLayer: { part: part + 1, total: groups.length } } : {}),
 				title: stepParts[0]?.label ?? anonymousStepTitle(y, design),
 				parts: stepParts,
-				blocks: group.map((c) => ({ x: c.x, y, z: c.z, paletteIndex: c.paletteIndex })),
+				blocks,
 				materials: countMaterials(grid, group.map((c) => c.paletteIndex), design),
+				trayItems,
+				optimalOrientation,
+				hasOverhangs,
+				overhangCount,
 			});
 		});
 	}
@@ -445,4 +507,274 @@ function countMaterials(
 	// Most-used first, with a name tiebreak so equal counts do not reorder between runs.
 	entries.sort((a, b) => b.count - a.count || a.block.localeCompare(b.block));
 	return entries;
+}
+
+/* --- overhang detection ----------------------------------------------------------------- */
+
+/**
+ * Detects whether a block placed at (x, y, z) is an overhang.
+ *
+ * Ground level (y = 0) is always supported by definition.
+ * At y > 0, if the voxel directly below at (x, y - 1, z) is air, it is an overhang.
+ */
+export function isOverhangBlock(grid: VoxelGrid, x: number, y: number, z: number): boolean {
+	if (y === 0) return false;
+	if (x < 0 || x >= grid.size.x || y >= grid.size.y || z < 0 || z >= grid.size.z) {
+		return false;
+	}
+	const belowIndex = voxelIndex(grid.size, x, y - 1, z);
+	return grid.voxels[belowIndex] === AIR_INDEX;
+}
+
+/* --- blockstate glyphs & tray items ----------------------------------------------------- */
+
+/**
+ * Extracts a directional BlockstateGlyph from a block ID and its blockstates.
+ */
+export function extractBlockstateGlyph(
+	blockIdOrRef: string,
+	statesInput?: Record<string, string>,
+): BlockstateGlyph {
+	let blockId = blockIdOrRef;
+	let states: Record<string, string> = statesInput ? { ...statesInput } : {};
+
+	if (blockId.includes('[')) {
+		const parsed = parseBlockRef(blockId);
+		blockId = parsed.id;
+		states = { ...parsed.states, ...states };
+	}
+
+	if (blockId.endsWith('_stairs')) {
+		const glyph: BlockstateGlyph = { kind: 'stairs' };
+		if (states.facing) glyph.facing = states.facing as BlockstateGlyph['facing'];
+		if (states.half) glyph.half = states.half as BlockstateGlyph['half'];
+		if (states.shape) glyph.shape = states.shape as BlockstateGlyph['shape'];
+		return glyph;
+	}
+
+	if (blockId.endsWith('_slab')) {
+		const glyph: BlockstateGlyph = { kind: 'slab' };
+		const half =
+			states.type === 'top' || states.half === 'top'
+				? 'top'
+				: states.type === 'bottom' || states.half === 'bottom'
+					? 'bottom'
+					: undefined;
+		if (half) glyph.half = half;
+		return glyph;
+	}
+
+	if (blockId.endsWith('_trapdoor')) {
+		const glyph: BlockstateGlyph = { kind: 'trapdoor' };
+		if (states.facing) glyph.facing = states.facing as BlockstateGlyph['facing'];
+		if (states.half) glyph.half = states.half as BlockstateGlyph['half'];
+		return glyph;
+	}
+
+	if (blockId.endsWith('_door')) {
+		const glyph: BlockstateGlyph = { kind: 'door' };
+		if (states.facing) glyph.facing = states.facing as BlockstateGlyph['facing'];
+		if (states.half) glyph.half = states.half as BlockstateGlyph['half'];
+		return glyph;
+	}
+
+	if (
+		blockId.endsWith('_log') ||
+		blockId.endsWith('_wood') ||
+		blockId.endsWith('_stem') ||
+		blockId.endsWith('_hyphae') ||
+		blockId.includes('basalt') ||
+		blockId.includes('pillar') ||
+		Boolean(states.axis)
+	) {
+		const axis = (states.axis as 'x' | 'y' | 'z') || 'y';
+		return { kind: 'pillar', axis };
+	}
+
+	return { kind: 'generic' };
+}
+
+/**
+ * Groups a step's blocks by exact block reference, extracts directional glyphs,
+ * and sorts deterministically (highest count first, then canonicalRef).
+ */
+export function buildTrayItems(grid: VoxelGrid, blocks: readonly StepBlock[]): StepTrayItem[] {
+	const countsByRef = new Map<string, { count: number; parsed: ParsedBlock }>();
+
+	for (const block of blocks) {
+		const rawRef = grid.palette[block.paletteIndex]!;
+		const parsed = parseBlockRef(rawRef);
+		const canonicalRef = formatRef(parsed.id, parsed.states);
+		const entry = countsByRef.get(canonicalRef);
+		if (entry) {
+			entry.count++;
+		} else {
+			countsByRef.set(canonicalRef, { count: 1, parsed });
+		}
+	}
+
+	const items: StepTrayItem[] = [];
+	for (const [canonicalRef, { count, parsed }] of countsByRef) {
+		const glyph = extractBlockstateGlyph(parsed.id, parsed.states);
+		items.push({
+			block: parsed.id,
+			displayName: displayName(parsed.id),
+			count,
+			canonicalRef,
+			states: parsed.states,
+			glyph,
+		});
+	}
+
+	items.sort((a, b) => b.count - a.count || a.canonicalRef.localeCompare(b.canonicalRef));
+	return items;
+}
+
+/* --- camera occlusion & optimal orientation -------------------------------------------- */
+
+export const CAMERA_ORIENTATIONS: readonly CameraOrientation[] = ['SE', 'SW', 'NW', 'NE'] as const;
+
+export const CAMERA_RAY_DIRECTIONS: Record<CameraOrientation, { dx: number; dy: number; dz: number }> = {
+	SE: { dx: 1, dy: 1, dz: 1 },
+	SW: { dx: -1, dy: 1, dz: 1 },
+	NW: { dx: -1, dy: 1, dz: -1 },
+	NE: { dx: 1, dy: 1, dz: -1 },
+};
+
+export type EarlierOccupied =
+	| ReadonlySet<string | number>
+	| ReadonlyArray<{ x: number; y: number; z: number }>
+	| ((x: number, y: number, z: number) => boolean)
+	| Uint16Array
+	| Uint8Array;
+
+export interface OcclusionResult {
+	orientation: CameraOrientation;
+	occludedCount: number;
+	totalBlocks: number;
+	ratio: number;
+}
+
+export interface OcclusionScoringOptions {
+	gridSize?: VoxelGrid['size'];
+	earlierPlaced?: EarlierOccupied;
+	face?: Face | string;
+}
+
+export function calculateCameraOcclusion(
+	blocks: readonly { x: number; y: number; z: number }[],
+	size: VoxelGrid['size'],
+	isOccupied: (x: number, y: number, z: number) => boolean,
+): Record<CameraOrientation, OcclusionResult> {
+	const result = {} as Record<CameraOrientation, OcclusionResult>;
+	const totalBlocks = blocks.length;
+
+	for (const orientation of CAMERA_ORIENTATIONS) {
+		const { dx, dy, dz } = CAMERA_RAY_DIRECTIONS[orientation];
+		let occludedCount = 0;
+
+		for (const b of blocks) {
+			let step = 1;
+			while (true) {
+				const cx = b.x + dx * step;
+				const cy = b.y + dy * step;
+				const cz = b.z + dz * step;
+
+				if (cx < 0 || cx >= size.x || cy < 0 || cy >= size.y || cz < 0 || cz >= size.z) {
+					break;
+				}
+
+				if (isOccupied(cx, cy, cz)) {
+					occludedCount++;
+					break;
+				}
+
+				step++;
+			}
+		}
+
+		const ratio = totalBlocks > 0 ? occludedCount / totalBlocks : 0;
+		result[orientation] = { orientation, occludedCount, totalBlocks, ratio };
+	}
+
+	return result;
+}
+
+export function getOrientationPreference(face?: string): readonly CameraOrientation[] {
+	switch (face) {
+		case 'north':
+			return ['NW', 'NE', 'SE', 'SW'];
+		case 'south':
+			return ['SE', 'SW', 'NW', 'NE'];
+		case 'west':
+			return ['SW', 'NW', 'SE', 'NE'];
+		case 'east':
+			return ['SE', 'NE', 'SW', 'NW'];
+		default:
+			return ['SE', 'SW', 'NW', 'NE'];
+	}
+}
+
+export function calculateOptimalOrientation(
+	blocks: readonly { x: number; y: number; z: number }[],
+	gridSizeOrOptions?: VoxelGrid['size'] | OcclusionScoringOptions,
+	earlierPlacedArg?: EarlierOccupied,
+	faceArg?: Face | string,
+): CameraOrientation {
+	let size: VoxelGrid['size'] = { x: 256, y: 160, z: 256 };
+	let earlierPlaced: EarlierOccupied | undefined = earlierPlacedArg;
+	let face: Face | string | undefined = faceArg;
+
+	if (gridSizeOrOptions) {
+		if ('x' in gridSizeOrOptions && 'y' in gridSizeOrOptions && 'z' in gridSizeOrOptions) {
+			size = gridSizeOrOptions;
+		} else {
+			if (gridSizeOrOptions.gridSize) size = gridSizeOrOptions.gridSize;
+			if (gridSizeOrOptions.earlierPlaced !== undefined) earlierPlaced = gridSizeOrOptions.earlierPlaced;
+			if (gridSizeOrOptions.face !== undefined) face = gridSizeOrOptions.face;
+		}
+	}
+
+	let isOccupied: (x: number, y: number, z: number) => boolean;
+	if (!earlierPlaced) {
+		isOccupied = () => false;
+	} else if (typeof earlierPlaced === 'function') {
+		isOccupied = earlierPlaced;
+	} else if (earlierPlaced instanceof Set) {
+		isOccupied = (x, y, z) => {
+			const set = earlierPlaced as Set<string | number>;
+			return set.has(`${x},${y},${z}`) || set.has(voxelIndex(size, x, y, z));
+		};
+	} else if (earlierPlaced instanceof Uint8Array || earlierPlaced instanceof Uint16Array) {
+		isOccupied = (x, y, z) => earlierPlaced[voxelIndex(size, x, y, z)] !== AIR_INDEX;
+	} else if (Array.isArray(earlierPlaced)) {
+		const set = new Set<string>();
+		for (const b of earlierPlaced) {
+			set.add(`${b.x},${b.y},${b.z}`);
+		}
+		isOccupied = (x, y, z) => set.has(`${x},${y},${z}`);
+	} else {
+		isOccupied = () => false;
+	}
+
+	const scores = calculateCameraOcclusion(blocks, size, isOccupied);
+	const minRatio = Math.min(
+		scores.SE.ratio,
+		scores.SW.ratio,
+		scores.NW.ratio,
+		scores.NE.ratio,
+	);
+
+	const candidates = CAMERA_ORIENTATIONS.filter(
+		(o) => Math.abs(scores[o].ratio - minRatio) < 1e-6,
+	);
+
+	const preference = getOrientationPreference(face);
+	for (const pref of preference) {
+		if (candidates.includes(pref)) {
+			return pref;
+		}
+	}
+
+	return 'SE';
 }

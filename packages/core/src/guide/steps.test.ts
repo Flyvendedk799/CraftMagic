@@ -3,7 +3,18 @@ import { expand } from '../expand/expander.js';
 import { cottage, samples } from '../samples/index.js';
 import type { VoxelGrid } from '../ir/types.js';
 import { voxelIndex } from '../ir/types.js';
-import { MAX_BLOCKS_PER_STEP, MIN_BLOCKS_PER_STEP, buildGuide } from './steps.js';
+import {
+	MAX_BLOCKS_PER_STEP,
+	MIN_BLOCKS_PER_STEP,
+	buildGuide,
+	buildTrayItems,
+	calculateCameraOcclusion,
+	calculateOptimalOrientation,
+	extractBlockstateGlyph,
+	isOverhangBlock,
+	CAMERA_ORIENTATIONS,
+	CAMERA_RAY_DIRECTIONS,
+} from './steps.js';
 
 /** Build a grid from a per-layer ASCII map, '.' meaning air. */
 function gridFrom(layers: string[][], palette: string[]): VoxelGrid {
@@ -307,5 +318,351 @@ describe('buildGuide — summary', () => {
 		expect(guide.name).toBe('Oak Cottage');
 		expect(guide.totalBlocks).toBe(blockCount);
 		expect(guide.size).toEqual(grid.size);
+	});
+});
+
+describe('buildGuide — overhang detection', () => {
+	it('marks all blocks at y=0 as supported (isOverhang = false)', () => {
+		const grid = gridFrom([['11', '11']], PALETTE);
+		const guide = buildGuide(grid);
+		expect(guide.steps).toHaveLength(1);
+		const step = guide.steps[0]!;
+		expect(step.hasOverhangs).toBe(false);
+		expect(step.overhangCount).toBe(0);
+		for (const b of step.blocks) {
+			expect(b.isOverhang).toBe(false);
+		}
+	});
+
+	it('identifies overhangs when y > 0 is placed directly over air', () => {
+		// Layer 0: solid 1x1 at (0, 0, 0)
+		// Layer 1: 2x1 at (0, 1, 0) and (1, 1, 0).
+		// Block at (0, 1, 0) is supported; block at (1, 1, 0) is overhang over air.
+		const layer0 = ['1.'];
+		const layer1 = ['11'];
+		const grid = gridFrom([layer0, layer1], PALETTE);
+		const guide = buildGuide(grid);
+		expect(guide.steps).toHaveLength(2);
+
+		const step1 = guide.steps[1]!;
+		expect(step1.layer).toBe(1);
+		expect(step1.hasOverhangs).toBe(true);
+		expect(step1.overhangCount).toBe(1);
+
+		const supported = step1.blocks.find((b) => b.x === 0 && b.z === 0)!;
+		const overhang = step1.blocks.find((b) => b.x === 1 && b.z === 0)!;
+		expect(supported.isOverhang).toBe(false);
+		expect(overhang.isOverhang).toBe(true);
+	});
+
+	it('marks blocks at y > 0 as not overhang when supported by solid beneath', () => {
+		const layer0 = ['11'];
+		const layer1 = ['11'];
+		const grid = gridFrom([layer0, layer1], PALETTE);
+		const guide = buildGuide(grid);
+		const step1 = guide.steps[1]!;
+		expect(step1.hasOverhangs).toBe(false);
+		expect(step1.overhangCount).toBe(0);
+		expect(step1.blocks.every((b) => b.isOverhang === false)).toBe(true);
+	});
+
+	it('calculates isOverhangBlock utility accurately', () => {
+		const grid = gridFrom([['1.'], ['.1']], PALETTE);
+		expect(isOverhangBlock(grid, 0, 0, 0)).toBe(false);
+		expect(isOverhangBlock(grid, 1, 0, 0)).toBe(false);
+		// At y = 1: (1, 1, 0) has '.' (air) beneath at (1, 0, 0) -> overhang
+		expect(isOverhangBlock(grid, 1, 1, 0)).toBe(true);
+		// At y = 1: (0, 1, 0) has '1' (stone) beneath at (0, 0, 0) -> not overhang
+		expect(isOverhangBlock(grid, 0, 1, 0)).toBe(false);
+	});
+});
+
+describe('blockstate glyphs & tray items', () => {
+	describe('extractBlockstateGlyph', () => {
+		it('extracts stairs glyph with facing, half, and shape', () => {
+			const glyph = extractBlockstateGlyph('minecraft:oak_stairs', {
+				facing: 'east',
+				half: 'bottom',
+				shape: 'straight',
+			});
+			expect(glyph).toEqual({
+				kind: 'stairs',
+				facing: 'east',
+				half: 'bottom',
+				shape: 'straight',
+			});
+		});
+
+		it('parses stairs glyph from bracketed reference', () => {
+			const glyph = extractBlockstateGlyph(
+				'minecraft:dark_oak_stairs[facing=north,half=top,shape=inner_left]',
+			);
+			expect(glyph).toEqual({
+				kind: 'stairs',
+				facing: 'north',
+				half: 'top',
+				shape: 'inner_left',
+			});
+		});
+
+		it('extracts slab glyph with top or bottom half', () => {
+			expect(extractBlockstateGlyph('minecraft:stone_slab', { type: 'top' })).toEqual({
+				kind: 'slab',
+				half: 'top',
+			});
+			expect(extractBlockstateGlyph('minecraft:oak_slab', { type: 'bottom' })).toEqual({
+				kind: 'slab',
+				half: 'bottom',
+			});
+			expect(extractBlockstateGlyph('minecraft:oak_slab', { type: 'double' })).toEqual({
+				kind: 'slab',
+			});
+			expect(extractBlockstateGlyph('minecraft:oak_slab', { half: 'top' })).toEqual({
+				kind: 'slab',
+				half: 'top',
+			});
+		});
+
+		it('extracts pillar glyph for logs, woods, basalt, pillars and explicit axis', () => {
+			expect(extractBlockstateGlyph('minecraft:oak_log', { axis: 'x' })).toEqual({
+				kind: 'pillar',
+				axis: 'x',
+			});
+			expect(extractBlockstateGlyph('minecraft:stripped_dark_oak_wood', { axis: 'z' })).toEqual({
+				kind: 'pillar',
+				axis: 'z',
+			});
+			expect(extractBlockstateGlyph('minecraft:crimson_stem', {})).toEqual({
+				kind: 'pillar',
+				axis: 'y',
+			});
+			expect(extractBlockstateGlyph('minecraft:warped_hyphae', {})).toEqual({
+				kind: 'pillar',
+				axis: 'y',
+			});
+			expect(extractBlockstateGlyph('minecraft:basalt', {})).toEqual({
+				kind: 'pillar',
+				axis: 'y',
+			});
+			expect(extractBlockstateGlyph('minecraft:quartz_pillar', { axis: 'y' })).toEqual({
+				kind: 'pillar',
+				axis: 'y',
+			});
+			expect(extractBlockstateGlyph('minecraft:bone_block', { axis: 'x' })).toEqual({
+				kind: 'pillar',
+				axis: 'x',
+			});
+		});
+
+		it('extracts door glyph with facing and half', () => {
+			const glyph = extractBlockstateGlyph('minecraft:oak_door', {
+				facing: 'south',
+				half: 'lower',
+			});
+			expect(glyph).toEqual({
+				kind: 'door',
+				facing: 'south',
+				half: 'lower',
+			});
+		});
+
+		it('extracts trapdoor glyph with facing and half', () => {
+			const glyph = extractBlockstateGlyph('minecraft:oak_trapdoor', {
+				facing: 'west',
+				half: 'top',
+			});
+			expect(glyph).toEqual({
+				kind: 'trapdoor',
+				facing: 'west',
+				half: 'top',
+			});
+		});
+
+		it('returns generic for regular blocks', () => {
+			expect(extractBlockstateGlyph('minecraft:stone', {})).toEqual({ kind: 'generic' });
+			expect(extractBlockstateGlyph('minecraft:glass', {})).toEqual({ kind: 'generic' });
+		});
+	});
+
+	describe('buildTrayItems', () => {
+		it('groups blocks by distinct blockstate and sorts by count descending', () => {
+			const palette = [
+				'minecraft:air',
+				'minecraft:oak_stairs[facing=east,half=bottom,shape=straight]',
+				'minecraft:oak_stairs[facing=west,half=bottom,shape=straight]',
+				'minecraft:oak_planks',
+			];
+			const blocks = [
+				{ x: 0, y: 0, z: 0, paletteIndex: 1 },
+				{ x: 1, y: 0, z: 0, paletteIndex: 1 },
+				{ x: 2, y: 0, z: 0, paletteIndex: 1 },
+				{ x: 3, y: 0, z: 0, paletteIndex: 2 },
+				{ x: 4, y: 0, z: 0, paletteIndex: 3 },
+				{ x: 5, y: 0, z: 0, paletteIndex: 3 },
+				{ x: 6, y: 0, z: 0, paletteIndex: 3 },
+				{ x: 7, y: 0, z: 0, paletteIndex: 3 },
+			];
+			const grid: VoxelGrid = {
+				size: { x: 8, y: 1, z: 1 },
+				palette,
+				voxels: new Uint16Array(8),
+			};
+
+			const tray = buildTrayItems(grid, blocks);
+			expect(tray).toHaveLength(3);
+
+			// Planks has highest count (4)
+			expect(tray[0]).toMatchObject({
+				block: 'minecraft:oak_planks',
+				displayName: 'Oak Planks',
+				count: 4,
+				canonicalRef: 'minecraft:oak_planks',
+				glyph: { kind: 'generic' },
+			});
+
+			// Oak stairs east (3)
+			expect(tray[1]).toMatchObject({
+				block: 'minecraft:oak_stairs',
+				displayName: 'Oak Stairs',
+				count: 3,
+				canonicalRef: 'minecraft:oak_stairs[facing=east,half=bottom,shape=straight]',
+				glyph: {
+					kind: 'stairs',
+					facing: 'east',
+					half: 'bottom',
+					shape: 'straight',
+				},
+			});
+
+			// Oak stairs west (1)
+			expect(tray[2]).toMatchObject({
+				block: 'minecraft:oak_stairs',
+				displayName: 'Oak Stairs',
+				count: 1,
+				canonicalRef: 'minecraft:oak_stairs[facing=west,half=bottom,shape=straight]',
+				glyph: {
+					kind: 'stairs',
+					facing: 'west',
+					half: 'bottom',
+					shape: 'straight',
+				},
+			});
+		});
+
+		it('breaks ties deterministically using canonicalRef', () => {
+			const palette = [
+				'minecraft:air',
+				'minecraft:spruce_planks',
+				'minecraft:oak_planks',
+			];
+			const blocks = [
+				{ x: 0, y: 0, z: 0, paletteIndex: 1 },
+				{ x: 1, y: 0, z: 0, paletteIndex: 2 },
+			];
+			const grid: VoxelGrid = {
+				size: { x: 2, y: 1, z: 1 },
+				palette,
+				voxels: new Uint16Array(2),
+			};
+
+			const tray = buildTrayItems(grid, blocks);
+			expect(tray).toHaveLength(2);
+			expect(tray[0]!.canonicalRef).toBe('minecraft:oak_planks');
+			expect(tray[1]!.canonicalRef).toBe('minecraft:spruce_planks');
+		});
+	});
+});
+
+describe('camera occlusion & optimal orientation', () => {
+	it('verifies camera ray directions for all 4 viewpoints', () => {
+		expect(CAMERA_RAY_DIRECTIONS.SE).toEqual({ dx: 1, dy: 1, dz: 1 });
+		expect(CAMERA_RAY_DIRECTIONS.SW).toEqual({ dx: -1, dy: 1, dz: 1 });
+		expect(CAMERA_RAY_DIRECTIONS.NW).toEqual({ dx: -1, dy: 1, dz: -1 });
+		expect(CAMERA_RAY_DIRECTIONS.NE).toEqual({ dx: 1, dy: 1, dz: -1 });
+		expect(CAMERA_ORIENTATIONS).toEqual(['SE', 'SW', 'NW', 'NE']);
+	});
+
+	it('calculates occlusion when earlier voxels lie along line of sight', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const blocks = [{ x: 2, y: 2, z: 2 }];
+
+		// Place occluder at (3, 3, 3) in SE line of sight from (2, 2, 2)
+		const occupied = (x: number, y: number, z: number) => x === 3 && y === 3 && z === 3;
+		const occlusion = calculateCameraOcclusion(blocks, size, occupied);
+
+		expect(occlusion.SE.occludedCount).toBe(1);
+		expect(occlusion.SE.ratio).toBe(1);
+		expect(occlusion.SW.occludedCount).toBe(0);
+		expect(occlusion.SW.ratio).toBe(0);
+		expect(occlusion.NW.occludedCount).toBe(0);
+		expect(occlusion.NW.ratio).toBe(0);
+		expect(occlusion.NE.occludedCount).toBe(0);
+		expect(occlusion.NE.ratio).toBe(0);
+	});
+
+	it('picks orientation with minimal occlusion ratio', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const blocks = [{ x: 2, y: 2, z: 2 }];
+
+		// Occlude SE at (3, 3, 3)
+		const earlierPlaced = new Set(['3,3,3']);
+		const orientation = calculateOptimalOrientation(blocks, size, earlierPlaced);
+		// SE is occluded, next default in priority is SW
+		expect(orientation).toBe('SW');
+	});
+
+	it('defaults to SE when all orientations are tied and no face is specified', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const blocks = [{ x: 2, y: 2, z: 2 }];
+		const orientation = calculateOptimalOrientation(blocks, size);
+		expect(orientation).toBe('SE');
+	});
+
+	it('applies face preference to break ties', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const blocks = [{ x: 2, y: 2, z: 2 }];
+
+		// North face prefers NW
+		expect(calculateOptimalOrientation(blocks, size, undefined, 'north')).toBe('NW');
+		// South face prefers SE
+		expect(calculateOptimalOrientation(blocks, size, undefined, 'south')).toBe('SE');
+		// West face prefers SW
+		expect(calculateOptimalOrientation(blocks, size, undefined, 'west')).toBe('SW');
+		// East face prefers SE
+		expect(calculateOptimalOrientation(blocks, size, undefined, 'east')).toBe('SE');
+	});
+
+	it('prefers unoccluded view over face preference when preferred view is blocked', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const blocks = [{ x: 2, y: 2, z: 2 }];
+
+		// North face prefers NW/NE. If NW is occluded at (1, 3, 1), NE should be chosen!
+		const earlierPlaced = new Set(['1,3,1']);
+		expect(calculateOptimalOrientation(blocks, size, earlierPlaced, 'north')).toBe('NE');
+
+		// If both NW and NE are occluded (1, 3, 1) and (3, 3, 1), it falls back to unoccluded orientation
+		const bothNorthOccluded = new Set(['1,3,1', '3,3,1']);
+		const fallback = calculateOptimalOrientation(blocks, size, bothNorthOccluded, 'north');
+		expect(fallback === 'SE' || fallback === 'SW').toBe(true);
+	});
+
+	it('populates optimalOrientation and trayItems on every step of a guide', () => {
+		const guide = buildGuide(expand(cottage).grid, 'Cottage');
+		expect(guide.steps.length).toBeGreaterThan(0);
+		for (const step of guide.steps) {
+			expect(CAMERA_ORIENTATIONS).toContain(step.optimalOrientation);
+			expect(Array.isArray(step.trayItems)).toBe(true);
+			expect(typeof step.hasOverhangs).toBe('boolean');
+			expect(typeof step.overhangCount).toBe('number');
+			expect(step.overhangCount).toBeGreaterThanOrEqual(0);
+			for (const item of step.trayItems) {
+				expect(item.block).toBeTruthy();
+				expect(item.displayName).toBeTruthy();
+				expect(item.count).toBeGreaterThan(0);
+				expect(item.canonicalRef).toBeTruthy();
+				expect(item.glyph).toBeDefined();
+				expect(item.glyph.kind).toBeTruthy();
+			}
+		}
 	});
 });

@@ -600,6 +600,25 @@ describe('camera occlusion & optimal orientation', () => {
 		expect(occlusion.NE.ratio).toBe(0);
 	});
 
+	it('calculates occlusion when earlier voxels lie in the same layer along line of sight', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const blocks = [{ x: 2, y: 2, z: 2 }];
+
+		// Place occluder at (3, 2, 3) in SE horizontal line of sight within the same layer (cy = 2)
+		const occupied = (x: number, y: number, z: number) => x === 3 && y === 2 && z === 3;
+		const occlusion = calculateCameraOcclusion(blocks, size, occupied);
+
+		expect(occlusion.SE.occludedCount).toBe(1);
+		expect(occlusion.SE.ratio).toBe(1);
+		expect(occlusion.SW.occludedCount).toBe(0);
+		expect(occlusion.NW.occludedCount).toBe(0);
+		expect(occlusion.NE.occludedCount).toBe(0);
+
+		// Optimal orientation should avoid SE and pick SW
+		const earlierPlaced = new Set(['3,2,3']);
+		expect(calculateOptimalOrientation(blocks, size, earlierPlaced)).toBe('SW');
+	});
+
 	it('picks orientation with minimal occlusion ratio', () => {
 		const size = { x: 10, y: 10, z: 10 };
 		const blocks = [{ x: 2, y: 2, z: 2 }];

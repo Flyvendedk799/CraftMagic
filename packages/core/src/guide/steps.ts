@@ -677,14 +677,18 @@ export function calculateCameraOcclusion(
 			let step = 1;
 			while (true) {
 				const cx = b.x + dx * step;
-				const cy = b.y + dy * step;
 				const cz = b.z + dz * step;
+				const cy = b.y + dy * step;
 
-				if (cx < 0 || cx >= size.x || cy < 0 || cy >= size.y || cz < 0 || cz >= size.z) {
+				if (cx < 0 || cx >= size.x || cz < 0 || cz >= size.z) {
 					break;
 				}
 
-				if (isOccupied(cx, cy, cz)) {
+				// Check same-layer blocker along the sightline (cy = b.y) or isometric ray step (cy = b.y + dy * step)
+				const sameLayerOccluded = isOccupied(cx, b.y, cz);
+				const isoRayOccluded = cy >= 0 && cy < size.y && isOccupied(cx, cy, cz);
+
+				if (sameLayerOccluded || isoRayOccluded) {
 					occludedCount++;
 					break;
 				}

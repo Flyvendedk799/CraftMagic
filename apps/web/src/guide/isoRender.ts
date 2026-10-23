@@ -19,12 +19,26 @@
  */
 
 import * as THREE from 'three';
-import { voxelIndex, voxelPosition } from '@craftmagic/core';
+import { voxelIndex, voxelPosition, type CameraOrientation } from '@craftmagic/core';
 import { CHUNK_SIZE, chunkCounts, meshChunk, type GridSize, type MeshSource } from '../editor/mesher.js';
 
-/** 45° around Y and 35.264° above the horizon: the true isometric axonometry. */
-const AZIMUTH = Math.PI / 4;
-const ELEVATION = Math.atan(1 / Math.SQRT2);
+/** Elevation for true isometric axonometry (35.264° above horizon). */
+export const CAMERA_ELEVATION = Math.atan(1 / Math.SQRT2);
+
+/**
+ * 4 cardinal axonometric orientations:
+ * SE (45°), SW (135°), NW (225°), NE (315°).
+ */
+export const CAMERA_AZIMUTHS: Record<CameraOrientation, number> = {
+  SE: Math.PI / 4,
+  SW: (3 * Math.PI) / 4,
+  NW: (5 * Math.PI) / 4,
+  NE: (7 * Math.PI) / 4,
+};
+
+/** 45° around Y and 35.264° above the horizon: the default isometric axonometry. */
+const AZIMUTH = CAMERA_AZIMUTHS.SE;
+const ELEVATION = CAMERA_ELEVATION;
 
 /** Breathing room around the bounds, so the silhouette never touches the frame. */
 const FRAME_MARGIN = 1.06;
@@ -106,6 +120,7 @@ export class IsoFilmstrip {
   private halfU = 1;
   private halfV = 1;
   private disposed = false;
+  private orientation: CameraOrientation = 'SE';
 
   /**
    * Palette entries per "age": what is already built, and what this step adds.
@@ -124,8 +139,15 @@ export class IsoFilmstrip {
   /** Cells the previous `place` lit up, so they can be dimmed when the next one runs. */
   private lit: number[] = [];
 
-  constructor(size: GridSize, paletteColors: Uint8Array, paletteFlags: Uint8Array, highlight = true) {
+  constructor(
+    size: GridSize,
+    paletteColors: Uint8Array,
+    paletteFlags: Uint8Array,
+    highlight = true,
+    orientation: CameraOrientation = 'SE',
+  ) {
     this.renderer = acquireRenderer();
+    this.orientation = orientation;
     this.paletteSpan = highlight ? paletteColors.length / 3 : 0;
     this.source = {
       size,
@@ -134,7 +156,21 @@ export class IsoFilmstrip {
       paletteFlags: highlight ? doubled(paletteFlags) : paletteFlags,
     };
     this.counts = chunkCounts(size);
-    this.frame(size);
+    this.frame(size, orientation);
+  }
+
+  /**
+   * Rotate camera to one of the 4 cardinal axonometric orientations:
+   * 'SE', 'SW', 'NW', or 'NE'.
+   */
+  setOrientation(orientation: CameraOrientation): void {
+    if (this.orientation === orientation) return;
+    this.orientation = orientation;
+    this.frame(this.source.size, orientation);
+  }
+
+  getOrientation(): CameraOrientation {
+    return this.orientation;
   }
 
   /**
@@ -216,8 +252,11 @@ export class IsoFilmstrip {
   }
 
   /** Re-mesh whatever the last `place` disturbed and read the frame back as a PNG. */
-  snapshot(width: number, height: number): string {
+  snapshot(width: number, height: number, orientation?: CameraOrientation): string {
     if (this.disposed) return '';
+    if (orientation !== undefined && orientation !== this.orientation) {
+      this.setOrientation(orientation);
+    }
     this.remesh();
 
     const aspect = width / height;
@@ -262,12 +301,13 @@ export class IsoFilmstrip {
    * `Math.max(size)`: an ortho box sized to the diagonal would leave a tall build swimming
    * in empty frame.
    */
-  private frame(size: GridSize): void {
+  private frame(size: GridSize, orientation: CameraOrientation = this.orientation): void {
     const centre = new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2);
+    const azimuth = CAMERA_AZIMUTHS[orientation] ?? CAMERA_AZIMUTHS.SE;
     const direction = new THREE.Vector3(
-      Math.cos(ELEVATION) * Math.sin(AZIMUTH),
-      Math.sin(ELEVATION),
-      Math.cos(ELEVATION) * Math.cos(AZIMUTH),
+      Math.cos(CAMERA_ELEVATION) * Math.sin(azimuth),
+      Math.sin(CAMERA_ELEVATION),
+      Math.cos(CAMERA_ELEVATION) * Math.cos(azimuth),
     ).normalize();
 
     const radius = Math.hypot(size.x, size.y, size.z);

@@ -82,6 +82,25 @@
   --guide-radius-chip: 8px;
   --guide-radius-swatch: 4px;
 
+  /* --- parts tray & builder callouts ------------------------------------- */
+  --guide-tray-bg: rgba(255, 255, 255, 0.04);
+  --guide-tray-rule: var(--guide-rule);
+  --guide-tray-pill-bg: rgba(255, 255, 255, 0.08);
+  --guide-tray-pill-ink: var(--guide-ink-muted);
+
+  /* --- overhang warning & caution --------------------------------------- */
+  --guide-overhang-bg: rgba(217, 119, 6, 0.14);
+  --guide-overhang-rule: #d97706;
+  --guide-overhang-ink: #f59e0b;
+
+  /* --- keyboard keycaps -------------------------------------------------- */
+  --guide-kbd-bg: rgba(255, 255, 255, 0.08);
+  --guide-kbd-rule: var(--guide-rule);
+
+  /* --- timeline & progress ----------------------------------------------- */
+  --guide-timeline-track: var(--guide-rule-faint);
+  --guide-timeline-fill: var(--guide-accent);
+
   /* --- measure -----------------------------------------------------------
      Prose is capped in characters, not pixels: line length is what governs readability, and
      it should not change because someone widened the window. */
@@ -107,6 +126,21 @@
     --guide-rule-faint: #e2e6ea;
     /* Dark enough to stay legible in greyscale, which is how most of these will be printed. */
     --guide-accent: #0f6f52;
+
+    --guide-tray-bg: rgba(20, 26, 33, 0.04);
+    --guide-tray-rule: #d3d8de;
+    --guide-tray-pill-bg: rgba(20, 26, 33, 0.06);
+    --guide-tray-pill-ink: #3b424d;
+
+    --guide-overhang-bg: rgba(217, 119, 6, 0.1);
+    --guide-overhang-rule: #b45309;
+    --guide-overhang-ink: #92400e;
+
+    --guide-kbd-bg: #eef1f4;
+    --guide-kbd-rule: #c5cbd2;
+
+    --guide-timeline-track: #e2e6ea;
+    --guide-timeline-fill: #0f6f52;
 
     /* The app tokens too: `body` is not inside `.guide`, and a few shared components
        (buttons, links) reach for them from within the booklet. */

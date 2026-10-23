@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { expand, buildGuide, samples } from '@craftmagic/core';
-import { cellSizeFor, columnLabel, earlierInLayer, footprint } from './layerGrid.js';
+import { cellSizeFor, columnLabel, earlierInLayer, footprint, placedDimensions } from './layerGrid.js';
 
 /**
  * The drawing itself needs a canvas and is verified by looking at it. What is pinned here is
@@ -76,6 +76,65 @@ describe('earlierInLayer', () => {
       x: previous.blocks[0]!.x,
       z: previous.blocks[0]!.z,
       paletteIndex: previous.blocks[0]!.paletteIndex,
+      isOverhang: previous.blocks[0]!.isOverhang,
     });
+  });
+
+  it('preserves isOverhang flag on cells', () => {
+    const steps = [
+      {
+        index: 1,
+        layer: 1,
+        title: 'Step 1',
+        parts: [],
+        materials: [],
+        trayItems: [],
+        optimalOrientation: 'SE' as const,
+        hasOverhangs: true,
+        overhangCount: 1,
+        blocks: [
+          { x: 2, y: 1, z: 3, paletteIndex: 1, isOverhang: true },
+          { x: 3, y: 1, z: 3, paletteIndex: 1, isOverhang: false },
+        ],
+      },
+      {
+        index: 2,
+        layer: 1,
+        partOfLayer: { part: 2, total: 2 },
+        title: 'Step 2',
+        parts: [],
+        materials: [],
+        trayItems: [],
+        optimalOrientation: 'SE' as const,
+        hasOverhangs: false,
+        overhangCount: 0,
+        blocks: [{ x: 4, y: 1, z: 3, paletteIndex: 1, isOverhang: false }],
+      },
+    ];
+
+    const earlier = earlierInLayer(steps);
+    expect(earlier[1]).toHaveLength(2);
+    expect(earlier[1]![0]!.isOverhang).toBe(true);
+    expect(earlier[1]![1]!.isOverhang).toBe(false);
+  });
+});
+
+describe('placedDimensions', () => {
+  it('calculates spatial extents of placed cells', () => {
+    const cells = [
+      { x: 2, z: 5, paletteIndex: 1 },
+      { x: 6, z: 9, paletteIndex: 1 },
+    ];
+    const dims = placedDimensions(cells);
+    expect(dims.width).toBe(5); // 6 - 2 + 1
+    expect(dims.depth).toBe(5); // 9 - 5 + 1
+    expect(dims.text).toBe('5 × 5 blocks');
+  });
+
+  it('handles empty cells gracefully', () => {
+    const dims = placedDimensions([]);
+    expect(dims.width).toBe(0);
+    expect(dims.depth).toBe(0);
+    expect(dims.text).toBe('0 × 0 blocks');
   });
 });

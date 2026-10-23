@@ -24,6 +24,7 @@ import {
   buildGuide,
   type BuildGuide,
   type BuildStep,
+  type CameraOrientation,
   type GuidePart,
   type MaterialCount,
 } from '@craftmagic/core';
@@ -31,7 +32,15 @@ import { expandBuild, isBuildId, type LoadedBuild } from '../editor/builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
 import { carrySettings, parseScale, scaleKey as readScaleKey, PARAM_PREFIX, STYLE_PARAM } from '../editor/urlState.js';
 import { IsoFilmstrip } from './isoRender.js';
-import { drawLayerPlan, earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
+import {
+  drawLayerPlan,
+  earlierInLayer,
+  footprint,
+  placedDimensions,
+  type LayerPlan,
+  type PlanCell,
+} from './layerGrid.js';
+import { StepTray } from './StepTray.js';
 import {
   ArtFrame,
   ArtImage,
@@ -82,8 +91,9 @@ const FRAME_BUDGET_MS = 12;
 const MAX_PRINTABLE_STEPS = 400;
 
 export function GuidePage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
 
+  const mode = params.get('mode') === 'builder' ? 'builder' : 'booklet';
   const rawBuild = params.get('build');
 
   // A library build lives in the database rather than in the bundle, so `?build=lib:<id>`
@@ -169,6 +179,16 @@ export function GuidePage() {
     return `/editor?${search.toString()}`;
   }, [rawBuild, params]);
 
+  const handleSetMode = (nextMode: 'booklet' | 'builder') => {
+    const next = new URLSearchParams(params);
+    if (nextMode === 'booklet') {
+      next.delete('mode');
+    } else {
+      next.set('mode', 'builder');
+    }
+    setParams(next, { replace: true });
+  };
+
   if (!renderable) {
     return (
       <Unavailable
@@ -176,6 +196,20 @@ export function GuidePage() {
         loading={fetching.loading}
         error={fetching.error}
         editorHref={editorHref}
+      />
+    );
+  }
+
+  if (mode === 'builder') {
+    return (
+      <BuilderView
+        build={build}
+        guide={guide}
+        film={film}
+        plans={plans}
+        editorHref={editorHref}
+        buildId={buildId}
+        onSwitchToBooklet={() => handleSetMode('booklet')}
       />
     );
   }
@@ -199,6 +233,14 @@ export function GuidePage() {
               ? `${guide.steps.length} steps rendered in ${(film.elapsedMs / 1000).toFixed(1)}s`
               : `Rendering step ${Math.min(film.shots.length + 1, guide.steps.length)} of ${guide.steps.length}…`}
         </span>
+        <button
+          type="button"
+          className="guide__mode-btn"
+          onClick={() => handleSetMode('builder')}
+          title="Switch to interactive builder mode"
+        >
+          🔨 Interactive Builder
+        </button>
         <button type="button" className="guide__print" onClick={() => window.print()} disabled={!ready}>
           Print / Save as PDF
         </button>
@@ -418,6 +460,19 @@ function Materials({ guide }: { guide: BuildGuide }) {
 
 /* --- steps ------------------------------------------------------------------------------ */
 
+function orientationName(orientation: CameraOrientation): string {
+  switch (orientation) {
+    case 'SE':
+      return 'south-east';
+    case 'SW':
+      return 'south-west';
+    case 'NW':
+      return 'north-west';
+    case 'NE':
+      return 'north-east';
+  }
+}
+
 function StepCard({
   step,
   total,
@@ -445,9 +500,10 @@ function StepCard({
   // Named after the part it mostly places, so anything else riding along in the step is said
   // out loud rather than left for the reader to find mid-course.
   const also = step.parts.slice(1);
+  const orientation = step.optimalOrientation ?? 'SE';
 
   return (
-    <article className="step">
+    <article className="step" id={`step-${step.index}`}>
       <header className="step__head">
         <div className="step__id">
           <span className="step__index">
@@ -463,6 +519,11 @@ function StepCard({
               </span>
             )}
           </span>
+          {step.hasOverhangs && (
+            <span className="step__overhang-pill" title={`${step.overhangCount} unsupported blocks`}>
+              ⚠ {step.overhangCount} Overhang{step.overhangCount === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
 
         <h3 className="step__title">{step.title}</h3>
@@ -472,6 +533,8 @@ function StepCard({
             with {also.map((part) => `${part.label} × ${part.blocks}`).join(', ')}
           </p>
         )}
+
+        <StepTray items={step.trayItems} className="step__tray" />
 
         <ul className="step__materials">
           {step.materials.map((material) => (
@@ -487,8 +550,8 @@ function StepCard({
         <ArtFrame size="panel" caption={`Layer ${step.layer} from above — place the outlined squares`}>
           <canvas className="panel__plan" ref={canvas} />
         </ArtFrame>
-        <ArtFrame size="panel" caption="After this step — seen from the south-east">
-          <ArtImage className="panel__shot" src={shot} alt={`The build after step ${step.index}`} />
+        <ArtFrame size="panel" caption={`After this step — seen from the ${orientationName(orientation)}`}>
+          <ArtImage className="panel__shot" src={shot} alt={`The build after step ${step.index} seen from ${orientation}`} />
         </ArtFrame>
       </div>
     </article>
@@ -543,7 +606,8 @@ function useFilmstrip(
       // rather than a second pass over the steps — but it has to stop highlighting first, or
       // the finished building comes out muted except for whatever the last step placed.
       film.settle();
-      const cover = film.snapshot(COVER_W, COVER_H);
+      film.setOrientation('SE');
+      const cover = film.snapshot(COVER_W, COVER_H, 'SE');
       setState({ shots, cover, elapsedMs: Math.round(performance.now() - startedAt) });
       film.dispose();
     };
@@ -562,7 +626,7 @@ function useFilmstrip(
         const step = guide.steps[shots.length];
         if (!step) break;
         film.place(step.blocks);
-        shots.push(film.snapshot(STEP_W, STEP_H));
+        shots.push(film.snapshot(STEP_W, STEP_H, step.optimalOrientation));
       } while (performance.now() < until);
 
       if (shots.length < guide.steps.length) {
@@ -598,7 +662,14 @@ function useLayerPlans(build: LoadedBuild, guide: BuildGuide, printable: boolean
     // One frame for every plan, taken from the whole build: a step whose blocks sit in one
     // corner must still line up with the step before it.
     const box = footprint(
-      guide.steps.flatMap((step) => step.blocks.map((b): PlanCell => ({ x: b.x, z: b.z, paletteIndex: b.paletteIndex }))),
+      guide.steps.flatMap((step) =>
+        step.blocks.map((b): PlanCell => ({
+          x: b.x,
+          z: b.z,
+          paletteIndex: b.paletteIndex,
+          isOverhang: b.isOverhang,
+        })),
+      ),
     );
 
     return guide.steps.map((step, i) => ({
@@ -607,7 +678,16 @@ function useLayerPlans(build: LoadedBuild, guide: BuildGuide, printable: boolean
       paletteColors: build.paletteColors,
       footprint: box,
       layer: step.layer,
-      placed: step.blocks.map((b): PlanCell => ({ x: b.x, z: b.z, paletteIndex: b.paletteIndex })),
+      hasOverhangs: step.hasOverhangs,
+      overhangCount: step.overhangCount,
+      placed: step.blocks.map(
+        (b): PlanCell => ({
+          x: b.x,
+          z: b.z,
+          paletteIndex: b.paletteIndex,
+          isOverhang: b.isOverhang,
+        }),
+      ),
       earlier: earlier[i] ?? [],
     }));
   }, [build, guide, printable]);
@@ -631,4 +711,614 @@ function parseOverrides(key: string): Record<string, number> {
     if (Number.isFinite(value)) out[name] = value;
   }
   return out;
+}
+
+/* --- digital builder mode ----------------------------------------------------------------- */
+
+function getStepSnapshot(
+  build: LoadedBuild,
+  guide: BuildGuide,
+  stepIndex: number,
+  orientation: CameraOrientation,
+  filmShots: readonly string[],
+  cache: Map<string, string>,
+): string {
+  const step = guide.steps[stepIndex];
+  if (!step) return '';
+  const optimal = step.optimalOrientation ?? 'SE';
+  if (orientation === optimal && filmShots[stepIndex]) {
+    return filmShots[stepIndex]!;
+  }
+  const cacheKey = `${stepIndex}:${orientation}`;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  const film = new IsoFilmstrip(build.grid.size, build.paletteColors, build.paletteFlags, true, orientation);
+  for (let i = 0; i <= stepIndex; i++) {
+    film.place(guide.steps[i]!.blocks);
+  }
+  const shot = film.snapshot(STEP_W, STEP_H, orientation);
+  film.dispose();
+  cache.set(cacheKey, shot);
+  return shot;
+}
+
+function BuilderView({
+  build,
+  guide,
+  film,
+  plans,
+  editorHref,
+  buildId,
+  onSwitchToBooklet,
+}: {
+  build: LoadedBuild;
+  guide: BuildGuide;
+  film: Filmstrip;
+  plans: readonly LayerPlan[];
+  editorHref: string;
+  buildId: string;
+  onSwitchToBooklet: () => void;
+}) {
+  const totalSteps = guide.steps.length;
+  const progressKey = `craftmagic:guide:progress:${buildId}`;
+
+  // Completed steps persistence in localStorage
+  const [completed, setCompleted] = useState<Set<number>>(() => {
+    try {
+      const saved = localStorage.getItem(progressKey);
+      if (saved) {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr)) return new Set<number>(arr);
+      }
+    } catch {
+      // ignore
+    }
+    return new Set<number>();
+  });
+
+  const [activeStep, setActiveStep] = useState(0);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(progressKey, JSON.stringify([...completed]));
+    } catch {
+      // ignore
+    }
+  }, [progressKey, completed]);
+
+  const handleResetProgress = () => {
+    if (window.confirm('Reset all step progress for this build?')) {
+      setCompleted(new Set());
+      try {
+        localStorage.removeItem(progressKey);
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const currentStep = guide.steps[activeStep];
+  const currentPlan = plans[activeStep];
+  const dimensions = useMemo(() => {
+    return placedDimensions(currentPlan ? currentPlan.placed : []);
+  }, [currentPlan]);
+
+  // Camera orientation state per step or active
+  const [customOrientations, setCustomOrientations] = useState<Record<number, CameraOrientation>>({});
+  const [cueOrientation, setCueOrientation] = useState<string | null>(null);
+  const cueTimerRef = useRef<number | null>(null);
+
+  const orientation: CameraOrientation =
+    (currentStep && customOrientations[activeStep]) ?? currentStep?.optimalOrientation ?? 'SE';
+
+  const setOrientation = (orient: CameraOrientation) => {
+    setCustomOrientations((prev) => ({ ...prev, [activeStep]: orient }));
+    setCueOrientation(`Facing ${orient} (${orientationName(orient)})`);
+    if (cueTimerRef.current) clearTimeout(cueTimerRef.current);
+    cueTimerRef.current = window.setTimeout(() => setCueOrientation(null), 1800);
+  };
+
+  const cycleOrientation = () => {
+    const list: CameraOrientation[] = ['SE', 'SW', 'NW', 'NE'];
+    const idx = list.indexOf(orientation);
+    const next = list[(idx + 1) % list.length]!;
+    setOrientation(next);
+  };
+
+  // Zoom state for 2D Plan
+  const [zoom, setZoom] = useState(1);
+  const handleZoomIn = () => setZoom((z) => Math.min(2.5, +(z + 0.25).toFixed(2)));
+  const handleZoomOut = () => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)));
+  const handleZoomReset = () => setZoom(1);
+
+  // Mobile tab state
+  const [mobileTab, setMobileTab] = useState<'plan' | 'model'>('plan');
+
+  // Shortcuts modal state
+  const [helpOpen, setHelpOpen] = useState(false);
+  const builderRef = useRef<HTMLDivElement | null>(null);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      builderRef.current?.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  };
+
+  const isCurrentDone = completed.has(activeStep);
+  const toggleCurrentDone = () => {
+    setCompleted((prev) => {
+      const next = new Set(prev);
+      if (next.has(activeStep)) {
+        next.delete(activeStep);
+      } else {
+        next.add(activeStep);
+      }
+      return next;
+    });
+  };
+
+  const markDoneAndAdvance = () => {
+    setCompleted((prev) => new Set(prev).add(activeStep));
+    if (activeStep < totalSteps - 1) {
+      setActiveStep((s) => s + 1);
+    }
+  };
+
+  // 3D snapshot cache
+  const cacheRef = useRef<Map<string, string>>(new Map());
+  const shot = useMemo(() => {
+    if (!currentStep) return '';
+    return getStepSnapshot(build, guide, activeStep, orientation, film.shots, cacheRef.current);
+  }, [build, guide, activeStep, orientation, film.shots, currentStep]);
+
+  // 2D Plan canvas ref
+  const planCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  useLayoutEffect(() => {
+    if (planCanvasRef.current && currentPlan) {
+      drawLayerPlan(planCanvasRef.current, currentPlan);
+    }
+  }, [currentPlan]);
+
+  // Auto-scroll timeline to active step
+  const timelineRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = timelineRef.current?.querySelector(`[data-step-index="${activeStep}"]`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }, [activeStep]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      if (e.key === '?' || e.key === 'h' || e.key === 'H') {
+        e.preventDefault();
+        setHelpOpen((open) => !open);
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (helpOpen) {
+          e.preventDefault();
+          setHelpOpen(false);
+        }
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (activeStep < totalSteps - 1) setActiveStep((s) => s + 1);
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (activeStep > 0) setActiveStep((s) => s - 1);
+        return;
+      }
+      if (e.key === ' ') {
+        e.preventDefault();
+        markDoneAndAdvance();
+        return;
+      }
+      if (e.key === 'Home') {
+        e.preventDefault();
+        setActiveStep(0);
+        return;
+      }
+      if (e.key === 'End') {
+        e.preventDefault();
+        setActiveStep(totalSteps - 1);
+        return;
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        cycleOrientation();
+        return;
+      }
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleFullscreen();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeStep, totalSteps, helpOpen, orientation]);
+
+  if (!currentStep) return null;
+
+  const percent = totalSteps > 0 ? Math.round((completed.size / totalSteps) * 100) : 0;
+  const isFinalStep = activeStep === totalSteps - 1;
+
+  return (
+    <div
+      ref={builderRef}
+      className="guide guide--builder"
+      data-build={buildId}
+      data-step={activeStep + 1}
+      data-total={totalSteps}
+    >
+      {/* Builder Header */}
+      <header className="builder__header">
+        <Link className="guide__back" to={editorHref}>
+          ← Back to editor
+        </Link>
+        <button
+          type="button"
+          className="builder__btn builder__btn--subtle"
+          onClick={onSwitchToBooklet}
+          title="Switch to printable booklet view"
+        >
+          📖 Booklet view
+        </button>
+
+        <div className="builder__header-center">
+          <span className="builder__step-badge">
+            Step {activeStep + 1} of {totalSteps} · y = {currentStep.layer}
+          </span>
+          <span className="builder__progress-badge">{percent}% complete</span>
+        </div>
+
+        <div className="builder__header-actions">
+          <button
+            type="button"
+            className="builder__btn builder__btn--subtle"
+            onClick={handleResetProgress}
+            title="Reset progress"
+          >
+            Reset progress
+          </button>
+          <button
+            type="button"
+            className="builder__btn builder__btn--circle"
+            onClick={() => setHelpOpen((o) => !o)}
+            aria-label="Keyboard shortcuts"
+            title="Keyboard shortcuts (?)"
+          >
+            ?
+          </button>
+        </div>
+
+        <div
+          className="builder__progress-bar"
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="builder__progress-fill" style={{ width: `${percent}%` }} />
+        </div>
+      </header>
+
+      {/* Top Shelf Parts Tray */}
+      <div className="builder__shelf">
+        <div className="builder__shelf-tray">
+          <span className="builder__shelf-label">Parts for Step {activeStep + 1}:</span>
+          <StepTray items={currentStep.trayItems} className="builder__tray" />
+        </div>
+        {currentStep.hasOverhangs && (
+          <div className="builder__overhang-alert" role="alert">
+            <span className="builder__overhang-icon">⚠</span>
+            <span>
+              <strong>Overhang warning:</strong> {currentStep.overhangCount} block
+              {currentStep.overhangCount === 1 ? '' : 's'} placed without support beneath
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Responsive mobile tab switcher */}
+      <div className="builder__tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mobileTab === 'plan'}
+          className={`builder__tab ${mobileTab === 'plan' ? 'is-active' : ''}`}
+          onClick={() => setMobileTab('plan')}
+        >
+          2D Plan
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mobileTab === 'model'}
+          className={`builder__tab ${mobileTab === 'model' ? 'is-active' : ''}`}
+          onClick={() => setMobileTab('model')}
+        >
+          3D View
+        </button>
+      </div>
+
+      {/* Dual Panel Stage */}
+      <main className="builder__stage">
+        {/* Left Panel: 2D Layer Plan */}
+        <section
+          className={`builder__panel builder__panel--plan ${mobileTab === 'plan' ? 'is-mobile-visible' : ''}`}
+          aria-label="2D Layer Plan"
+        >
+          <div className="builder__panel-head">
+            <div className="builder__panel-title">
+              <strong>Layer {currentStep.layer} Plan</strong>
+              {currentPlan && (
+                <span className="builder__panel-meta">
+                  {' '}· {dimensions.text}
+                </span>
+              )}
+            </div>
+            <div className="builder__zoom-controls">
+              <button
+                type="button"
+                className="builder__btn builder__btn--small"
+                onClick={handleZoomOut}
+                disabled={zoom <= 0.5}
+                title="Zoom out"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                className="builder__btn builder__btn--small builder__btn--zoom-val"
+                onClick={handleZoomReset}
+                title="Reset zoom"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                type="button"
+                className="builder__btn builder__btn--small"
+                onClick={handleZoomIn}
+                disabled={zoom >= 2.5}
+                title="Zoom in"
+              >
+                +
+              </button>
+            </div>
+          </div>
+          <div className="builder__panel-body builder__panel-body--canvas">
+            <div
+              className="builder__canvas-transform"
+              style={{
+                transform: `scale(${zoom})`,
+                transformOrigin: 'center center',
+              }}
+            >
+              <canvas ref={planCanvasRef} className="builder__plan-canvas" />
+            </div>
+          </div>
+        </section>
+
+        {/* Right Panel: 3D View */}
+        <section
+          className={`builder__panel builder__panel--model ${mobileTab === 'model' ? 'is-mobile-visible' : ''}`}
+          aria-label="3D Model View"
+        >
+          <div className="builder__panel-head">
+            <div className="builder__panel-title">
+              <strong>3D View</strong>
+              <span className="builder__panel-meta">
+                {' '}· seen from {orientationName(orientation)} ({orientation})
+              </span>
+            </div>
+            <div className="builder__orientation-controls">
+              <button
+                type="button"
+                className="builder__btn builder__btn--small builder__btn--rotate"
+                onClick={cycleOrientation}
+                title="Rotate camera view (R)"
+              >
+                ↺ Rotated to {orientation}
+              </button>
+              <div className="builder__orient-buttons" role="group" aria-label="Camera orientation">
+                {(['SE', 'SW', 'NW', 'NE'] as const).map((dir) => (
+                  <button
+                    key={dir}
+                    type="button"
+                    className={`builder__btn builder__btn--dir ${dir === orientation ? 'is-active' : ''}`}
+                    onClick={() => setOrientation(dir)}
+                    title={`View from ${dir} (${orientationName(dir)})`}
+                  >
+                    {dir}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="builder__panel-body builder__panel-body--model">
+            {cueOrientation && (
+              <div className="builder__cue-badge" role="status">
+                {cueOrientation}
+              </div>
+            )}
+            {shot ? (
+              <img
+                src={shot}
+                alt={`Model view after step ${activeStep + 1} from ${orientation}`}
+                className="builder__model-image"
+              />
+            ) : (
+              <div className="builder__loading-model">Rendering 3D model…</div>
+            )}
+          </div>
+        </section>
+      </main>
+
+      {/* Floating Stepper Bar */}
+      <footer className="builder__stepper">
+        <button
+          type="button"
+          className="builder__btn builder__stepper-nav"
+          onClick={() => setActiveStep((s) => Math.max(0, s - 1))}
+          disabled={activeStep === 0}
+          title="Previous step (Left Arrow)"
+        >
+          ‹ Prev
+        </button>
+
+        <div className="builder__stepper-center">
+          <div className="builder__stepper-title">
+            <span className="builder__stepper-step">Step {activeStep + 1}:</span> {currentStep.title}
+          </div>
+          <button
+            type="button"
+            className={`builder__btn builder__done-btn ${isCurrentDone ? 'is-completed' : ''}`}
+            onClick={toggleCurrentDone}
+            title="Mark current step done (Space)"
+          >
+            {isCurrentDone ? '✓ Completed' : '✓ Mark Step Done'}
+          </button>
+        </div>
+
+        {isFinalStep ? (
+          <button
+            type="button"
+            className={`builder__btn builder__stepper-nav builder__btn--finish ${
+              completed.size === totalSteps ? 'is-all-done' : ''
+            }`}
+            onClick={markDoneAndAdvance}
+            title="Finish Build"
+          >
+            Finish Build 🎉
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="builder__btn builder__stepper-nav"
+            onClick={() => setActiveStep((s) => Math.min(totalSteps - 1, s + 1))}
+            title="Next step (Right Arrow or Space)"
+          >
+            Next ›
+          </button>
+        )}
+      </footer>
+
+      {/* Timeline Scrubber */}
+      <nav className="builder__timeline" ref={timelineRef} aria-label="Step timeline">
+        {guide.steps.map((st, i) => {
+          const isDone = completed.has(i);
+          const isCurrent = i === activeStep;
+          return (
+            <button
+              key={st.index}
+              type="button"
+              data-step-index={i}
+              className={`timeline-node ${isCurrent ? 'is-active' : ''} ${isDone ? 'is-completed' : ''} ${
+                st.hasOverhangs ? 'has-overhang' : ''
+              }`}
+              onClick={() => setActiveStep(i)}
+              title={`Step ${i + 1}: ${st.title}${st.hasOverhangs ? ' (Overhang)' : ''}${isDone ? ' (Completed)' : ''}`}
+            >
+              {i + 1}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Shortcuts Cheat Sheet Modal */}
+      {helpOpen && (
+        <div
+          className="builder__modal-backdrop"
+          onClick={() => setHelpOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shortcuts-title"
+        >
+          <div className="builder__modal" onClick={(e) => e.stopPropagation()}>
+            <div className="builder__modal-head">
+              <h3 id="shortcuts-title">Keyboard Shortcuts</h3>
+              <button
+                type="button"
+                className="builder__modal-close"
+                onClick={() => setHelpOpen(false)}
+                aria-label="Close shortcuts modal"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="builder__shortcuts-list">
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>→</kbd>
+                </span>
+                <span>Next step</span>
+              </div>
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>←</kbd>
+                </span>
+                <span>Previous step</span>
+              </div>
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>Space</kbd>
+                </span>
+                <span>Mark step done & advance</span>
+              </div>
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>R</kbd>
+                </span>
+                <span>Cycle camera orientation (SE → SW → NW → NE)</span>
+              </div>
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>Home</kbd> / <kbd>End</kbd>
+                </span>
+                <span>Jump to first / last step</span>
+              </div>
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>F</kbd>
+                </span>
+                <span>Toggle fullscreen mode</span>
+              </div>
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>?</kbd> or <kbd>H</kbd>
+                </span>
+                <span>Toggle shortcuts cheat sheet</span>
+              </div>
+              <div className="builder__shortcut-row">
+                <span className="builder__shortcut-keys">
+                  <kbd>Esc</kbd>
+                </span>
+                <span>Close modal</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="builder__btn builder__modal-btn"
+              onClick={() => setHelpOpen(false)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

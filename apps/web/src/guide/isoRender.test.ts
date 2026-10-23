@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { dimmedTwice, doubled } from './isoRender.js';
+import { CAMERA_AZIMUTHS, CAMERA_ELEVATION, dimmedTwice, doubled } from './isoRender.js';
 
 describe('dimmedTwice', () => {
   it('doubles the table, so index + span addresses the same material lit', () => {
@@ -55,5 +55,18 @@ describe('doubled', () => {
     // A pane of glass placed this step must still be glass, or a lit window would render
     // solid and hide everything the reader has already built behind it.
     expect([...doubled(Uint8Array.of(1, 0, 2))]).toEqual([1, 0, 2, 1, 0, 2]);
+  });
+});
+
+describe('camera axonometric orientations', () => {
+  it('defines 4 cardinal azimuth angles correctly', () => {
+    expect(CAMERA_AZIMUTHS.SE).toBeCloseTo(Math.PI / 4, 6); // 45°
+    expect(CAMERA_AZIMUTHS.SW).toBeCloseTo((3 * Math.PI) / 4, 6); // 135°
+    expect(CAMERA_AZIMUTHS.NW).toBeCloseTo((5 * Math.PI) / 4, 6); // 225°
+    expect(CAMERA_AZIMUTHS.NE).toBeCloseTo((7 * Math.PI) / 4, 6); // 315°
+  });
+
+  it('sets elevation to true isometric elevation', () => {
+    expect(CAMERA_ELEVATION).toBeCloseTo(Math.atan(1 / Math.SQRT2), 6);
   });
 });

@@ -22,6 +22,7 @@ export interface PlanCell {
   x: number;
   z: number;
   paletteIndex: number;
+  isOverhang?: boolean;
 }
 
 /** Inclusive x/z bounds of everything the build ever occupies — see {@link footprint}. */
@@ -40,6 +41,8 @@ export interface LayerPlan {
   paletteColors: Uint8Array;
   footprint: Footprint;
   layer: number;
+  hasOverhangs?: boolean;
+  overhangCount?: number;
   /** Placed by this step — full colour, outlined. */
   placed: readonly PlanCell[];
   /** Placed earlier in the same layer — context only. */
@@ -55,14 +58,19 @@ const MAX_CANVAS = 660;
 /** Room for the row numbers and column letters. */
 const GUTTER_LEFT = 26;
 const GUTTER_TOP = 18;
+const GUTTER_BOTTOM = 16;
 const PAD = 6;
 
 const PAPER = '#f6f7f9';
 const RULE = 'rgba(20, 26, 33, 0.14)';
+const MAJOR_RULE = 'rgba(20, 26, 33, 0.38)';
 const EDGE = 'rgba(20, 26, 33, 0.35)';
 const INK = '#12171d';
 const LABEL = '#5b636d';
+const OVERHANG_COLOR = '#d97706';
+const OVERHANG_HATCH = 'rgba(217, 119, 6, 0.4)';
 const COMPASS_FONT = '8px ui-monospace, "Cascadia Code", Consolas, monospace';
+const DIM_FONT = '9px ui-monospace, "Cascadia Code", Consolas, monospace';
 
 /** Earlier-in-this-layer, and the layer below. Both are context, at decreasing strength. */
 const ALPHA_EARLIER = 0.45;
@@ -117,6 +125,29 @@ export function footprint(cells: readonly PlanCell[]): Footprint {
 }
 
 /**
+ * Calculates the bounding box of a list of cells and returns the dimension text:
+ * e.g. `${width} × ${depth} blocks`.
+ */
+export function placedDimensions(cells: readonly PlanCell[]): { width: number; depth: number; text: string } {
+  if (cells.length === 0) {
+    return { width: 0, depth: 0, text: '0 × 0 blocks' };
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const cell of cells) {
+    if (cell.x < minX) minX = cell.x;
+    if (cell.x > maxX) maxX = cell.x;
+    if (cell.z < minZ) minZ = cell.z;
+    if (cell.z > maxZ) maxZ = cell.z;
+  }
+  const width = maxX - minX + 1;
+  const depth = maxZ - minZ + 1;
+  return { width, depth, text: `${width} × ${depth} blocks` };
+}
+
+/**
  * For each step, what the *same layer* already holds from earlier steps.
  *
  * Accumulated in one pass and reset whenever the layer changes, rather than re-scanning the
@@ -135,7 +166,14 @@ export function earlierInLayer(steps: readonly BuildStep[]): PlanCell[][] {
     }
     // Snapshot before adding: this step's own blocks are drawn as new, not as context.
     out.push(running);
-    running = running.concat(step.blocks.map((b) => ({ x: b.x, z: b.z, paletteIndex: b.paletteIndex })));
+    running = running.concat(
+      step.blocks.map((b) => ({
+        x: b.x,
+        z: b.z,
+        paletteIndex: b.paletteIndex,
+        isOverhang: b.isOverhang,
+      })),
+    );
   }
   return out;
 }
@@ -146,7 +184,7 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
   const cell = cellSizeFor(cols, rows);
 
   const width = GUTTER_LEFT + cols * cell + PAD * 2;
-  const height = GUTTER_TOP + rows * cell + PAD * 2;
+  const height = GUTTER_TOP + rows * cell + PAD * 2 + GUTTER_BOTTOM;
 
   canvas.width = width * SCALE;
   canvas.height = height * SCALE;
@@ -184,25 +222,79 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
   ctx.globalAlpha = 1;
   for (const cell2 of plan.placed) fillCell(ctx, plan, cell2, originX, originY, cell);
 
-  // Rules go over the fills, not under: a run of twenty identical blocks is one solid slab
-  // otherwise, and the reader cannot count it.
+  // Overhang Indicators: for cells where cell.isOverhang === true, draw amber caution hatch pattern
+  for (const cell2 of plan.placed) {
+    if (!cell2.isOverhang) continue;
+    const px = originX + (cell2.x - plan.footprint.x0) * cell;
+    const py = originY + (cell2.z - plan.footprint.z0) * cell;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(px, py, cell, cell);
+    ctx.clip();
+
+    ctx.fillStyle = 'rgba(217, 119, 6, 0.22)';
+    ctx.fillRect(px, py, cell, cell);
+
+    ctx.strokeStyle = OVERHANG_HATCH;
+    ctx.lineWidth = 1.5;
+    const hatchStep = 4;
+    for (let d = -cell; d <= cell * 2; d += hatchStep) {
+      ctx.beginPath();
+      ctx.moveTo(px + d, py);
+      ctx.lineTo(px + d + cell, py + cell);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 1-block minor rules
   ctx.strokeStyle = RULE;
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let c = 0; c <= cols; c++) {
+    const worldX = plan.footprint.x0 + c;
+    if (worldX % 5 === 0) continue;
     const x = Math.round(originX + c * cell) + 0.5;
     ctx.moveTo(x, originY);
     ctx.lineTo(x, originY + gridH);
   }
   for (let r = 0; r <= rows; r++) {
+    const worldZ = plan.footprint.z0 + r;
+    if (worldZ % 5 === 0) continue;
     const y = Math.round(originY + r * cell) + 0.5;
     ctx.moveTo(originX, y);
     ctx.lineTo(originX + gridW, y);
   }
   ctx.stroke();
 
+  // 5-block major rules: more prominent line every 5 blocks (x % 5 === 0, z % 5 === 0)
+  ctx.strokeStyle = MAJOR_RULE;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let c = 0; c <= cols; c++) {
+    const worldX = plan.footprint.x0 + c;
+    if (worldX % 5 === 0) {
+      const x = Math.round(originX + c * cell) + 0.5;
+      ctx.moveTo(x, originY);
+      ctx.lineTo(x, originY + gridH);
+    }
+  }
+  for (let r = 0; r <= rows; r++) {
+    const worldZ = plan.footprint.z0 + r;
+    if (worldZ % 5 === 0) {
+      const y = Math.round(originY + r * cell) + 0.5;
+      ctx.moveTo(originX, y);
+      ctx.lineTo(originX + gridW, y);
+    }
+  }
+  ctx.stroke();
+
   ctx.strokeStyle = EDGE;
   ctx.strokeRect(originX + 0.5, originY + 0.5, gridW - 1, gridH - 1);
+
+  // Coordinate Origin Peg: marker at origin (0, 0) with subtle axis arrows (+X East, +Z South)
+  drawOriginPeg(ctx, originX, originY, cell, plan.footprint, gridW, gridH);
 
   // The one mark that has to survive a photocopier: this step's blocks.
   ctx.strokeStyle = INK;
@@ -210,11 +302,128 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
   for (const cell2 of plan.placed) {
     const x = originX + (cell2.x - plan.footprint.x0) * cell;
     const y = originY + (cell2.z - plan.footprint.z0) * cell;
-    ctx.strokeRect(x + 1, y + 1, cell - 2, cell - 2);
+    if (cell2.isOverhang) {
+      ctx.strokeStyle = OVERHANG_COLOR;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, cell - 2, cell - 2);
+      ctx.strokeStyle = INK;
+    } else {
+      ctx.strokeRect(x + 1, y + 1, cell - 2, cell - 2);
+    }
   }
 
   drawLabels(ctx, cols, rows, cell, originX, originY, plan.footprint);
   drawCompass(ctx, originX, originY);
+
+  // Overhang badge if step.hasOverhangs
+  const hasOverhangs = plan.hasOverhangs ?? plan.placed.some((c) => c.isOverhang);
+  if (hasOverhangs) {
+    drawOverhangBadge(ctx, width, PAD);
+  }
+
+  // Spatial Extents: calculate bounding box of placed blocks and render dimension text: e.g. "${width} × ${depth} blocks"
+  drawSpatialExtents(ctx, originX, originY + gridH + 3, gridW, plan.placed);
+}
+
+function drawOriginPeg(
+  ctx: CanvasRenderingContext2D,
+  originX: number,
+  originY: number,
+  cell: number,
+  box: Footprint,
+  gridW: number,
+  gridH: number,
+): void {
+  const ox = originX + (0 - box.x0) * cell;
+  const oy = originY + (0 - box.z0) * cell;
+
+  // Only draw if (0, 0) is within or directly adjacent to the grid bounds
+  if (ox < originX - 2 || ox > originX + gridW + 2 || oy < originY - 2 || oy > originY + gridH + 2) {
+    return;
+  }
+
+  ctx.save();
+  // Small circular origin peg
+  ctx.fillStyle = '#b45309';
+  ctx.beginPath();
+  ctx.arc(ox, oy, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Subtle axis arrows: +X East, +Z South
+  ctx.strokeStyle = '#b45309';
+  ctx.fillStyle = '#b45309';
+  ctx.lineWidth = 1;
+  ctx.font = '7px ui-monospace, "Cascadia Code", Consolas, monospace';
+
+  // If space allows to the right for +X arrow
+  if (ox + 16 <= originX + gridW + 10) {
+    ctx.beginPath();
+    ctx.moveTo(ox + 3, oy);
+    ctx.lineTo(ox + 12, oy);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ox + 12, oy);
+    ctx.lineTo(ox + 9, oy - 2);
+    ctx.lineTo(ox + 9, oy + 2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // If space allows downward for +Z arrow
+  if (oy + 16 <= originY + gridH + 10) {
+    ctx.beginPath();
+    ctx.moveTo(ox, oy + 3);
+    ctx.lineTo(ox, oy + 12);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ox, oy + 12);
+    ctx.lineTo(ox - 2, oy + 9);
+    ctx.lineTo(ox + 2, oy + 9);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawOverhangBadge(ctx: CanvasRenderingContext2D, width: number, top: number): void {
+  ctx.save();
+  const badgeW = 68;
+  const badgeH = 14;
+  const x = width - PAD - badgeW;
+  const y = top + 2;
+
+  ctx.fillStyle = 'rgba(217, 119, 6, 0.15)';
+  ctx.fillRect(x, y, badgeW, badgeH);
+  ctx.strokeStyle = '#d97706';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, badgeW, badgeH);
+
+  ctx.fillStyle = '#b45309';
+  ctx.font = '8px ui-monospace, "Cascadia Code", Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⚠ OVERHANG', x + badgeW / 2, y + badgeH / 2);
+  ctx.restore();
+}
+
+function drawSpatialExtents(
+  ctx: CanvasRenderingContext2D,
+  originX: number,
+  y: number,
+  gridW: number,
+  placed: readonly PlanCell[],
+): void {
+  const dims = placedDimensions(placed);
+  if (dims.width === 0) return;
+
+  ctx.save();
+  ctx.font = DIM_FONT;
+  ctx.fillStyle = LABEL;
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText(dims.text, originX + gridW, y);
+  ctx.restore();
 }
 
 /**

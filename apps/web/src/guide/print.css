@@ -767,7 +767,7 @@
 }
 
 .builder__dock-inner {
-  max-width: var(--guide-page);
+  max-width: 72rem;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -778,6 +778,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .builder__nav-btn {
@@ -816,17 +817,26 @@
 
 .builder__dock-progress {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.35rem;
 }
 
 .builder__progress-labels {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
   font-size: var(--guide-text-xs);
   color: var(--guide-ink-muted);
   font-family: var(--guide-font-mono);
+  min-width: 0;
+}
+
+.builder__blocks-stat,
+.builder__completed-stat {
+  white-space: nowrap;
 }
 
 .builder__scrubber {
@@ -841,6 +851,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .builder__layer-select {
@@ -866,6 +877,83 @@
 .builder__reset-btn:hover {
   color: #ef4444;
   border-color: #ef4444;
+}
+
+@media screen and (max-width: 48rem) {
+  .builder {
+    padding-bottom: 9.5rem;
+  }
+
+  .builder__panes {
+    grid-template-columns: 1fr;
+  }
+
+  .builder__header {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .builder__header-stats {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .builder__dock {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .builder__dock-inner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+
+  .builder__dock-progress {
+    order: 1;
+    width: 100%;
+  }
+
+  .builder__dock-nav {
+    order: 2;
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    gap: 0.5rem;
+  }
+
+  .builder__nav-btn,
+  .builder__complete-btn {
+    flex: 1;
+    text-align: center;
+    padding: 0.4rem 0.4rem;
+    font-size: var(--guide-text-xs);
+    white-space: nowrap;
+  }
+
+  .builder__dock-actions {
+    order: 3;
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    gap: 0.5rem;
+  }
+
+  .builder__layer-select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .builder__progress-labels {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+
+  .builder__blocks-stat,
+  .builder__completed-stat {
+    white-space: normal;
+    font-size: var(--guide-text-xs);
+  }
 }
 
 /* Shortcuts Modal */

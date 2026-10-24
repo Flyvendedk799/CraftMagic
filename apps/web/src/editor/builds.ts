@@ -162,61 +162,12 @@ const blank: BuildProgram = {
   components: [],
 };
 
-const chalet: BuildProgram = {
-  version: 1,
-  meta: { name: 'Chalet', description: 'Timber chalet with porch stairs and slab decking' },
-  size: { x: 12, y: 10, z: 12 },
-  palette: {
-    foundation: 'minecraft:stone_bricks',
-    slab: 'minecraft:oak_slab[type=bottom]',
-    stairs: 'minecraft:oak_stairs[facing=north,half=bottom]',
-    wall_primary: 'minecraft:spruce_planks',
-    roof_primary: 'minecraft:dark_oak_stairs',
-  },
-  components: [
-    {
-      type: 'box',
-      pos: [2, 0, 2],
-      size: [8, 1, 8],
-      fill: { type: 'solid', role: 'foundation' },
-    },
-    {
-      type: 'box',
-      pos: [2, 1, 2],
-      size: [3, 1, 2],
-      fill: { type: 'solid', role: 'stairs' },
-    },
-    {
-      type: 'box',
-      pos: [5, 1, 2],
-      size: [5, 1, 2],
-      fill: { type: 'solid', role: 'slab' },
-    },
-    {
-      type: 'box',
-      pos: [2, 2, 2],
-      size: [8, 4, 8],
-      fill: { type: 'solid', role: 'wall_primary' },
-    },
-    {
-      type: 'gable_roof',
-      pos: [1, 6, 1],
-      size: [10, 4, 10],
-      ridgeAxis: 'z',
-      overhang: 0,
-      style: 'stairs',
-      roofRole: 'roof_primary',
-    },
-  ],
-};
-
 const PROGRAMS: Record<string, BuildProgram> = {
   blank,
   cottage: samples.cottage!,
   tower: samples.tower!,
   pavilion: samples.pavilion!,
   field: towerField,
-  chalet,
 };
 
 /** The built-in samples, in picker order. Generated builds are tracked separately. */

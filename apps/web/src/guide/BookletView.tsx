@@ -340,7 +340,7 @@ export function BookletView({
                 <div className={`booklet__step-grid booklet__step-grid--${density}up`}>
                   {pageSteps.map((step) => {
                     const stepIdx = step.index - 1;
-                    const plan = plans[stepIdx]!;
+                    const plan = plans[stepIdx];
                     const shot = filmShots[stepIdx];
                     const placed = placedBy[stepIdx] ?? 0;
                     const also = step.parts.slice(1);

@@ -39,6 +39,8 @@ export interface LayerPlan {
   voxels: Uint16Array;
   /** 3 bytes per palette slot, as the editor builds them. */
   paletteColors: Uint8Array;
+  /** The block palette refs, e.g. ['minecraft:air', 'minecraft:stone', ...], for looking up block names. */
+  palette?: readonly string[];
   footprint: Footprint;
   layer: number;
   /** Placed by this step — full colour, outlined. */

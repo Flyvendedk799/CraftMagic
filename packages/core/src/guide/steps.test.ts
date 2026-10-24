@@ -493,6 +493,25 @@ describe('calculateStepOrientation & camera occlusion detection', () => {
 		expect(result.occlusionRatio).toBe(0);
 	});
 
+	it('auto-flips when same-layer walls placed earlier occlude > 30% of step blocks', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
+		// Step blocks placed at (2, 1, 2)
+		const stepBlocks: StepBlock[] = [
+			{ x: 2, y: 1, z: 2, paletteIndex: 1 },
+		];
+		// Same-layer obstacle along SE ray (+1, 0, +1): (3, 1, 3)
+		// SW ray (-1, 0, +1) -> (1, 1, 3) is clear
+		// NW ray (-1, 0, -1) -> (1, 1, 1) is clear
+		// NE ray (+1, 0, -1) -> (3, 1, 1) is clear
+		const previouslyPlaced = new Set<number>([voxelIndex(size, 3, 1, 3)]);
+
+		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
+		expect(result.orientation).toBe('SW');
+		expect(result.isFlipped).toBe(true);
+		expect(result.occlusionRatio).toBe(0);
+	});
+
 	it('breaks ties in order SE, SW, NW, NE when multiple orientations have minimum occlusion', () => {
 		const size = { x: 10, y: 10, z: 10 };
 		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
@@ -680,5 +699,29 @@ describe('chunkGuideVolumes', () => {
 		expect(volumes[0]!.title).toBe('Volume 1: Steps 1–3');
 		expect(volumes[1]!.title).toBe('Volume 2: Steps 4–6');
 		expect(volumes[2]!.title).toBe('Volume 3: Steps 7–7');
+	});
+
+	it('handles non-positive or non-finite maxPerVolume by defaulting to MAX_STEPS_PER_VOLUME', () => {
+		const mockStep = (index: number): BuildStep => ({
+			index,
+			layer: 0,
+			title: `Step ${index}`,
+			parts: [],
+			blocks: [],
+			materials: [],
+			callouts: [],
+			orientation: 'SE',
+			isFlipped: false,
+		});
+
+		const steps = Array.from({ length: 5 }, (_, i) => mockStep(i + 1));
+		expect(chunkGuideVolumes(steps, 0)).toHaveLength(1);
+		expect(chunkGuideVolumes(steps, 0)[0]!.title).toBe('Volume 1: Steps 1–5');
+
+		expect(chunkGuideVolumes(steps, -1)).toHaveLength(1);
+		expect(chunkGuideVolumes(steps, -1)[0]!.title).toBe('Volume 1: Steps 1–5');
+
+		expect(chunkGuideVolumes(steps, Number.NaN)).toHaveLength(1);
+		expect(chunkGuideVolumes(steps, Number.NaN)[0]!.title).toBe('Volume 1: Steps 1–5');
 	});
 });

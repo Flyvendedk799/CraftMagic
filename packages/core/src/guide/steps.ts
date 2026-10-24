@@ -570,7 +570,7 @@ export function calculateStepOrientation(
 	};
 
 	for (const orientation of VIEW_ORIENTATIONS) {
-		const [dx, dy, dz] = ORIENTATION_RAYS[orientation];
+		const [dx, _dy, dz] = ORIENTATION_RAYS[orientation];
 		let occludedCount = 0;
 
 		for (const block of stepBlocks) {
@@ -578,22 +578,31 @@ export function calculateStepOrientation(
 			let isOccluded = false;
 			while (true) {
 				const rx = block.x + t * dx;
-				const ry = block.y + t * dy;
 				const rz = block.z + t * dz;
 				if (
 					rx < 0 ||
 					rx >= grid.size.x ||
-					ry < 0 ||
-					ry >= grid.size.y ||
 					rz < 0 ||
 					rz >= grid.size.z
 				) {
 					break;
 				}
-				const idx = voxelIndex(grid.size, rx, ry, rz);
-				if (previouslyPlaced.has(idx)) {
+
+				// 1. Same-layer occlusion (e.g. wall in front of interior furniture)
+				const sameIdx = voxelIndex(grid.size, rx, block.y, rz);
+				if (previouslyPlaced.has(sameIdx)) {
 					isOccluded = true;
 					break;
+				}
+
+				// 2. Elevated occlusion along isometric projection ray
+				const ry = block.y + t;
+				if (ry < grid.size.y) {
+					const elevIdx = voxelIndex(grid.size, rx, ry, rz);
+					if (previouslyPlaced.has(elevIdx)) {
+						isOccluded = true;
+						break;
+					}
 				}
 				t++;
 			}
@@ -651,11 +660,15 @@ export function chunkGuideVolumes(
 	maxPerVolume = MAX_STEPS_PER_VOLUME,
 ): GuideVolume[] {
 	if (steps.length === 0) return [];
-	const totalVolumes = Math.ceil(steps.length / maxPerVolume);
+	const chunkSize =
+		Number.isFinite(maxPerVolume) && maxPerVolume > 0
+			? Math.floor(maxPerVolume)
+			: MAX_STEPS_PER_VOLUME;
+	const totalVolumes = Math.ceil(steps.length / chunkSize);
 	const volumes: GuideVolume[] = [];
 	for (let i = 0; i < totalVolumes; i++) {
-		const start = i * maxPerVolume;
-		const end = Math.min(start + maxPerVolume, steps.length);
+		const start = i * chunkSize;
+		const end = Math.min(start + chunkSize, steps.length);
 		volumes.push({
 			volumeIndex: i + 1,
 			totalVolumes,

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { BuildStep } from '@craftmagic/core';
+import { displayName, type BuildStep } from '@craftmagic/core';
 import {
   cellSizeFor,
   columnLabel,
@@ -22,7 +22,7 @@ export interface HoverCellInfo {
 }
 
 export interface LayerPlanCanvasProps {
-  plan: LayerPlan;
+  plan?: LayerPlan | null;
   step?: BuildStep;
   className?: string;
   caption?: string;
@@ -43,10 +43,48 @@ export function LayerPlanCanvas({
   const [hoverInfo, setHoverInfo] = useState<HoverCellInfo | null>(null);
 
   useLayoutEffect(() => {
-    if (canvasRef.current) {
+    if (canvasRef.current && plan) {
       drawLayerPlan(canvasRef.current, plan);
     }
   }, [plan]);
+
+  // Map of placed coordinates to display names from step callouts / palette
+  const blockNames = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!step) return map;
+
+    for (const b of step.blocks) {
+      const key = `${b.x},${b.z}`;
+      const blockRef = plan?.palette?.[b.paletteIndex];
+      if (blockRef) {
+        const baseId = blockRef.split('[')[0];
+        const callout = step.callouts?.find(
+          (c) => c.block === blockRef || c.baseId === baseId || c.baseId === blockRef,
+        );
+        if (callout) {
+          map.set(key, callout.displayName);
+        } else {
+          map.set(key, displayName(blockRef));
+        }
+      } else if (step.callouts && step.callouts.length === 1 && step.callouts[0]) {
+        map.set(key, step.callouts[0].displayName);
+      }
+    }
+    return map;
+  }, [step, plan?.palette]);
+
+  if (!plan) {
+    return (
+      <div
+        ref={containerRef}
+        className={`layer-plan-wrapper layer-plan-wrapper--empty ${className}`.trim()}
+      >
+        <div className="layer-plan__empty-fallback">
+          <span>Plan not available</span>
+        </div>
+      </div>
+    );
+  }
 
   const cols = plan.footprint.x1 - plan.footprint.x0 + 1;
   const rows = plan.footprint.z1 - plan.footprint.z0 + 1;
@@ -56,26 +94,7 @@ export function LayerPlanCanvas({
   const originX = GUTTER_LEFT + PAD;
   const originY = GUTTER_TOP + PAD;
 
-  // Map of placed coordinates to display names from step callouts
-  const blockNames = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!step) return map;
-
-    for (const b of step.blocks) {
-      const key = `${b.x},${b.z}`;
-      // Find matching callout if available
-      const callout = step.callouts?.find((c) => {
-        // Can match by palette or displayName
-        return true;
-      });
-      if (callout) {
-        map.set(key, callout.displayName);
-      }
-    }
-    return map;
-  }, [step]);
-
-  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -112,7 +131,17 @@ export function LayerPlanCanvas({
       if (placedCell) {
         isOverhang = isPlanCellOverhang(plan, placedCell);
         status = isOverhang ? '⚠️ Overhang: place on side face' : 'Solid foundation';
-        blockName = blockNames.get(`${worldX},${worldZ}`) ?? step?.title;
+        const blockRef = plan.palette?.[placedCell.paletteIndex];
+        const baseId = blockRef ? blockRef.split('[')[0] : undefined;
+        const callout = blockRef
+          ? step?.callouts?.find((c) => c.block === blockRef || c.baseId === baseId || c.baseId === blockRef)
+          : undefined;
+        blockName =
+          blockNames.get(`${worldX},${worldZ}`) ??
+          callout?.displayName ??
+          (blockRef ? displayName(blockRef) : undefined) ??
+          (step?.callouts?.length === 1 ? step.callouts[0]?.displayName : undefined) ??
+          step?.title;
       } else if (isEarlier) {
         status = 'Placed earlier in this layer';
       } else if (plan.layer > 0) {
@@ -154,6 +183,8 @@ export function LayerPlanCanvas({
         className="panel__plan"
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
+        onMouseMove={handlePointerMove}
+        onMouseLeave={handlePointerLeave}
         aria-label={caption ?? `Layer plan for layer y = ${plan.layer}`}
       />
 

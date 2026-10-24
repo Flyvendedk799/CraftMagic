@@ -154,7 +154,7 @@ export function GuidePage() {
   const film = useFilmstrip(build, guide, printable, renderable);
   const ready = film.cover !== null;
 
-  const plans = useLayerPlans(build, guide, printable && renderable);
+  const plans = useLayerPlans(build, guide, renderable);
 
   const editorHref = useMemo(() => {
     const search = new URLSearchParams();
@@ -351,7 +351,8 @@ function useFilmstrip(
       // rather than a second pass over the steps — but it has to stop highlighting first, or
       // the finished building comes out muted except for whatever the last step placed.
       film.settle();
-      const cover = film.snapshot(COVER_W, COVER_H);
+      film.setOrientation('SE');
+      const cover = film.snapshot(COVER_W, COVER_H, 'SE');
       setState({ shots, cover, elapsedMs: Math.round(performance.now() - startedAt) });
       film.dispose();
     };
@@ -370,7 +371,7 @@ function useFilmstrip(
         const step = guide.steps[shots.length];
         if (!step) break;
         film.place(step.blocks);
-        shots.push(film.snapshot(STEP_W, STEP_H));
+        shots.push(film.snapshot(STEP_W, STEP_H, step.orientation));
       } while (performance.now() < until);
 
       if (shots.length < guide.steps.length) {
@@ -399,9 +400,9 @@ function useFilmstrip(
  * effect, so rebuilding them on every render would redraw all 40 canvases on every state
  * update the filmstrip pushes.
  */
-function useLayerPlans(build: LoadedBuild, guide: BuildGuide, printable: boolean): LayerPlan[] {
+function useLayerPlans(build: LoadedBuild, guide: BuildGuide, enabled: boolean): LayerPlan[] {
   return useMemo(() => {
-    if (!printable) return [];
+    if (!enabled) return [];
     const earlier = earlierInLayer(guide.steps);
     // One frame for every plan, taken from the whole build: a step whose blocks sit in one
     // corner must still line up with the step before it.
@@ -413,12 +414,13 @@ function useLayerPlans(build: LoadedBuild, guide: BuildGuide, printable: boolean
       size: build.grid.size,
       voxels: build.grid.voxels,
       paletteColors: build.paletteColors,
+      palette: build.grid.palette,
       footprint: box,
       layer: step.layer,
       placed: step.blocks.map((b): PlanCell => ({ x: b.x, z: b.z, paletteIndex: b.paletteIndex })),
       earlier: earlier[i] ?? [],
     }));
-  }, [build, guide, printable]);
+  }, [build, guide, enabled]);
 }
 
 /* --- formatting -------------------------------------------------------------------------- */

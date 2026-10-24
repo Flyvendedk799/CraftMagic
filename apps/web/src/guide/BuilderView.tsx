@@ -98,7 +98,7 @@ export function BuilderView({
   });
 
   const currentStep: BuildStep = guide.steps[currentStepIndex] ?? guide.steps[0]!;
-  const currentPlan: LayerPlan = plans[currentStepIndex] ?? plans[0]!;
+  const currentPlan: LayerPlan | undefined = plans[currentStepIndex] ?? plans[0];
 
   // Orientation state: defaults to currentStep.orientation unless user rotates it
   const [activeOrientation, setActiveOrientation] = useState<ViewOrientation>(

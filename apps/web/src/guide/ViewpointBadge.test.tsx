@@ -19,7 +19,7 @@ describe('ViewpointBadge component', () => {
   it('renders flipped badge with flip icon and flipped modifier class', () => {
     render(<ViewpointBadge orientation="NW" isFlipped={true} />);
     const badge = screen.getByRole('status');
-    expect(badge.textContent).toBe('↺ North-West');
+    expect(badge.textContent).toBe('North-West (Flipped)');
     expect(badge.className).toContain('viewpoint-badge--flipped');
   });
 });

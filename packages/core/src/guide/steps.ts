@@ -544,14 +544,20 @@ export function extractStepCallouts(
 	return callouts;
 }
 
-const ORIENTATION_RAYS: Record<ViewOrientation, [number, number, number]> = {
-	SE: [1, 1, 1],
-	SW: [-1, 1, 1],
-	NW: [-1, 1, -1],
-	NE: [1, 1, -1],
-};
+export const VIEW_ORIENTATIONS: readonly ViewOrientation[] = ['SE', 'SW', 'NW', 'NE'];
 
-const VIEW_ORIENTATIONS: readonly ViewOrientation[] = ['SE', 'SW', 'NW', 'NE'];
+export interface OrientationVector {
+	x: 1 | -1;
+	y: 1;
+	z: 1 | -1;
+}
+
+export const ORIENTATION_VECTORS: Record<ViewOrientation, OrientationVector> = {
+	SE: { x: 1, y: 1, z: 1 },
+	SW: { x: -1, y: 1, z: 1 },
+	NW: { x: -1, y: 1, z: -1 },
+	NE: { x: 1, y: 1, z: -1 },
+};
 
 export function calculateStepOrientation(
 	grid: VoxelGrid,
@@ -570,7 +576,9 @@ export function calculateStepOrientation(
 	};
 
 	for (const orientation of VIEW_ORIENTATIONS) {
-		const [dx, _dy, dz] = ORIENTATION_RAYS[orientation];
+		const vec = ORIENTATION_VECTORS[orientation];
+		const dx = vec.x;
+		const dz = vec.z;
 		let occludedCount = 0;
 
 		for (const block of stepBlocks) {
@@ -588,21 +596,11 @@ export function calculateStepOrientation(
 					break;
 				}
 
-				// 1. Same-layer occlusion (e.g. wall in front of interior furniture)
+				// Same-layer occlusion (e.g. wall placed in an earlier step in front of interior furniture)
 				const sameIdx = voxelIndex(grid.size, rx, block.y, rz);
 				if (previouslyPlaced.has(sameIdx)) {
 					isOccluded = true;
 					break;
-				}
-
-				// 2. Elevated occlusion along isometric projection ray
-				const ry = block.y + t;
-				if (ry < grid.size.y) {
-					const elevIdx = voxelIndex(grid.size, rx, ry, rz);
-					if (previouslyPlaced.has(elevIdx)) {
-						isOccluded = true;
-						break;
-					}
 				}
 				t++;
 			}

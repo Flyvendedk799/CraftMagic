@@ -116,25 +116,75 @@ describe('overhang and void indicators', () => {
     expect(isPlanCellOverhang(plan, { x: 1, z: 1, paletteIndex: 1 })).toBe(false);
   });
 
-  it('identifies interior void / open shaft cells inside footprint', () => {
-    const size = { x: 4, y: 4, z: 4 };
-    const voxels = new Uint16Array(4 * 4 * 4);
-    // Footprint is 0..3, 0..3
-    // At y=1, cell (2, 2) has air at y=1 and air at y=0 (void below)
+  it('identifies interior void / open shaft cells in a hollow tower', () => {
+    // 5x3x5 grid with a hollow tower: walls around perimeter at y=0, interior is air
+    const size = { x: 5, y: 3, z: 5 };
+    const voxels = new Uint16Array(5 * 3 * 5);
+
+    // Build solid perimeter walls at layer y=0
+    for (let x = 0; x < 5; x++) {
+      voxels[0 * 25 + 0 * 5 + x] = 1; // North wall
+      voxels[0 * 25 + 4 * 5 + x] = 1; // South wall
+    }
+    for (let z = 0; z < 5; z++) {
+      voxels[0 * 25 + z * 5 + 0] = 1; // West wall
+      voxels[0 * 25 + z * 5 + 4] = 1; // East wall
+    }
+
     const plan: LayerPlan = {
       size,
       voxels,
       paletteColors: new Uint8Array(6),
-      footprint: { x0: 0, z0: 0, x1: 3, z1: 3 },
+      footprint: { x0: 0, z0: 0, x1: 4, z1: 4 },
       layer: 1,
       placed: [{ x: 0, z: 0, paletteIndex: 1 }],
       earlier: [],
     };
 
+    // Interior shaft cell (2, 2) is enclosed by solid walls at y=0
     expect(isInteriorVoid(plan, 2, 2)).toBe(true);
-    // Placed cell is not void
+    // Interior shaft cell (1, 1) is also enclosed
+    expect(isInteriorVoid(plan, 1, 1)).toBe(true);
+
+    // Placed cell on this layer is not an interior void
     expect(isInteriorVoid(plan, 0, 0)).toBe(false);
+    // Solid wall below at (0, 2) is not void
+    expect(isInteriorVoid(plan, 0, 2)).toBe(false);
     // Cell outside footprint is not interior void
-    expect(isInteriorVoid(plan, 5, 5)).toBe(false);
+    expect(isInteriorVoid(plan, 6, 6)).toBe(false);
+  });
+
+  it('does not classify open exterior air under an overhang as interior void', () => {
+    // 6x3x5 grid with solid base at x in [2, 5], overhang at x=0 on layer y=1
+    const size = { x: 6, y: 3, z: 5 };
+    const voxels = new Uint16Array(6 * 3 * 5);
+
+    // Solid base at layer y=0 for x in [2, 5]
+    for (let z = 0; z < 5; z++) {
+      for (let x = 2; x < 6; x++) {
+        voxels[0 * 30 + z * 6 + x] = 1;
+      }
+    }
+
+    // Overhang block at layer y=1
+    voxels[1 * 30 + 2 * 6 + 0] = 1;
+
+    const plan: LayerPlan = {
+      size,
+      voxels,
+      paletteColors: new Uint8Array(6),
+      footprint: { x0: 0, z0: 0, x1: 5, z1: 4 },
+      layer: 1,
+      placed: [{ x: 0, z: 2, paletteIndex: 1 }],
+      earlier: [],
+    };
+
+    // (0, 2) is an overhang
+    expect(isPlanCellOverhang(plan, { x: 0, z: 2, paletteIndex: 1 })).toBe(true);
+
+    // Air at (1, 2) is exterior air reaching the world boundary, NOT an interior shaft
+    expect(isInteriorVoid(plan, 1, 2)).toBe(false);
+    // Air at (1, 0) reaches the boundary, NOT an interior shaft
+    expect(isInteriorVoid(plan, 1, 0)).toBe(false);
   });
 });

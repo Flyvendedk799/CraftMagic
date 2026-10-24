@@ -147,18 +147,113 @@ export function isPlanCellOverhang(plan: LayerPlan, cell: PlanCell): boolean {
   return isBlockOverhang(plan.voxels, plan.size, cell.x, plan.layer, cell.z);
 }
 
+const interiorVoidCache = new WeakMap<LayerPlan, Map<number, boolean>>();
+
 export function isInteriorVoid(plan: LayerPlan, x: number, z: number): boolean {
   if (plan.layer <= 0) return false;
-  if (x < plan.footprint.x0 || x > plan.footprint.x1 || z < plan.footprint.z0 || z > plan.footprint.z1) {
+  if (
+    x < plan.footprint.x0 ||
+    x > plan.footprint.x1 ||
+    z < plan.footprint.z0 ||
+    z > plan.footprint.z1
+  ) {
     return false;
   }
+  if (x < 0 || x >= plan.size.x || z < 0 || z >= plan.size.z) {
+    return false;
+  }
+
   const belowIdx = (plan.layer - 1) * plan.size.x * plan.size.z + z * plan.size.x + x;
   if (plan.voxels[belowIdx] !== 0) return false;
+
   const isPlaced = plan.placed.some((c) => c.x === x && c.z === z);
   if (isPlaced) return false;
   const isEarlier = plan.earlier.some((c) => c.x === x && c.z === z);
   if (isEarlier) return false;
-  return true;
+
+  // An air cell directly on the footprint perimeter is open to the outside world
+  if (
+    x === plan.footprint.x0 ||
+    x === plan.footprint.x1 ||
+    z === plan.footprint.z0 ||
+    z === plan.footprint.z1
+  ) {
+    return false;
+  }
+
+  let planCache = interiorVoidCache.get(plan);
+  if (!planCache) {
+    planCache = new Map<number, boolean>();
+    interiorVoidCache.set(plan, planCache);
+  }
+
+  const cellKey = z * plan.size.x + x;
+  const cached = planCache.get(cellKey);
+  if (cached !== undefined) return cached;
+
+  // 2D BFS flood fill on layer y - 1 to check if this air cell can reach the world boundaries
+  const queue: number[] = [x, z];
+  const visited = new Set<number>();
+  visited.add(cellKey);
+
+  let reachesBoundary = false;
+  let head = 0;
+
+  while (head < queue.length) {
+    const cx = queue[head++]!;
+    const cz = queue[head++]!;
+
+    if (
+      cx === plan.footprint.x0 ||
+      cx === plan.footprint.x1 ||
+      cz === plan.footprint.z0 ||
+      cz === plan.footprint.z1
+    ) {
+      reachesBoundary = true;
+      break;
+    }
+
+    const neighbors: readonly [number, number][] = [
+      [cx + 1, cz],
+      [cx - 1, cz],
+      [cx, cz + 1],
+      [cx, cz - 1],
+    ];
+
+    for (const [nx, nz] of neighbors) {
+      if (
+        nx < plan.footprint.x0 ||
+        nx > plan.footprint.x1 ||
+        nz < plan.footprint.z0 ||
+        nz > plan.footprint.z1 ||
+        nx < 0 ||
+        nx >= plan.size.x ||
+        nz < 0 ||
+        nz >= plan.size.z
+      ) {
+        reachesBoundary = true;
+        break;
+      }
+
+      const nIdx = nz * plan.size.x + nx;
+      if (visited.has(nIdx)) continue;
+      visited.add(nIdx);
+
+      const voxelBelow = plan.voxels[(plan.layer - 1) * plan.size.x * plan.size.z + nIdx];
+      if (voxelBelow !== 0) {
+        // Solid block at layer y - 1, cannot pass through
+        continue;
+      }
+
+      queue.push(nx, nz);
+    }
+
+    if (reachesBoundary) break;
+  }
+
+  const result = !reachesBoundary;
+  planCache.set(cellKey, result);
+  return result;
 }
 
 export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void {

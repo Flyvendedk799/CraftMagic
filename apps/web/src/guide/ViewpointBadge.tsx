@@ -19,7 +19,7 @@ export function ViewpointBadge({
       title={isFlipped ? `Flipped to ${label} for visibility` : `Seen from ${label}`}
       role="status"
     >
-      {isFlipped ? `↺ ${label}` : label}
+      {isFlipped ? `${label} (Flipped)` : label}
     </span>
   );
 }

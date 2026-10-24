@@ -130,7 +130,7 @@ export function LayerPlanCanvas({
 
       if (placedCell) {
         isOverhang = isPlanCellOverhang(plan, placedCell);
-        status = isOverhang ? '⚠️ Overhang: place on side face' : 'Solid foundation';
+        status = isOverhang ? 'Overhang: place on side face' : 'Solid foundation';
         const blockRef = plan.palette?.[placedCell.paletteIndex];
         const baseId = blockRef ? blockRef.split('[')[0] : undefined;
         const callout = blockRef

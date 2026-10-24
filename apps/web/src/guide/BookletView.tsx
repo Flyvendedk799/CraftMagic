@@ -181,7 +181,7 @@ export function BookletView({
             className="booklet__print-trigger"
             onClick={() => window.print()}
           >
-            🖨️ Print Booklet
+            Print Booklet
           </button>
         </div>
       </nav>

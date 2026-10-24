@@ -13,6 +13,8 @@ import {
 	isBlockOverhang,
 	chunkGuideVolumes,
 	MAX_STEPS_PER_VOLUME,
+	ORIENTATION_VECTORS,
+	VIEW_ORIENTATIONS,
 	type BuildStep,
 	type StepBlock,
 } from './steps.js';
@@ -460,12 +462,12 @@ describe('calculateStepOrientation & camera occlusion detection', () => {
 		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
 		// 4 blocks: 1 is occluded in SE, 3 are not (25% <= 30%)
 		const stepBlocks: StepBlock[] = [
-			{ x: 2, y: 1, z: 2, paletteIndex: 1 }, // occluded by (3, 2, 3)
+			{ x: 2, y: 1, z: 2, paletteIndex: 1 }, // occluded by (3, 1, 3)
 			{ x: 8, y: 1, z: 8, paletteIndex: 1 },
 			{ x: 8, y: 1, z: 7, paletteIndex: 1 },
 			{ x: 7, y: 1, z: 8, paletteIndex: 1 },
 		];
-		const previouslyPlaced = new Set<number>([voxelIndex(size, 3, 2, 3)]);
+		const previouslyPlaced = new Set<number>([voxelIndex(size, 3, 1, 3)]);
 
 		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
 		expect(result.orientation).toBe('SE');
@@ -480,11 +482,11 @@ describe('calculateStepOrientation & camera occlusion detection', () => {
 		const stepBlocks: StepBlock[] = [
 			{ x: 2, y: 1, z: 2, paletteIndex: 1 },
 		];
-		// Put an obstacle along the SE ray (+1, +1, +1): (3, 2, 3)
-		// SW ray (-1, +1, +1) -> (1, 2, 3) is clear
-		// NW ray (-1, +1, -1) -> (1, 2, 1) is clear
-		// NE ray (+1, +1, -1) -> (3, 2, 1) is clear
-		const previouslyPlaced = new Set<number>([voxelIndex(size, 3, 2, 3)]);
+		// Put an obstacle along the SE ray (+1, 0, +1): (3, 1, 3)
+		// SW ray (-1, 0, +1) -> (1, 1, 3) is clear
+		// NW ray (-1, 0, -1) -> (1, 1, 1) is clear
+		// NE ray (+1, 0, -1) -> (3, 1, 1) is clear
+		const previouslyPlaced = new Set<number>([voxelIndex(size, 3, 1, 3)]);
 
 		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
 		// SE is 100% occluded (> 30%). SW is clear (0% occlusion) and first in tiebreak order.
@@ -517,14 +519,14 @@ describe('calculateStepOrientation & camera occlusion detection', () => {
 		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
 		const stepBlocks: StepBlock[] = [{ x: 5, y: 2, z: 5, paletteIndex: 1 }];
 
-		// Occlude SE (+1, +1, +1) -> (6, 3, 6)
-		// and SW (-1, +1, +1) -> (4, 3, 6)
-		// NW (-1, +1, -1) -> (4, 3, 4) is open
-		// NE (+1, +1, -1) -> (6, 3, 4) is open
+		// Occlude SE (+1, 0, +1) -> (6, 2, 6)
+		// and SW (-1, 0, +1) -> (4, 2, 6)
+		// NW (-1, 0, -1) -> (4, 2, 4) is open
+		// NE (+1, 0, -1) -> (6, 2, 4) is open
 		// Tie between NW and NE: NW must win.
 		const previouslyPlaced = new Set<number>([
-			voxelIndex(size, 6, 3, 6),
-			voxelIndex(size, 4, 3, 6),
+			voxelIndex(size, 6, 2, 6),
+			voxelIndex(size, 4, 2, 6),
 		]);
 
 		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
@@ -540,10 +542,10 @@ describe('calculateStepOrientation & camera occlusion detection', () => {
 
 		// Occlude all 4 rays at t = 1
 		const previouslyPlaced = new Set<number>([
-			voxelIndex(size, 6, 3, 6), // SE
-			voxelIndex(size, 4, 3, 6), // SW
-			voxelIndex(size, 4, 3, 4), // NW
-			voxelIndex(size, 6, 3, 4), // NE
+			voxelIndex(size, 6, 2, 6), // SE
+			voxelIndex(size, 4, 2, 6), // SW
+			voxelIndex(size, 4, 2, 4), // NW
+			voxelIndex(size, 6, 2, 4), // NE
 		]);
 
 		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
@@ -568,6 +570,15 @@ describe('calculateStepOrientation & camera occlusion detection', () => {
 			expect(['SE', 'SW', 'NW', 'NE']).toContain(step.orientation);
 			expect(typeof step.isFlipped).toBe('boolean');
 		}
+	});
+
+	it('defines canonical orientation vectors matching Minecraft coordinate system', () => {
+		expect(VIEW_ORIENTATIONS).toEqual(['SE', 'SW', 'NW', 'NE']);
+		// +X: East, -X: West, +Z: South, -Z: North
+		expect(ORIENTATION_VECTORS.SE).toEqual({ x: 1, y: 1, z: 1 });
+		expect(ORIENTATION_VECTORS.SW).toEqual({ x: -1, y: 1, z: 1 });
+		expect(ORIENTATION_VECTORS.NW).toEqual({ x: -1, y: 1, z: -1 });
+		expect(ORIENTATION_VECTORS.NE).toEqual({ x: 1, y: 1, z: -1 });
 	});
 });
 

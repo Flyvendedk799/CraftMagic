@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { BuildGuide, BuildStep, ViewOrientation } from '@craftmagic/core';
 import type { LoadedBuild } from '../editor/builds.js';
 import { CalloutTray } from './CalloutTray.js';
 import {
-  IsoFilmstrip,
+  StepViewer,
   ORIENTATION_AZIMUTH,
   orientationLabel,
   viewpointCaption,
@@ -219,8 +219,28 @@ export function BuilderView({
   const progressPercent = Math.round((blocksPlaced / Math.max(1, guide.totalBlocks)) * 100);
   const isCurrentStepCompleted = completedSteps.includes(currentStepIndex + 1);
 
-  // Cached on-demand render for orientation overrides
+  // Persistent single-mesh WebGL viewer: meshed once per build, reused across steps and orientations
+  const viewerRef = useRef<StepViewer | null>(null);
   const [customShot, setCustomShot] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      viewerRef.current = new StepViewer(
+        build.grid.size,
+        build.paletteColors,
+        build.paletteFlags,
+        build.grid.voxels,
+        activeOrientation,
+      );
+    } catch {
+      viewerRef.current = null;
+    }
+
+    return () => {
+      viewerRef.current?.dispose();
+      viewerRef.current = null;
+    };
+  }, [build]);
 
   useEffect(() => {
     if (activeOrientation === currentStep.orientation && filmShots[currentStepIndex]) {
@@ -228,25 +248,17 @@ export function BuilderView({
       return;
     }
 
-    // Render snapshot with activeOrientation
-    try {
-      const film = new IsoFilmstrip(
-        build.grid.size,
-        build.paletteColors,
-        build.paletteFlags,
-        true,
-        activeOrientation,
-      );
-      for (let i = 0; i <= currentStepIndex; i++) {
-        film.place(guide.steps[i]!.blocks);
+    if (viewerRef.current) {
+      try {
+        const shot = viewerRef.current.renderStep(currentStep, activeOrientation, 640, 520);
+        setCustomShot(shot);
+        return;
+      } catch {
+        // Fall back to pre-rendered shot if renderStep throws
       }
-      const shot = film.snapshot(640, 520, activeOrientation);
-      setCustomShot(shot);
-      film.dispose();
-    } catch {
-      setCustomShot(filmShots[currentStepIndex] ?? null);
     }
-  }, [build, guide, currentStepIndex, activeOrientation, currentStep.orientation, filmShots]);
+    setCustomShot(filmShots[currentStepIndex] ?? null);
+  }, [currentStep, activeOrientation, currentStepIndex, filmShots]);
 
   const handleReset = () => {
     if (window.confirm('Reset assembly progress for this build guide?')) {
@@ -286,7 +298,7 @@ export function BuilderView({
             title="Keyboard shortcuts (?)"
             aria-label="Keyboard shortcuts"
           >
-            ⌨ Shortcuts (?)
+            Shortcuts (?)
           </button>
         </div>
       </header>
@@ -326,7 +338,7 @@ export function BuilderView({
                   onClick={rotateOrientation}
                   title="Rotate view 90° (R)"
                 >
-                  ↺ 90°
+                  Rotate 90°
                 </button>
               </div>
 
@@ -374,7 +386,7 @@ export function BuilderView({
               onClick={toggleComplete}
               title="Toggle step completion (C)"
             >
-              {isCurrentStepCompleted ? '✓ Completed' : '○ Mark Complete (C)'}
+              {isCurrentStepCompleted ? 'Completed' : 'Mark Complete (C)'}
             </button>
 
             <button

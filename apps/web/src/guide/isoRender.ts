@@ -20,16 +20,25 @@
 
 import * as THREE from 'three';
 import type { BuildStep, ViewOrientation } from '@craftmagic/core';
-import { voxelIndex, voxelPosition } from '@craftmagic/core';
+import { ORIENTATION_VECTORS, VIEW_ORIENTATIONS, voxelIndex, voxelPosition } from '@craftmagic/core';
 import { CHUNK_SIZE, chunkCounts, meshChunk, type GridSize, type MeshSource } from '../editor/mesher.js';
 
-/** Azimuth angles for the 4 cardinal isometric viewpoints around Y. */
-export const ORIENTATION_AZIMUTH: Record<ViewOrientation, number> = {
-  SE: Math.PI / 4,
-  SW: (3 * Math.PI) / 4,
-  NW: (5 * Math.PI) / 4,
-  NE: (7 * Math.PI) / 4,
-};
+/**
+ * Azimuth angles for the 4 cardinal isometric viewpoints around Y,
+ * derived directly from core ORIENTATION_VECTORS.
+ *
+ * Direction vector (x, z) where +X = East, +Z = South, -X = West, -Z = North.
+ * SE = (+1, +1) -> atan2(1, 1) = PI/4
+ * NE = (+1, -1) -> atan2(1, -1) = 3PI/4
+ * NW = (-1, -1) -> atan2(-1, -1) = 5PI/4
+ * SW = (-1, +1) -> atan2(-1, 1) = 7PI/4
+ */
+export const ORIENTATION_AZIMUTH: Record<ViewOrientation, number> = Object.fromEntries(
+  VIEW_ORIENTATIONS.map((ori) => [
+    ori,
+    (Math.atan2(ORIENTATION_VECTORS[ori].x, ORIENTATION_VECTORS[ori].z) + 2 * Math.PI) % (2 * Math.PI),
+  ]),
+) as Record<ViewOrientation, number>;
 
 /** 35.264° above the horizon: the true isometric elevation angle. */
 export const ELEVATION = Math.atan(1 / Math.SQRT2);
@@ -434,6 +443,289 @@ export class IsoFilmstrip {
     mesh.matrixAutoUpdate = false;
     this.scene.add(mesh);
     return mesh;
+  }
+}
+
+/**
+ * A persistent renderer for single-step navigation in BuilderView.
+ *
+ * Meshes the whole build once on creation. When navigating steps or rotating the camera,
+ * it preserves the WebGL renderer and build geometry, altering only:
+ *  - visible layers (via GPU local clipping plane y <= step.layer + 1)
+ *  - highlight blocks (mini-mesh for the current step's new blocks)
+ *  - camera orientation
+ */
+export class StepViewer {
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene = new THREE.Scene();
+  private readonly camera = new THREE.OrthographicCamera();
+  private readonly buildGroup = new THREE.Group();
+  private readonly highlightGroup = new THREE.Group();
+  private readonly clipPlane: THREE.Plane;
+  private readonly opaqueMaterial: THREE.MeshBasicMaterial;
+  private readonly transparentMaterial: THREE.MeshBasicMaterial;
+  private readonly highlightMaterial: THREE.MeshBasicMaterial;
+  private readonly size: GridSize;
+  private readonly paletteColors: Uint8Array;
+  private halfU = 1;
+  private halfV = 1;
+  private currentOrientation: ViewOrientation = 'SE';
+  private disposed = false;
+
+  constructor(
+    size: GridSize,
+    paletteColors: Uint8Array,
+    paletteFlags: Uint8Array,
+    voxels: Uint16Array,
+    initialOrientation: ViewOrientation = 'SE',
+  ) {
+    this.renderer = acquireRenderer();
+    this.size = size;
+    this.paletteColors = paletteColors;
+    this.currentOrientation = initialOrientation;
+
+    // Clipping plane: normal (0, -1, 0) keeps voxels where -y + constant >= 0 <=> y <= constant
+    this.clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1000);
+    this.renderer.localClippingEnabled = true;
+
+    // Base build is rendered with dimmed colors (to represent standing structure)
+    this.opaqueMaterial = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      clippingPlanes: [this.clipPlane],
+    });
+    this.transparentMaterial = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      clippingPlanes: [this.clipPlane],
+    });
+
+    // Highlight material for newly placed blocks in the current step (unmuted, on top)
+    this.highlightMaterial = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
+
+    this.scene.add(this.buildGroup);
+    this.scene.add(this.highlightGroup);
+
+    // Mesh the entire build once
+    const src: MeshSource = {
+      size,
+      voxels,
+      paletteColors: dimmedTwice(paletteColors),
+      paletteFlags: doubled(paletteFlags),
+    };
+    const counts = chunkCounts(size);
+    for (let cy = 0; cy < counts.y; cy++) {
+      for (let cz = 0; cz < counts.z; cz++) {
+        for (let cx = 0; cx < counts.x; cx++) {
+          const chunk = meshChunk(src, cx, cy, cz);
+          if (chunk.opaque) {
+            this.buildGroup.add(this.createChunkMesh(chunk.opaque, this.opaqueMaterial, cx, cy, cz, 0));
+          }
+          if (chunk.transparent) {
+            this.buildGroup.add(this.createChunkMesh(chunk.transparent, this.transparentMaterial, cx, cy, cz, 1));
+          }
+        }
+      }
+    }
+
+    this.frame(size, initialOrientation);
+  }
+
+  private createChunkMesh(
+    buffers: ReturnType<typeof meshChunk>['opaque'],
+    material: THREE.Material,
+    cx: number,
+    cy: number,
+    cz: number,
+    renderOrder: number,
+  ): THREE.Mesh {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(buffers!.positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(buffers!.colors, 3, true));
+    geometry.setIndex(new THREE.BufferAttribute(buffers!.indices, 1));
+
+    const min = new THREE.Vector3(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
+    geometry.boundingBox = new THREE.Box3(min, min.clone().addScalar(CHUNK_SIZE));
+    geometry.boundingSphere = new THREE.Sphere(
+      min.clone().addScalar(CHUNK_SIZE / 2),
+      (CHUNK_SIZE * Math.sqrt(3)) / 2,
+    );
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = renderOrder;
+    mesh.matrixAutoUpdate = false;
+    return mesh;
+  }
+
+  private updateHighlight(blocks: readonly IsoBlock[]): void {
+    while (this.highlightGroup.children.length > 0) {
+      const child = this.highlightGroup.children[0] as THREE.Mesh;
+      this.highlightGroup.remove(child);
+      child.geometry.dispose();
+    }
+
+    if (blocks.length === 0) return;
+
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const indices: number[] = [];
+    let vertOffset = 0;
+
+    for (const b of blocks) {
+      if (b.paletteIndex === 0) continue;
+      const cOffset = b.paletteIndex * 3;
+      const r = this.paletteColors[cOffset] ?? 255;
+      const g = this.paletteColors[cOffset + 1] ?? 255;
+      const bl = this.paletteColors[cOffset + 2] ?? 255;
+
+      const x0 = b.x, x1 = b.x + 1;
+      const y0 = b.y, y1 = b.y + 1;
+      const z0 = b.z, z1 = b.z + 1;
+
+      const faces: Array<{ v: readonly [number, number, number][]; ao: number }> = [
+        // +Y (top)
+        { v: [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]], ao: 1.0 },
+        // -Y (bottom)
+        { v: [[x0, y0, z1], [x1, y0, z1], [x1, y0, z0], [x0, y0, z0]], ao: 0.5 },
+        // +Z (south)
+        { v: [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], ao: 0.8 },
+        // -Z (north)
+        { v: [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], ao: 0.65 },
+        // +X (east)
+        { v: [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], ao: 0.8 },
+        // -X (west)
+        { v: [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], ao: 0.65 },
+      ];
+
+      for (const face of faces) {
+        const fr = Math.round(r * face.ao);
+        const fg = Math.round(g * face.ao);
+        const fb = Math.round(bl * face.ao);
+        for (const [vx, vy, vz] of face.v) {
+          positions.push(vx, vy, vz);
+          colors.push(fr, fg, fb);
+        }
+        indices.push(
+          vertOffset, vertOffset + 1, vertOffset + 2,
+          vertOffset, vertOffset + 2, vertOffset + 3,
+        );
+        vertOffset += 4;
+      }
+    }
+
+    if (positions.length === 0) return;
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geom.setAttribute('color', new THREE.Uint8BufferAttribute(colors, 3, true));
+    geom.setIndex(indices);
+
+    const mesh = new THREE.Mesh(geom, this.highlightMaterial);
+    mesh.renderOrder = 2;
+    mesh.matrixAutoUpdate = false;
+    this.highlightGroup.add(mesh);
+  }
+
+  private frame(size: GridSize, orientation: ViewOrientation = this.currentOrientation): void {
+    const centre = new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2);
+    const azimuth = ORIENTATION_AZIMUTH[orientation];
+    const direction = new THREE.Vector3(
+      Math.cos(ELEVATION) * Math.sin(azimuth),
+      Math.sin(ELEVATION),
+      Math.cos(ELEVATION) * Math.cos(azimuth),
+    ).normalize();
+
+    const radius = Math.hypot(size.x, size.y, size.z);
+    this.camera.position.copy(centre).addScaledVector(direction, radius);
+    this.camera.up.set(0, 1, 0);
+    this.camera.lookAt(centre);
+    this.camera.updateMatrixWorld();
+
+    this.camera.near = 0;
+    this.camera.far = radius * 3;
+
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+
+    let maxU = 0;
+    let maxV = 0;
+    const corner = new THREE.Vector3();
+    for (const cx of [0, size.x]) {
+      for (const cy of [0, size.y]) {
+        for (const cz of [0, size.z]) {
+          corner.set(cx, cy, cz).sub(centre);
+          maxU = Math.max(maxU, Math.abs(corner.dot(right)));
+          maxV = Math.max(maxV, Math.abs(corner.dot(up)));
+        }
+      }
+    }
+
+    this.halfU = Math.max(1, maxU * FRAME_MARGIN);
+    this.halfV = Math.max(1, maxV * FRAME_MARGIN);
+  }
+
+  renderStep(
+    step: BuildStep,
+    orientation: ViewOrientation,
+    width = 640,
+    height = 520,
+  ): string {
+    if (this.disposed) return '';
+
+    // 1. Visible layers: GPU vertex shader clipping plane (y <= step.layer + 1.001)
+    this.clipPlane.constant = step.layer + 1.001;
+
+    // 2. Highlight: update newly placed blocks
+    this.updateHighlight(step.blocks);
+
+    // 3. Camera: frame for orientation if changed
+    if (orientation !== this.currentOrientation) {
+      this.currentOrientation = orientation;
+      this.frame(this.size, orientation);
+    }
+
+    const aspect = width / height;
+    let halfU = this.halfU;
+    let halfV = this.halfV;
+    if (halfU / halfV < aspect) halfU = halfV * aspect;
+    else halfV = halfU / aspect;
+
+    this.camera.left = -halfU;
+    this.camera.right = halfU;
+    this.camera.top = halfV;
+    this.camera.bottom = -halfV;
+    this.camera.updateProjectionMatrix();
+
+    this.renderer.setSize(width, height, false);
+    this.renderer.render(this.scene, this.camera);
+    return this.renderer.domElement.toDataURL('image/png');
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+
+    for (const group of [this.buildGroup, this.highlightGroup]) {
+      while (group.children.length > 0) {
+        const child = group.children[0] as THREE.Mesh;
+        group.remove(child);
+        child.geometry.dispose();
+      }
+    }
+    this.scene.remove(this.buildGroup);
+    this.scene.remove(this.highlightGroup);
+
+    this.opaqueMaterial.dispose();
+    this.transparentMaterial.dispose();
+    this.highlightMaterial.dispose();
+    releaseRenderer();
   }
 }
 

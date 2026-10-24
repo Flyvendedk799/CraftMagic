@@ -100,18 +100,26 @@ export function BuilderView({
   const currentStep: BuildStep = guide.steps[currentStepIndex] ?? guide.steps[0]!;
   const currentPlan: LayerPlan | undefined = plans[currentStepIndex] ?? plans[0];
 
-  // Orientation state: defaults to currentStep.orientation unless user rotates it
+  const urlOri = params.get('ori')?.toUpperCase();
+  const validUrlOri: ViewOrientation | undefined =
+    urlOri === 'SE' || urlOri === 'SW' || urlOri === 'NW' || urlOri === 'NE'
+      ? (urlOri as ViewOrientation)
+      : undefined;
+
+  // Orientation state: defaults to URL param, or currentStep.orientation unless user rotates it
   const [activeOrientation, setActiveOrientation] = useState<ViewOrientation>(
-    currentStep.orientation ?? 'SE',
+    validUrlOri ?? currentStep.orientation ?? 'SE',
   );
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   // Sync orientation whenever current step changes, matching engine recommendation
   useEffect(() => {
-    if (currentStep.orientation) {
+    if (validUrlOri) {
+      setActiveOrientation(validUrlOri);
+    } else if (currentStep.orientation) {
       setActiveOrientation(currentStep.orientation);
     }
-  }, [currentStepIndex, currentStep.orientation]);
+  }, [currentStepIndex, currentStep.orientation, validUrlOri]);
 
   // Persist progress to localStorage and sync with URL query
   useEffect(() => {
@@ -323,6 +331,7 @@ export function BuilderView({
                   <button
                     key={ori}
                     type="button"
+                    data-ori={ori}
                     className={`builder__view-btn ${
                       activeOrientation === ori ? 'builder__view-btn--active' : ''
                     }`}

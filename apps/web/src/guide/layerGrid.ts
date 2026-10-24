@@ -16,6 +16,7 @@
  */
 
 import type { BuildStep } from '@craftmagic/core';
+import { isBlockOverhang } from '@craftmagic/core';
 import type { GridSize } from '../editor/mesher.js';
 
 export interface PlanCell {
@@ -140,6 +141,24 @@ export function earlierInLayer(steps: readonly BuildStep[]): PlanCell[][] {
   return out;
 }
 
+export function isPlanCellOverhang(plan: LayerPlan, cell: PlanCell): boolean {
+  return isBlockOverhang(plan.voxels, plan.size, cell.x, plan.layer, cell.z);
+}
+
+export function isInteriorVoid(plan: LayerPlan, x: number, z: number): boolean {
+  if (plan.layer <= 0) return false;
+  if (x < plan.footprint.x0 || x > plan.footprint.x1 || z < plan.footprint.z0 || z > plan.footprint.z1) {
+    return false;
+  }
+  const belowIdx = (plan.layer - 1) * plan.size.x * plan.size.z + z * plan.size.x + x;
+  if (plan.voxels[belowIdx] !== 0) return false;
+  const isPlaced = plan.placed.some((c) => c.x === x && c.z === z);
+  if (isPlaced) return false;
+  const isEarlier = plan.earlier.some((c) => c.x === x && c.z === z);
+  if (isEarlier) return false;
+  return true;
+}
+
 export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void {
   const cols = plan.footprint.x1 - plan.footprint.x0 + 1;
   const rows = plan.footprint.z1 - plan.footprint.z0 + 1;
@@ -156,7 +175,12 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
   // fixed height that scales the squares on one axis only.
   canvas.style.height = 'auto';
 
-  const ctx = canvas.getContext('2d');
+  let ctx: CanvasRenderingContext2D | null = null;
+  try {
+    ctx = canvas.getContext('2d');
+  } catch {
+    return;
+  }
   if (!ctx) return;
   ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
   ctx.clearRect(0, 0, width, height);
@@ -168,6 +192,19 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
 
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, width, height);
+
+  // Void / shaft below indicator: inside footprint where layer y and layer y-1 are air
+  if (plan.layer > 0) {
+    for (let z = plan.footprint.z0; z <= plan.footprint.z1; z++) {
+      for (let x = plan.footprint.x0; x <= plan.footprint.x1; x++) {
+        if (isInteriorVoid(plan, x, z)) {
+          const px = originX + (x - plan.footprint.x0) * cell;
+          const py = originY + (z - plan.footprint.z0) * cell;
+          drawVoidShaft(ctx, px, py, cell);
+        }
+      }
+    }
+  }
 
   // Painter's order, back to front: the layer below, then this layer's earlier steps, then
   // the new blocks — so a new block always covers whatever it sits on.
@@ -183,6 +220,15 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
 
   ctx.globalAlpha = 1;
   for (const cell2 of plan.placed) fillCell(ctx, plan, cell2, originX, originY, cell);
+
+  // Overhang warning hatching / dashed border for blocks placed over air
+  for (const cell2 of plan.placed) {
+    if (isPlanCellOverhang(plan, cell2)) {
+      const px = originX + (cell2.x - plan.footprint.x0) * cell;
+      const py = originY + (cell2.z - plan.footprint.z0) * cell;
+      drawOverhangWarning(ctx, px, py, cell);
+    }
+  }
 
   // Rules go over the fills, not under: a run of twenty identical blocks is one solid slab
   // otherwise, and the reader cannot count it.
@@ -215,6 +261,50 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
 
   drawLabels(ctx, cols, rows, cell, originX, originY, plan.footprint);
   drawCompass(ctx, originX, originY);
+}
+
+function drawVoidShaft(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  ctx.save();
+  ctx.fillStyle = 'rgba(70, 80, 95, 0.22)';
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const radius = Math.max(1, Math.min(2, size / 8));
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawOverhangWarning(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  ctx.save();
+  // Diagonal warning hatching across the cell
+  ctx.strokeStyle = 'rgba(217, 119, 6, 0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x + 2, y + size - 2);
+  ctx.lineTo(x + size - 2, y + 2);
+  ctx.moveTo(x + 2, y + size / 2);
+  ctx.lineTo(x + size / 2, y + 2);
+  ctx.moveTo(x + size / 2, y + size - 2);
+  ctx.lineTo(x + size - 2, y + size / 2);
+  ctx.stroke();
+
+  // Dashed warning border
+  ctx.strokeStyle = '#d97706';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([2, 2]);
+  ctx.strokeRect(x + 1.5, y + 1.5, size - 3, size - 3);
+  ctx.restore();
 }
 
 /**

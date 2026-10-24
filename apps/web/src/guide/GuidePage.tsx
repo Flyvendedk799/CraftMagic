@@ -18,30 +18,22 @@
  * until then rather than merely discouraged.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   buildGuide,
   type BuildGuide,
-  type BuildStep,
-  type GuidePart,
-  type MaterialCount,
 } from '@craftmagic/core';
 import { expandBuild, isBuildId, type LoadedBuild } from '../editor/builds.js';
 import { useLibraryBuild } from '../library/useLibraryBuild.js';
 import { carrySettings, parseScale, scaleKey as readScaleKey, PARAM_PREFIX, STYLE_PARAM } from '../editor/urlState.js';
 import { IsoFilmstrip } from './isoRender.js';
-import { drawLayerPlan, earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
+import { earlierInLayer, footprint, type LayerPlan, type PlanCell } from './layerGrid.js';
+import { BuilderView } from './BuilderView.js';
+import { BookletView } from './BookletView.js';
 import {
-  ArtFrame,
-  ArtImage,
   Eyebrow,
-  Lede,
   Sheet,
-  SheetTitle,
-  Stat,
-  StatGrid,
-  Swatch,
 } from './primitives.js';
 // Tokens first: `print.css` is written entirely against them, and the bundler preserves this
 // order, so the roles exist by the time anything asks for one.
@@ -82,9 +74,22 @@ const FRAME_BUDGET_MS = 12;
 const MAX_PRINTABLE_STEPS = 400;
 
 export function GuidePage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
 
   const rawBuild = params.get('build');
+  const urlMode = params.get('mode');
+  const mode = urlMode === 'booklet' ? 'booklet' : 'builder';
+
+  const handleModeChange = (newMode: 'builder' | 'booklet') => {
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('mode', newMode);
+        return next;
+      },
+      { replace: true },
+    );
+  };
 
   // A library build lives in the database rather than in the bundle, so `?build=lib:<id>`
   // has to be fetched before it can be expanded. The guide used not to do this at all, which
@@ -151,17 +156,6 @@ export function GuidePage() {
 
   const plans = useLayerPlans(build, guide, printable && renderable);
 
-  /**
-   * Blocks standing once each step is done.
-   *
-   * "Step 31 of 43" says nothing about how much work is left: the last dozen steps of a build
-   * are usually its roof, and a roof can be a quarter of it. A running block count is the
-   * honest measure of progress, and it costs one pass over the steps.
-   */
-  const placedBy = useMemo(() => {
-    let running = 0;
-    return guide.steps.map((step) => (running += step.blocks.length));
-  }, [guide]);
   const editorHref = useMemo(() => {
     const search = new URLSearchParams();
     if (rawBuild !== null) search.set('build', rawBuild);
@@ -187,66 +181,68 @@ export function GuidePage() {
       data-build={buildId}
       data-steps={guide.steps.length}
       data-render-ms={film.elapsedMs}
+      data-mode={mode}
     >
       <nav className="guide__bar no-print">
         <Link className="guide__back" to={editorHref}>
           ← Back to editor
         </Link>
+        <div className="guide__mode-toggle" role="group" aria-label="Guide view mode">
+          <button
+            type="button"
+            className={`guide__mode-btn ${mode === 'builder' ? 'guide__mode-btn--active' : ''}`}
+            onClick={() => handleModeChange('builder')}
+          >
+            Digital Builder
+          </button>
+          <button
+            type="button"
+            className={`guide__mode-btn ${mode === 'booklet' ? 'guide__mode-btn--active' : ''}`}
+            onClick={() => handleModeChange('booklet')}
+          >
+            Booklet &amp; Print
+          </button>
+        </div>
         <span className="guide__status">
           {!printable
-            ? `${guide.steps.length.toLocaleString()} steps — too many to print`
+            ? `${guide.steps.length.toLocaleString()} steps`
             : ready
               ? `${guide.steps.length} steps rendered in ${(film.elapsedMs / 1000).toFixed(1)}s`
               : `Rendering step ${Math.min(film.shots.length + 1, guide.steps.length)} of ${guide.steps.length}…`}
         </span>
-        <button type="button" className="guide__print" onClick={() => window.print()} disabled={!ready}>
+        <button
+          type="button"
+          className="guide__print"
+          onClick={() => {
+            if (mode !== 'booklet') {
+              handleModeChange('booklet');
+              setTimeout(() => window.print(), 100);
+            } else {
+              window.print();
+            }
+          }}
+          disabled={!ready}
+        >
           Print / Save as PDF
         </button>
       </nav>
 
-      <Cover build={build} guide={guide} art={film.cover} />
-      <Parts guide={guide} />
-      <Materials guide={guide} />
-
-      {printable ? (
-        <section className="steps">
-          <h2 className="sheet__title">Assembly</h2>
-          {/* The rules the segmentation actually followed, read off the design system rather
-              than restated here — so a guide laid out under a different one describes itself
-              correctly instead of describing the default. */}
-          {/* Both views use the same convention and neither is self-explanatory, so it is
-              stated once here rather than repeated under forty-three pictures. The model half
-              is the newer of the two claims and the one a reader is most likely to miss: pale
-              means built, full colour means place it now. */}
-          <p className="sheet__lede steps__lede">
-            Bottom-up, at most {guide.design.step.maxBlocks} blocks a step
-            {guide.parts.length > 0 && ', and one part at a time'}. In the plan, grey squares
-            are already placed and outlined ones are this step. In the model, what you have
-            built is faded and <strong>this step is in full colour</strong>.
-          </p>
-          {guide.steps.map((step, i) => (
-            <StepCard
-              key={step.index}
-              step={step}
-              total={guide.steps.length}
-              plan={plans[i]!}
-              shot={film.shots[i]}
-              placed={placedBy[i]!}
-              totalBlocks={guide.totalBlocks}
-            />
-          ))}
-        </section>
+      {mode === 'builder' ? (
+        <BuilderView
+          buildId={buildId}
+          build={build}
+          guide={guide}
+          plans={plans}
+          filmShots={film.shots}
+        />
       ) : (
-        <Sheet variant="oversize">
-          <SheetTitle>Assembly</SheetTitle>
-          <Lede>
-            This build segments into {guide.steps.length.toLocaleString()} steps — about{' '}
-            {Math.ceil(guide.steps.length / 2).toLocaleString()} printed pages, past what a
-            booklet can usefully be. The cover and the bill of materials above still apply;
-            for step-by-step assembly, resize the build down in the editor or export a
-            schematic instead.
-          </Lede>
-        </Sheet>
+        <BookletView
+          build={build}
+          guide={guide}
+          plans={plans}
+          filmShots={film.shots}
+          coverArt={film.cover}
+        />
       )}
 
       <footer className="guide__foot">
@@ -304,194 +300,6 @@ function Unavailable({
         )}
       </Sheet>
     </div>
-  );
-}
-
-/* --- cover ---------------------------------------------------------------------------- */
-
-function Cover({ build, guide, art }: { build: LoadedBuild; guide: BuildGuide; art: string | null }) {
-  return (
-    <Sheet variant="cover" break="after">
-      <Eyebrow>CraftMagic · Build guide</Eyebrow>
-      <h1 className="cover__title">{guide.name}</h1>
-      {build.description && <p className="cover__lede">{build.description}</p>}
-
-      <ArtFrame size="cover">
-        <ArtImage src={art} alt={`Finished ${guide.name}, seen from above at an angle`} />
-      </ArtFrame>
-
-      <StatGrid>
-        <Stat
-          label="Dimensions"
-          value={`${guide.size.x} × ${guide.size.y} × ${guide.size.z}`}
-          note="W × H × L"
-        />
-        <Stat
-          label="Blocks"
-          value={guide.totalBlocks.toLocaleString()}
-          note={`${guide.materials.length} kinds`}
-        />
-        {/* Layers that hold something, not the grid's height: an empty top half is not work,
-            and a builder counting courses would be told the wrong number. */}
-        <Stat
-          label="Steps"
-          value={guide.steps.length.toLocaleString()}
-          note={`${new Set(guide.steps.map((step) => step.layer)).size} layers`}
-        />
-        <Stat
-          label="Difficulty"
-          value={guide.difficulty}
-          plain
-          note={guide.parts.length > 0 ? `${guide.parts.length} parts` : 'bottom-up'}
-        />
-      </StatGrid>
-    </Sheet>
-  );
-}
-
-/* --- bill of parts --------------------------------------------------------------------- */
-
-/**
- * What the build is made of, before what it is made from.
- *
- * The bill of materials answers "what do I gather"; this answers "what am I building", which
- * is the question that comes first and which a booklet of forty near-identical step diagrams
- * otherwise never answers at all. It exists only when the build came from a program — a
- * hand-edited grid has no components to name, and inventing names for it would be fiction.
- */
-function Parts({ guide }: { guide: BuildGuide }) {
-  if (guide.parts.length === 0) return null;
-
-  return (
-    <Sheet variant="parts">
-      <SheetTitle>What you are building</SheetTitle>
-      <Lede>
-        The parts this build is made of, in the order they go up. Each assembly step below is
-        named after the part it advances.
-      </Lede>
-
-      <ol className="parts__list">
-        {guide.parts.map((part) => (
-          <li className="part" key={part.id}>
-            <span className="part__name">{part.label}</span>
-            <span className="part__count">{part.blocks.toLocaleString()}</span>
-            <span className="part__note">{partExtent(part)}</span>
-          </li>
-        ))}
-      </ol>
-    </Sheet>
-  );
-}
-
-/** `7 × 4 × 11` — the box a part occupies, which is how you spot the roof in a list. */
-function partExtent(part: GuidePart): string {
-  if (!part.min || !part.max) return '';
-  const [x0, y0, z0] = part.min;
-  const [x1, y1, z1] = part.max;
-  return `${x1 - x0 + 1} × ${y1 - y0 + 1} × ${z1 - z0 + 1}`;
-}
-
-/* --- bill of materials ----------------------------------------------------------------- */
-
-function Materials({ guide }: { guide: BuildGuide }) {
-  return (
-    <Sheet variant="materials" break="after">
-      <SheetTitle>Bill of materials</SheetTitle>
-      <Lede>
-        Everything the build needs, most-used first. Stacks are the unit you actually gather
-        in, so they are spelled out; a door counts once, not twice.
-      </Lede>
-
-      <ol className="materials__list">
-        {guide.materials.map((material) => (
-          <li className="material" key={material.block}>
-            <Swatch block={material.block} />
-            <span className="material__name">{material.displayName}</span>
-            <span className="material__count">{material.count.toLocaleString()}</span>
-            <span className="material__stacks">{stackText(material)}</span>
-          </li>
-        ))}
-      </ol>
-    </Sheet>
-  );
-}
-
-/* --- steps ------------------------------------------------------------------------------ */
-
-function StepCard({
-  step,
-  total,
-  plan,
-  shot,
-  placed,
-  totalBlocks,
-}: {
-  step: BuildStep;
-  total: number;
-  plan: LayerPlan;
-  shot: string | undefined;
-  /** Blocks placed once this step is done, counting every step before it. */
-  placed: number;
-  totalBlocks: number;
-}) {
-  const canvas = useRef<HTMLCanvasElement | null>(null);
-
-  // Layout effect, not effect: the canvas sets its own width/height, and doing that after
-  // paint makes every card visibly resize once on first render.
-  useLayoutEffect(() => {
-    if (canvas.current) drawLayerPlan(canvas.current, plan);
-  }, [plan]);
-
-  // Named after the part it mostly places, so anything else riding along in the step is said
-  // out loud rather than left for the reader to find mid-course.
-  const also = step.parts.slice(1);
-
-  return (
-    <article className="step">
-      <header className="step__head">
-        <div className="step__id">
-          <span className="step__index">
-            Step {step.index}
-            <span className="step__of"> of {total}</span>
-          </span>
-          <span className="step__layer">
-            {placed.toLocaleString()} of {totalBlocks.toLocaleString()} · y = {step.layer}
-            {step.partOfLayer && (
-              <span className="step__part">
-                {' '}
-                ({step.partOfLayer.part} of {step.partOfLayer.total})
-              </span>
-            )}
-          </span>
-        </div>
-
-        <h3 className="step__title">{step.title}</h3>
-
-        {also.length > 0 && (
-          <p className="step__also">
-            with {also.map((part) => `${part.label} × ${part.blocks}`).join(', ')}
-          </p>
-        )}
-
-        <ul className="step__materials">
-          {step.materials.map((material) => (
-            <li key={material.block}>
-              <Swatch block={material.block} small />
-              {material.count} × {material.displayName}
-            </li>
-          ))}
-        </ul>
-      </header>
-
-      <div className="step__panels">
-        <ArtFrame size="panel" caption={`Layer ${step.layer} from above — place the outlined squares`}>
-          <canvas className="panel__plan" ref={canvas} />
-        </ArtFrame>
-        <ArtFrame size="panel" caption="After this step — seen from the south-east">
-          <ArtImage className="panel__shot" src={shot} alt={`The build after step ${step.index}`} />
-        </ArtFrame>
-      </div>
-    </article>
   );
 }
 
@@ -614,13 +422,6 @@ function useLayerPlans(build: LoadedBuild, guide: BuildGuide, printable: boolean
 }
 
 /* --- formatting -------------------------------------------------------------------------- */
-
-/** `3 stacks + 60` — how a player counts, rather than a bare 252. */
-function stackText(material: MaterialCount): string {
-  if (material.stacks === 0) return `${material.remainder}`;
-  const stacks = `${material.stacks} stack${material.stacks === 1 ? '' : 's'}`;
-  return material.remainder === 0 ? stacks : `${stacks} + ${material.remainder}`;
-}
 
 function parseOverrides(key: string): Record<string, number> {
   const out: Record<string, number> = {};

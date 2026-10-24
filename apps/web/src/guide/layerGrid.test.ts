@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { expand, buildGuide, samples } from '@craftmagic/core';
-import { cellSizeFor, columnLabel, earlierInLayer, footprint } from './layerGrid.js';
+import {
+  cellSizeFor,
+  columnLabel,
+  earlierInLayer,
+  footprint,
+  isInteriorVoid,
+  isPlanCellOverhang,
+  type LayerPlan,
+} from './layerGrid.js';
 
 /**
  * The drawing itself needs a canvas and is verified by looking at it. What is pinned here is
@@ -77,5 +85,56 @@ describe('earlierInLayer', () => {
       z: previous.blocks[0]!.z,
       paletteIndex: previous.blocks[0]!.paletteIndex,
     });
+  });
+});
+
+describe('overhang and void indicators', () => {
+  it('detects cantilever blocks placed over air as overhangs', () => {
+    // 3x3x3 grid where (1, 1, 1) has no block at (1, 0, 1)
+    const size = { x: 3, y: 3, z: 3 };
+    const voxels = new Uint16Array(3 * 3 * 3);
+    // At y=0: block at (0, 0, 0)
+    voxels[0] = 1;
+    // At y=1: block placed at (1, 1, 1) -> below is air
+    const placedIdx = 1 * 9 + 1 * 3 + 1;
+    voxels[placedIdx] = 1;
+
+    const plan: LayerPlan = {
+      size,
+      voxels,
+      paletteColors: new Uint8Array(6),
+      footprint: { x0: 0, z0: 0, x1: 2, z1: 2 },
+      layer: 1,
+      placed: [{ x: 1, z: 1, paletteIndex: 1 }],
+      earlier: [],
+    };
+
+    expect(isPlanCellOverhang(plan, { x: 1, z: 1, paletteIndex: 1 })).toBe(true);
+
+    // If y=0 has a supporting block below (1, 1, 1):
+    voxels[1 * 3 + 1] = 1;
+    expect(isPlanCellOverhang(plan, { x: 1, z: 1, paletteIndex: 1 })).toBe(false);
+  });
+
+  it('identifies interior void / open shaft cells inside footprint', () => {
+    const size = { x: 4, y: 4, z: 4 };
+    const voxels = new Uint16Array(4 * 4 * 4);
+    // Footprint is 0..3, 0..3
+    // At y=1, cell (2, 2) has air at y=1 and air at y=0 (void below)
+    const plan: LayerPlan = {
+      size,
+      voxels,
+      paletteColors: new Uint8Array(6),
+      footprint: { x0: 0, z0: 0, x1: 3, z1: 3 },
+      layer: 1,
+      placed: [{ x: 0, z: 0, paletteIndex: 1 }],
+      earlier: [],
+    };
+
+    expect(isInteriorVoid(plan, 2, 2)).toBe(true);
+    // Placed cell is not void
+    expect(isInteriorVoid(plan, 0, 0)).toBe(false);
+    // Cell outside footprint is not interior void
+    expect(isInteriorVoid(plan, 5, 5)).toBe(false);
   });
 });

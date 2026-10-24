@@ -3,7 +3,19 @@ import { expand } from '../expand/expander.js';
 import { cottage, samples } from '../samples/index.js';
 import type { VoxelGrid } from '../ir/types.js';
 import { voxelIndex } from '../ir/types.js';
-import { MAX_BLOCKS_PER_STEP, MIN_BLOCKS_PER_STEP, buildGuide } from './steps.js';
+import {
+	MAX_BLOCKS_PER_STEP,
+	MIN_BLOCKS_PER_STEP,
+	buildGuide,
+	calculateStepOrientation,
+	classifyGlyphType,
+	extractStepCallouts,
+	isBlockOverhang,
+	chunkGuideVolumes,
+	MAX_STEPS_PER_VOLUME,
+	type BuildStep,
+	type StepBlock,
+} from './steps.js';
 
 /** Build a grid from a per-layer ASCII map, '.' meaning air. */
 function gridFrom(layers: string[][], palette: string[]): VoxelGrid {
@@ -307,5 +319,366 @@ describe('buildGuide — summary', () => {
 		expect(guide.name).toBe('Oak Cottage');
 		expect(guide.totalBlocks).toBe(blockCount);
 		expect(guide.size).toEqual(grid.size);
+	});
+});
+
+describe('classifyGlyphType & step callouts', () => {
+	it('classifies all glyph types correctly', () => {
+		expect(classifyGlyphType('minecraft:oak_stairs')).toBe('stairs');
+		expect(classifyGlyphType('minecraft:stone_brick_stairs')).toBe('stairs');
+
+		expect(classifyGlyphType('minecraft:smooth_stone_slab')).toBe('slab');
+		expect(classifyGlyphType('minecraft:oak_slab')).toBe('slab');
+
+		expect(classifyGlyphType('minecraft:oak_log')).toBe('pillar');
+		expect(classifyGlyphType('minecraft:dark_oak_wood')).toBe('pillar');
+		expect(classifyGlyphType('minecraft:crimson_stem')).toBe('pillar');
+		expect(classifyGlyphType('minecraft:warped_hyphae')).toBe('pillar');
+		expect(classifyGlyphType('minecraft:purpur_pillar')).toBe('pillar');
+		expect(classifyGlyphType('minecraft:quartz_pillar')).toBe('pillar');
+
+		expect(classifyGlyphType('minecraft:oak_trapdoor')).toBe('trapdoor');
+		expect(classifyGlyphType('minecraft:iron_trapdoor')).toBe('trapdoor');
+
+		expect(classifyGlyphType('minecraft:oak_door')).toBe('door');
+		expect(classifyGlyphType('minecraft:iron_door')).toBe('door');
+
+		expect(classifyGlyphType('minecraft:stone')).toBe('general');
+		expect(classifyGlyphType('minecraft:oak_planks')).toBe('general');
+		expect(classifyGlyphType('minecraft:glass')).toBe('general');
+	});
+
+	it('extracts callouts with glyphs, state properties, and correct counts', () => {
+		const customPalette = [
+			'minecraft:air',
+			'minecraft:oak_stairs[facing=north,half=top]',
+			'minecraft:oak_stairs[facing=south,half=bottom]',
+			'minecraft:stone_slab[type=bottom]',
+			'minecraft:oak_log[axis=y]',
+			'minecraft:oak_planks',
+		];
+		const grid = gridFrom(
+			[
+				[
+					'1112',
+					'3345',
+				],
+			],
+			customPalette,
+		);
+		const stepBlocks: StepBlock[] = [
+			{ x: 0, y: 0, z: 0, paletteIndex: 1 },
+			{ x: 1, y: 0, z: 0, paletteIndex: 1 },
+			{ x: 2, y: 0, z: 0, paletteIndex: 1 },
+			{ x: 3, y: 0, z: 0, paletteIndex: 2 },
+			{ x: 0, y: 0, z: 1, paletteIndex: 3 },
+			{ x: 1, y: 0, z: 1, paletteIndex: 3 },
+			{ x: 2, y: 0, z: 1, paletteIndex: 4 },
+			{ x: 3, y: 0, z: 1, paletteIndex: 5 },
+		];
+
+		const callouts = extractStepCallouts(grid, stepBlocks);
+		expect(callouts).toHaveLength(5);
+
+		// Highest count first: oak_stairs[facing=north,half=top] (count 3)
+		expect(callouts[0]!.count).toBe(3);
+		expect(callouts[0]!.baseId).toBe('minecraft:oak_stairs');
+		expect(callouts[0]!.displayName).toBe('Oak Stairs');
+		expect(callouts[0]!.glyphType).toBe('stairs');
+		expect(callouts[0]!.states).toMatchObject({ facing: 'north', half: 'top' });
+
+		// Second highest count: stone_slab (count 2)
+		expect(callouts[1]!.count).toBe(2);
+		expect(callouts[1]!.baseId).toBe('minecraft:stone_slab');
+		expect(callouts[1]!.glyphType).toBe('slab');
+
+		// Count 1 tiebreak: displayName then block ref ('Oak Log' < 'Oak Planks' < 'Oak Stairs')
+		const countOne = callouts.slice(2);
+		expect(countOne.map((c) => c.glyphType)).toEqual(['pillar', 'general', 'stairs']);
+	});
+
+	it('does not double count doors when upper half is placed', () => {
+		const customPalette = [
+			'minecraft:air',
+			'minecraft:oak_door[facing=north,half=lower]',
+			'minecraft:oak_door[facing=north,half=upper]',
+		];
+		const grid = gridFrom(
+			[
+				['1'],
+				['2'],
+			],
+			customPalette,
+		);
+		const guide = buildGuide(grid);
+
+		// Layer 0 has lower door
+		expect(guide.steps[0]!.callouts).toHaveLength(1);
+		expect(guide.steps[0]!.callouts[0]!.baseId).toBe('minecraft:oak_door');
+		expect(guide.steps[0]!.callouts[0]!.count).toBe(1);
+		expect(guide.steps[0]!.callouts[0]!.glyphType).toBe('door');
+
+		// Layer 1 has upper door, should be skipped
+		expect(guide.steps[1]!.callouts).toHaveLength(0);
+	});
+
+	it('populates callouts on every step in expand(cottage) guide', () => {
+		const { grid } = expand(cottage);
+		const guide = buildGuide(grid);
+		for (const step of guide.steps) {
+			expect(step.callouts).toBeDefined();
+			expect(Array.isArray(step.callouts)).toBe(true);
+			expect(step.callouts.length).toBeGreaterThan(0);
+			for (const callout of step.callouts) {
+				expect(callout.baseId).toBeTruthy();
+				expect(callout.displayName).toBeTruthy();
+				expect(callout.count).toBeGreaterThan(0);
+				expect(callout.glyphType).toBeDefined();
+			}
+		}
+	});
+});
+
+describe('calculateStepOrientation & camera occlusion detection', () => {
+	it('defaults to SE when no blocks are previously placed', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
+		const stepBlocks: StepBlock[] = [
+			{ x: 3, y: 0, z: 3, paletteIndex: 1 },
+			{ x: 4, y: 0, z: 3, paletteIndex: 1 },
+		];
+		const previouslyPlaced = new Set<number>();
+
+		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
+		expect(result.orientation).toBe('SE');
+		expect(result.isFlipped).toBe(false);
+		expect(result.occlusionRatio).toBe(0);
+	});
+
+	it('retains SE when SE occlusion ratio is <= 30%', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
+		// 4 blocks: 1 is occluded in SE, 3 are not (25% <= 30%)
+		const stepBlocks: StepBlock[] = [
+			{ x: 2, y: 1, z: 2, paletteIndex: 1 }, // occluded by (3, 2, 3)
+			{ x: 8, y: 1, z: 8, paletteIndex: 1 },
+			{ x: 8, y: 1, z: 7, paletteIndex: 1 },
+			{ x: 7, y: 1, z: 8, paletteIndex: 1 },
+		];
+		const previouslyPlaced = new Set<number>([voxelIndex(size, 3, 2, 3)]);
+
+		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
+		expect(result.orientation).toBe('SE');
+		expect(result.isFlipped).toBe(false);
+		expect(result.occlusionRatio).toBe(0.25);
+	});
+
+	it('auto-flips to optimal orientation when SE is occluded > 30% by an existing wall', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
+		// Step blocks placed at (2, 1, 2)
+		const stepBlocks: StepBlock[] = [
+			{ x: 2, y: 1, z: 2, paletteIndex: 1 },
+		];
+		// Put an obstacle along the SE ray (+1, +1, +1): (3, 2, 3)
+		// SW ray (-1, +1, +1) -> (1, 2, 3) is clear
+		// NW ray (-1, +1, -1) -> (1, 2, 1) is clear
+		// NE ray (+1, +1, -1) -> (3, 2, 1) is clear
+		const previouslyPlaced = new Set<number>([voxelIndex(size, 3, 2, 3)]);
+
+		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
+		// SE is 100% occluded (> 30%). SW is clear (0% occlusion) and first in tiebreak order.
+		expect(result.orientation).toBe('SW');
+		expect(result.isFlipped).toBe(true);
+		expect(result.occlusionRatio).toBe(0);
+	});
+
+	it('breaks ties in order SE, SW, NW, NE when multiple orientations have minimum occlusion', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
+		const stepBlocks: StepBlock[] = [{ x: 5, y: 2, z: 5, paletteIndex: 1 }];
+
+		// Occlude SE (+1, +1, +1) -> (6, 3, 6)
+		// and SW (-1, +1, +1) -> (4, 3, 6)
+		// NW (-1, +1, -1) -> (4, 3, 4) is open
+		// NE (+1, +1, -1) -> (6, 3, 4) is open
+		// Tie between NW and NE: NW must win.
+		const previouslyPlaced = new Set<number>([
+			voxelIndex(size, 6, 3, 6),
+			voxelIndex(size, 4, 3, 6),
+		]);
+
+		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
+		expect(result.orientation).toBe('NW');
+		expect(result.isFlipped).toBe(true);
+		expect(result.occlusionRatio).toBe(0);
+	});
+
+	it('retains SE with isFlipped false if all orientations are equally occluded', () => {
+		const size = { x: 10, y: 10, z: 10 };
+		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(1000) };
+		const stepBlocks: StepBlock[] = [{ x: 5, y: 2, z: 5, paletteIndex: 1 }];
+
+		// Occlude all 4 rays at t = 1
+		const previouslyPlaced = new Set<number>([
+			voxelIndex(size, 6, 3, 6), // SE
+			voxelIndex(size, 4, 3, 6), // SW
+			voxelIndex(size, 4, 3, 4), // NW
+			voxelIndex(size, 6, 3, 4), // NE
+		]);
+
+		const result = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
+		expect(result.orientation).toBe('SE');
+		expect(result.isFlipped).toBe(false);
+		expect(result.occlusionRatio).toBe(1);
+	});
+
+	it('handles empty stepBlocks gracefully', () => {
+		const size = { x: 5, y: 5, z: 5 };
+		const grid: VoxelGrid = { size, palette: PALETTE, voxels: new Uint16Array(125) };
+		const result = calculateStepOrientation(grid, [], new Set());
+		expect(result.orientation).toBe('SE');
+		expect(result.isFlipped).toBe(false);
+		expect(result.occlusionRatio).toBe(0);
+	});
+
+	it('assigns orientation and isFlipped to all steps in buildGuide', () => {
+		const { grid } = expand(cottage);
+		const guide = buildGuide(grid);
+		for (const step of guide.steps) {
+			expect(['SE', 'SW', 'NW', 'NE']).toContain(step.orientation);
+			expect(typeof step.isFlipped).toBe('boolean');
+		}
+	});
+});
+
+describe('isBlockOverhang', () => {
+	it('returns false when block is at y = 0', () => {
+		const size = { x: 4, y: 4, z: 4 };
+		const voxels = new Uint16Array(64);
+		expect(isBlockOverhang(voxels, size, 1, 0, 1)).toBe(false);
+		expect(isBlockOverhang(voxels, size, 0, 0, 0)).toBe(false);
+	});
+
+	it('returns true when block sits over air at y > 0', () => {
+		const size = { x: 4, y: 4, z: 4 };
+		const voxels = new Uint16Array(64);
+		// (1, 1, 1) has a block, but (1, 0, 1) is air (0)
+		voxels[voxelIndex(size, 1, 1, 1)] = 1;
+		expect(isBlockOverhang(voxels, size, 1, 1, 1)).toBe(true);
+	});
+
+	it('returns false when block sits over a solid block at y > 0', () => {
+		const size = { x: 4, y: 4, z: 4 };
+		const voxels = new Uint16Array(64);
+		// (1, 0, 1) is solid (1), (1, 1, 1) is solid (1)
+		voxels[voxelIndex(size, 1, 0, 1)] = 1;
+		voxels[voxelIndex(size, 1, 1, 1)] = 1;
+		expect(isBlockOverhang(voxels, size, 1, 1, 1)).toBe(false);
+	});
+});
+
+describe('chunkGuideVolumes', () => {
+	it('returns empty array when steps array is empty', () => {
+		expect(chunkGuideVolumes([])).toEqual([]);
+	});
+
+	it('creates a single volume when step count <= MAX_STEPS_PER_VOLUME', () => {
+		const mockStep = (index: number): BuildStep => ({
+			index,
+			layer: 0,
+			title: `Step ${index}`,
+			parts: [],
+			blocks: [],
+			materials: [],
+			callouts: [],
+			orientation: 'SE',
+			isFlipped: false,
+		});
+
+		const steps = Array.from({ length: 45 }, (_, i) => mockStep(i + 1));
+		const volumes = chunkGuideVolumes(steps);
+
+		expect(volumes).toHaveLength(1);
+		expect(volumes[0]).toEqual({
+			volumeIndex: 1,
+			totalVolumes: 1,
+			title: 'Volume 1: Steps 1–45',
+			startStep: 1,
+			endStep: 45,
+			steps,
+		});
+	});
+
+	it('splits large builds (>200 steps) into 200-step volumes without losing steps', () => {
+		const mockStep = (index: number): BuildStep => ({
+			index,
+			layer: Math.floor(index / 10),
+			title: `Step ${index}`,
+			parts: [],
+			blocks: [],
+			materials: [],
+			callouts: [],
+			orientation: 'SE',
+			isFlipped: false,
+		});
+
+		const steps = Array.from({ length: 450 }, (_, i) => mockStep(i + 1));
+		const volumes = chunkGuideVolumes(steps);
+
+		expect(volumes).toHaveLength(3);
+		expect(volumes[0]!.volumeIndex).toBe(1);
+		expect(volumes[0]!.totalVolumes).toBe(3);
+		expect(volumes[0]!.title).toBe('Volume 1: Steps 1–200');
+		expect(volumes[0]!.startStep).toBe(1);
+		expect(volumes[0]!.endStep).toBe(200);
+		expect(volumes[0]!.steps).toHaveLength(200);
+		expect(volumes[0]!.steps[0]!.index).toBe(1);
+		expect(volumes[0]!.steps[199]!.index).toBe(200);
+
+		expect(volumes[1]!.volumeIndex).toBe(2);
+		expect(volumes[1]!.totalVolumes).toBe(3);
+		expect(volumes[1]!.title).toBe('Volume 2: Steps 201–400');
+		expect(volumes[1]!.startStep).toBe(201);
+		expect(volumes[1]!.endStep).toBe(400);
+		expect(volumes[1]!.steps).toHaveLength(200);
+		expect(volumes[1]!.steps[0]!.index).toBe(201);
+		expect(volumes[1]!.steps[199]!.index).toBe(400);
+
+		expect(volumes[2]!.volumeIndex).toBe(3);
+		expect(volumes[2]!.totalVolumes).toBe(3);
+		expect(volumes[2]!.title).toBe('Volume 3: Steps 401–450');
+		expect(volumes[2]!.startStep).toBe(401);
+		expect(volumes[2]!.endStep).toBe(450);
+		expect(volumes[2]!.steps).toHaveLength(50);
+		expect(volumes[2]!.steps[0]!.index).toBe(401);
+		expect(volumes[2]!.steps[49]!.index).toBe(450);
+
+		// Assert total steps across volumes matches original length
+		const totalChunkedSteps = volumes.reduce((acc, v) => acc + v.steps.length, 0);
+		expect(totalChunkedSteps).toBe(450);
+	});
+
+	it('respects custom maxPerVolume parameter', () => {
+		const mockStep = (index: number): BuildStep => ({
+			index,
+			layer: 0,
+			title: `Step ${index}`,
+			parts: [],
+			blocks: [],
+			materials: [],
+			callouts: [],
+			orientation: 'SE',
+			isFlipped: false,
+		});
+
+		const steps = Array.from({ length: 7 }, (_, i) => mockStep(i + 1));
+		const volumes = chunkGuideVolumes(steps, 3);
+
+		expect(volumes).toHaveLength(3);
+		expect(volumes.map((v) => v.steps.length)).toEqual([3, 3, 1]);
+		expect(volumes[0]!.title).toBe('Volume 1: Steps 1–3');
+		expect(volumes[1]!.title).toBe('Volume 2: Steps 4–6');
+		expect(volumes[2]!.title).toBe('Volume 3: Steps 7–7');
 	});
 });

@@ -8,7 +8,16 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { dimmedTwice, doubled } from './isoRender.js';
+import type { BuildStep } from '@craftmagic/core';
+import { ORIENTATION_VECTORS, VIEW_ORIENTATIONS } from '@craftmagic/core';
+import {
+  dimmedTwice,
+  doubled,
+  ELEVATION,
+  ORIENTATION_AZIMUTH,
+  orientationLabel,
+  viewpointCaption,
+} from './isoRender.js';
 
 describe('dimmedTwice', () => {
   it('doubles the table, so index + span addresses the same material lit', () => {
@@ -55,5 +64,64 @@ describe('doubled', () => {
     // A pane of glass placed this step must still be glass, or a lit window would render
     // solid and hide everything the reader has already built behind it.
     expect([...doubled(Uint8Array.of(1, 0, 2))]).toEqual([1, 0, 2, 1, 0, 2]);
+  });
+});
+
+describe('viewpoints and azimuths', () => {
+  it('defines 4 cardinal isometric directions with exact azimuths derived from core vectors', () => {
+    // SE (+1, +1) -> PI/4
+    expect(ORIENTATION_AZIMUTH.SE).toBeCloseTo(Math.PI / 4, 6);
+    // NE (+1, -1) -> 3PI/4
+    expect(ORIENTATION_AZIMUTH.NE).toBeCloseTo((3 * Math.PI) / 4, 6);
+    // NW (-1, -1) -> 5PI/4
+    expect(ORIENTATION_AZIMUTH.NW).toBeCloseTo((5 * Math.PI) / 4, 6);
+    // SW (-1, +1) -> 7PI/4
+    expect(ORIENTATION_AZIMUTH.SW).toBeCloseTo((7 * Math.PI) / 4, 6);
+  });
+
+  it('camera directions agree with core occlusion rays for all 4 viewpoints', () => {
+    // Verify that the camera position direction from origin matches ORIENTATION_VECTORS in both X and Z signs
+    for (const ori of VIEW_ORIENTATIONS) {
+      const azimuth = ORIENTATION_AZIMUTH[ori];
+      const vec = ORIENTATION_VECTORS[ori];
+
+      // Camera horizontal position vector from origin: (sin(azimuth), cos(azimuth))
+      const camDirX = Math.sin(azimuth);
+      const camDirZ = Math.cos(azimuth);
+
+      // Sign must strictly match core ray direction
+      expect(Math.sign(camDirX)).toBe(vec.x);
+      expect(Math.sign(camDirZ)).toBe(vec.z);
+
+      // A displacement along the ray vector moves towards the camera (positive dot product with camera direction)
+      const dot = vec.x * camDirX + vec.z * camDirZ;
+      expect(dot).toBeGreaterThan(0);
+    }
+  });
+
+  it('defines true isometric elevation of 35.264 degrees', () => {
+    expect(ELEVATION).toBeCloseTo(Math.atan(1 / Math.SQRT2), 6);
+    expect((ELEVATION * 180) / Math.PI).toBeCloseTo(35.264, 2);
+  });
+
+  it('formats orientation labels for all 4 viewpoints', () => {
+    expect(orientationLabel('SE')).toBe('South-East');
+    expect(orientationLabel('SW')).toBe('South-West');
+    expect(orientationLabel('NW')).toBe('North-West');
+    expect(orientationLabel('NE')).toBe('North-East');
+  });
+
+  it('generates viewpoint captions reflecting standard and flipped orientations', () => {
+    const normalStep = {
+      orientation: 'SE',
+      isFlipped: false,
+    } as unknown as BuildStep;
+    expect(viewpointCaption(normalStep)).toBe('Seen from South-East');
+
+    const flippedStep = {
+      orientation: 'NW',
+      isFlipped: true,
+    } as unknown as BuildStep;
+    expect(viewpointCaption(flippedStep)).toBe('Flipped to North-West for visibility');
   });
 });

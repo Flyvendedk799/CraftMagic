@@ -38,6 +38,9 @@
   --guide-rule-faint: var(--border);
   --guide-accent: var(--accent);
   --guide-disabled: #212832;
+  --guide-warning: #e6a23c;
+  --guide-warning-bg: rgba(230, 162, 60, 0.15);
+  --guide-warning-border: rgba(230, 162, 60, 0.4);
 
   /* --- the art panels ----------------------------------------------------
      Always paper-white, in both themes and on paper. The plan canvases draw alpha-blended
@@ -107,6 +110,9 @@
     --guide-rule-faint: #e2e6ea;
     /* Dark enough to stay legible in greyscale, which is how most of these will be printed. */
     --guide-accent: #0f6f52;
+    --guide-warning: #b26a00;
+    --guide-warning-bg: #fff8eb;
+    --guide-warning-border: #b26a00;
 
     /* The app tokens too: `body` is not inside `.guide`, and a few shared components
        (buttons, links) reach for them from within the booklet. */

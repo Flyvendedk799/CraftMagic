@@ -25,9 +25,33 @@
 
 import type { BuildPart, VoxelGrid } from '../ir/types.js';
 import { AIR_INDEX, voxelIndex } from '../ir/types.js';
-import { displayName, parseBlockRef } from '../registry/registry.js';
+import { canonical, displayName, parseBlockRef } from '../registry/registry.js';
 import type { BuildGuideDesignSystem, Difficulty, GuidePart } from './design-system.js';
 import { DEFAULT_DESIGN_SYSTEM, anonymousStepTitle, difficultyFor, labelParts } from './design-system.js';
+
+export type ViewOrientation = 'SE' | 'SW' | 'NW' | 'NE';
+
+export type GlyphType = 'stairs' | 'slab' | 'pillar' | 'door' | 'trapdoor' | 'general';
+
+export interface StepBlockCallout {
+	block: string;
+	baseId: string;
+	displayName: string;
+	count: number;
+	states: Record<string, string>;
+	glyphType?: GlyphType;
+}
+
+export const MAX_STEPS_PER_VOLUME = 200;
+
+export interface GuideVolume {
+	volumeIndex: number;
+	totalVolumes: number;
+	title: string;
+	startStep: number;
+	endStep: number;
+	steps: BuildStep[];
+}
 
 /**
  * The default design system's step bounds, re-exported.
@@ -76,6 +100,9 @@ export interface BuildStep {
 	blocks: StepBlock[];
 	/** Per-blockstate counts for this step alone. */
 	materials: MaterialCount[];
+	callouts: StepBlockCallout[];
+	orientation: ViewOrientation;
+	isFlipped?: boolean;
 }
 
 export interface MaterialCount {
@@ -133,6 +160,7 @@ export function buildGuide(grid: VoxelGrid, name = 'Build', options: GuideOption
 
 	const steps: BuildStep[] = [];
 	let totalBlocks = 0;
+	const previouslyPlaced = new Set<number>();
 
 	for (let y = 0; y < grid.size.y; y++) {
 		const cells = layerCells(grid, y, origin);
@@ -142,15 +170,26 @@ export function buildGuide(grid: VoxelGrid, name = 'Build', options: GuideOption
 		const groups = segmentLayer(cells, design, hasParts);
 		groups.forEach((group, part) => {
 			const stepParts = tallyParts(group, byId);
+			const stepBlocks: StepBlock[] = group.map((c) => ({ x: c.x, y, z: c.z, paletteIndex: c.paletteIndex }));
+			const callouts = extractStepCallouts(grid, stepBlocks);
+			const { orientation, isFlipped } = calculateStepOrientation(grid, stepBlocks, previouslyPlaced);
+
 			steps.push({
 				index: steps.length + 1,
 				layer: y,
 				...(groups.length > 1 ? { partOfLayer: { part: part + 1, total: groups.length } } : {}),
 				title: stepParts[0]?.label ?? anonymousStepTitle(y, design),
 				parts: stepParts,
-				blocks: group.map((c) => ({ x: c.x, y, z: c.z, paletteIndex: c.paletteIndex })),
+				blocks: stepBlocks,
 				materials: countMaterials(grid, group.map((c) => c.paletteIndex), design),
+				callouts,
+				orientation,
+				isFlipped,
 			});
+
+			for (const b of stepBlocks) {
+				previouslyPlaced.add(voxelIndex(grid.size, b.x, b.y, b.z));
+			}
 		});
 	}
 
@@ -446,3 +485,197 @@ function countMaterials(
 	entries.sort((a, b) => b.count - a.count || a.block.localeCompare(b.block));
 	return entries;
 }
+
+export function classifyGlyphType(baseId: string): GlyphType {
+	if (baseId.endsWith('_stairs')) return 'stairs';
+	if (baseId.endsWith('_slab')) return 'slab';
+	if (
+		baseId.endsWith('_log') ||
+		baseId.endsWith('_wood') ||
+		baseId.endsWith('_stem') ||
+		baseId.endsWith('_hyphae') ||
+		baseId.includes('pillar')
+	) {
+		return 'pillar';
+	}
+	if (baseId.endsWith('_trapdoor')) return 'trapdoor';
+	if (baseId.endsWith('_door')) return 'door';
+	return 'general';
+}
+
+export function extractStepCallouts(
+	grid: VoxelGrid,
+	stepBlocks: readonly StepBlock[],
+): StepBlockCallout[] {
+	const counts = new Map<string, number>();
+
+	for (const block of stepBlocks) {
+		const rawRef = grid.palette[block.paletteIndex];
+		if (!rawRef || rawRef === 'minecraft:air') continue;
+		const ref = canonical(rawRef);
+		const parsed = parseBlockRef(ref);
+		if (parsed.id.endsWith('_door') && parsed.states.half === 'upper') {
+			continue;
+		}
+		counts.set(ref, (counts.get(ref) ?? 0) + 1);
+	}
+
+	const callouts: StepBlockCallout[] = [];
+	for (const [block, count] of counts) {
+		const parsed = parseBlockRef(block);
+		const baseId = parsed.id;
+		const glyphType = classifyGlyphType(baseId);
+		callouts.push({
+			block,
+			baseId,
+			displayName: displayName(block),
+			count,
+			states: parsed.states,
+			glyphType,
+		});
+	}
+
+	callouts.sort(
+		(a, b) =>
+			b.count - a.count ||
+			a.displayName.localeCompare(b.displayName) ||
+			a.block.localeCompare(b.block),
+	);
+	return callouts;
+}
+
+export const VIEW_ORIENTATIONS: readonly ViewOrientation[] = ['SE', 'SW', 'NW', 'NE'];
+
+export interface OrientationVector {
+	x: 1 | -1;
+	y: 1;
+	z: 1 | -1;
+}
+
+export const ORIENTATION_VECTORS: Record<ViewOrientation, OrientationVector> = {
+	SE: { x: 1, y: 1, z: 1 },
+	SW: { x: -1, y: 1, z: 1 },
+	NW: { x: -1, y: 1, z: -1 },
+	NE: { x: 1, y: 1, z: -1 },
+};
+
+export function calculateStepOrientation(
+	grid: VoxelGrid,
+	stepBlocks: readonly StepBlock[],
+	previouslyPlaced: ReadonlySet<number>,
+): { orientation: ViewOrientation; isFlipped: boolean; occlusionRatio: number } {
+	if (stepBlocks.length === 0) {
+		return { orientation: 'SE', isFlipped: false, occlusionRatio: 0 };
+	}
+
+	const ratios: Record<ViewOrientation, number> = {
+		SE: 0,
+		SW: 0,
+		NW: 0,
+		NE: 0,
+	};
+
+	for (const orientation of VIEW_ORIENTATIONS) {
+		const vec = ORIENTATION_VECTORS[orientation];
+		const dx = vec.x;
+		const dz = vec.z;
+		let occludedCount = 0;
+
+		for (const block of stepBlocks) {
+			let t = 1;
+			let isOccluded = false;
+			while (true) {
+				const rx = block.x + t * dx;
+				const rz = block.z + t * dz;
+				if (
+					rx < 0 ||
+					rx >= grid.size.x ||
+					rz < 0 ||
+					rz >= grid.size.z
+				) {
+					break;
+				}
+
+				// Same-layer occlusion (e.g. wall placed in an earlier step in front of interior furniture)
+				const sameIdx = voxelIndex(grid.size, rx, block.y, rz);
+				if (previouslyPlaced.has(sameIdx)) {
+					isOccluded = true;
+					break;
+				}
+				t++;
+			}
+			if (isOccluded) {
+				occludedCount++;
+			}
+		}
+
+		ratios[orientation] = occludedCount / stepBlocks.length;
+	}
+
+	const seRatio = ratios.SE;
+
+	if (seRatio > 0.3) {
+		let bestOrientation: ViewOrientation = 'SE';
+		let bestRatio = seRatio;
+
+		for (const orientation of VIEW_ORIENTATIONS) {
+			if (ratios[orientation] < bestRatio) {
+				bestRatio = ratios[orientation];
+				bestOrientation = orientation;
+			}
+		}
+
+		if (bestOrientation !== 'SE') {
+			return {
+				orientation: bestOrientation,
+				isFlipped: true,
+				occlusionRatio: bestRatio,
+			};
+		}
+	}
+
+	return {
+		orientation: 'SE',
+		isFlipped: false,
+		occlusionRatio: seRatio,
+	};
+}
+
+export function isBlockOverhang(
+	voxels: Uint16Array,
+	size: VoxelGrid['size'],
+	x: number,
+	y: number,
+	z: number,
+): boolean {
+	if (y <= 0) return false;
+	const below = voxelIndex(size, x, y - 1, z);
+	return voxels[below] === AIR_INDEX;
+}
+
+export function chunkGuideVolumes(
+	steps: BuildStep[],
+	maxPerVolume = MAX_STEPS_PER_VOLUME,
+): GuideVolume[] {
+	if (steps.length === 0) return [];
+	const chunkSize =
+		Number.isFinite(maxPerVolume) && maxPerVolume > 0
+			? Math.floor(maxPerVolume)
+			: MAX_STEPS_PER_VOLUME;
+	const totalVolumes = Math.ceil(steps.length / chunkSize);
+	const volumes: GuideVolume[] = [];
+	for (let i = 0; i < totalVolumes; i++) {
+		const start = i * chunkSize;
+		const end = Math.min(start + chunkSize, steps.length);
+		volumes.push({
+			volumeIndex: i + 1,
+			totalVolumes,
+			title: `Volume ${i + 1}: Steps ${start + 1}–${end}`,
+			startStep: start + 1,
+			endStep: end,
+			steps: steps.slice(start, end),
+		});
+	}
+	return volumes;
+}
+

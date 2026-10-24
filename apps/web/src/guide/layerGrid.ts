@@ -16,6 +16,7 @@
  */
 
 import type { BuildStep } from '@craftmagic/core';
+import { isBlockOverhang } from '@craftmagic/core';
 import type { GridSize } from '../editor/mesher.js';
 
 export interface PlanCell {
@@ -38,6 +39,8 @@ export interface LayerPlan {
   voxels: Uint16Array;
   /** 3 bytes per palette slot, as the editor builds them. */
   paletteColors: Uint8Array;
+  /** The block palette refs, e.g. ['minecraft:air', 'minecraft:stone', ...], for looking up block names. */
+  palette?: readonly string[];
   footprint: Footprint;
   layer: number;
   /** Placed by this step — full colour, outlined. */
@@ -140,6 +143,119 @@ export function earlierInLayer(steps: readonly BuildStep[]): PlanCell[][] {
   return out;
 }
 
+export function isPlanCellOverhang(plan: LayerPlan, cell: PlanCell): boolean {
+  return isBlockOverhang(plan.voxels, plan.size, cell.x, plan.layer, cell.z);
+}
+
+const interiorVoidCache = new WeakMap<LayerPlan, Map<number, boolean>>();
+
+export function isInteriorVoid(plan: LayerPlan, x: number, z: number): boolean {
+  if (plan.layer <= 0) return false;
+  if (
+    x < plan.footprint.x0 ||
+    x > plan.footprint.x1 ||
+    z < plan.footprint.z0 ||
+    z > plan.footprint.z1
+  ) {
+    return false;
+  }
+  if (x < 0 || x >= plan.size.x || z < 0 || z >= plan.size.z) {
+    return false;
+  }
+
+  const belowIdx = (plan.layer - 1) * plan.size.x * plan.size.z + z * plan.size.x + x;
+  if (plan.voxels[belowIdx] !== 0) return false;
+
+  const isPlaced = plan.placed.some((c) => c.x === x && c.z === z);
+  if (isPlaced) return false;
+  const isEarlier = plan.earlier.some((c) => c.x === x && c.z === z);
+  if (isEarlier) return false;
+
+  // An air cell directly on the footprint perimeter is open to the outside world
+  if (
+    x === plan.footprint.x0 ||
+    x === plan.footprint.x1 ||
+    z === plan.footprint.z0 ||
+    z === plan.footprint.z1
+  ) {
+    return false;
+  }
+
+  let planCache = interiorVoidCache.get(plan);
+  if (!planCache) {
+    planCache = new Map<number, boolean>();
+    interiorVoidCache.set(plan, planCache);
+  }
+
+  const cellKey = z * plan.size.x + x;
+  const cached = planCache.get(cellKey);
+  if (cached !== undefined) return cached;
+
+  // 2D BFS flood fill on layer y - 1 to check if this air cell can reach the world boundaries
+  const queue: number[] = [x, z];
+  const visited = new Set<number>();
+  visited.add(cellKey);
+
+  let reachesBoundary = false;
+  let head = 0;
+
+  while (head < queue.length) {
+    const cx = queue[head++]!;
+    const cz = queue[head++]!;
+
+    if (
+      cx === plan.footprint.x0 ||
+      cx === plan.footprint.x1 ||
+      cz === plan.footprint.z0 ||
+      cz === plan.footprint.z1
+    ) {
+      reachesBoundary = true;
+      break;
+    }
+
+    const neighbors: readonly [number, number][] = [
+      [cx + 1, cz],
+      [cx - 1, cz],
+      [cx, cz + 1],
+      [cx, cz - 1],
+    ];
+
+    for (const [nx, nz] of neighbors) {
+      if (
+        nx < plan.footprint.x0 ||
+        nx > plan.footprint.x1 ||
+        nz < plan.footprint.z0 ||
+        nz > plan.footprint.z1 ||
+        nx < 0 ||
+        nx >= plan.size.x ||
+        nz < 0 ||
+        nz >= plan.size.z
+      ) {
+        reachesBoundary = true;
+        break;
+      }
+
+      const nIdx = nz * plan.size.x + nx;
+      if (visited.has(nIdx)) continue;
+      visited.add(nIdx);
+
+      const voxelBelow = plan.voxels[(plan.layer - 1) * plan.size.x * plan.size.z + nIdx];
+      if (voxelBelow !== 0) {
+        // Solid block at layer y - 1, cannot pass through
+        continue;
+      }
+
+      queue.push(nx, nz);
+    }
+
+    if (reachesBoundary) break;
+  }
+
+  const result = !reachesBoundary;
+  planCache.set(cellKey, result);
+  return result;
+}
+
 export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void {
   const cols = plan.footprint.x1 - plan.footprint.x0 + 1;
   const rows = plan.footprint.z1 - plan.footprint.z0 + 1;
@@ -156,7 +272,12 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
   // fixed height that scales the squares on one axis only.
   canvas.style.height = 'auto';
 
-  const ctx = canvas.getContext('2d');
+  let ctx: CanvasRenderingContext2D | null = null;
+  try {
+    ctx = canvas.getContext('2d');
+  } catch {
+    return;
+  }
   if (!ctx) return;
   ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
   ctx.clearRect(0, 0, width, height);
@@ -168,6 +289,19 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
 
   ctx.fillStyle = PAPER;
   ctx.fillRect(0, 0, width, height);
+
+  // Void / shaft below indicator: inside footprint where layer y and layer y-1 are air
+  if (plan.layer > 0) {
+    for (let z = plan.footprint.z0; z <= plan.footprint.z1; z++) {
+      for (let x = plan.footprint.x0; x <= plan.footprint.x1; x++) {
+        if (isInteriorVoid(plan, x, z)) {
+          const px = originX + (x - plan.footprint.x0) * cell;
+          const py = originY + (z - plan.footprint.z0) * cell;
+          drawVoidShaft(ctx, px, py, cell);
+        }
+      }
+    }
+  }
 
   // Painter's order, back to front: the layer below, then this layer's earlier steps, then
   // the new blocks — so a new block always covers whatever it sits on.
@@ -183,6 +317,15 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
 
   ctx.globalAlpha = 1;
   for (const cell2 of plan.placed) fillCell(ctx, plan, cell2, originX, originY, cell);
+
+  // Overhang warning hatching / dashed border for blocks placed over air
+  for (const cell2 of plan.placed) {
+    if (isPlanCellOverhang(plan, cell2)) {
+      const px = originX + (cell2.x - plan.footprint.x0) * cell;
+      const py = originY + (cell2.z - plan.footprint.z0) * cell;
+      drawOverhangWarning(ctx, px, py, cell);
+    }
+  }
 
   // Rules go over the fills, not under: a run of twenty identical blocks is one solid slab
   // otherwise, and the reader cannot count it.
@@ -215,6 +358,50 @@ export function drawLayerPlan(canvas: HTMLCanvasElement, plan: LayerPlan): void 
 
   drawLabels(ctx, cols, rows, cell, originX, originY, plan.footprint);
   drawCompass(ctx, originX, originY);
+}
+
+function drawVoidShaft(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  ctx.save();
+  ctx.fillStyle = 'rgba(70, 80, 95, 0.22)';
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const radius = Math.max(1, Math.min(2, size / 8));
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawOverhangWarning(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  ctx.save();
+  // Diagonal warning hatching across the cell
+  ctx.strokeStyle = 'rgba(217, 119, 6, 0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x + 2, y + size - 2);
+  ctx.lineTo(x + size - 2, y + 2);
+  ctx.moveTo(x + 2, y + size / 2);
+  ctx.lineTo(x + size / 2, y + 2);
+  ctx.moveTo(x + size / 2, y + size - 2);
+  ctx.lineTo(x + size - 2, y + size / 2);
+  ctx.stroke();
+
+  // Dashed warning border
+  ctx.strokeStyle = '#d97706';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([2, 2]);
+  ctx.strokeRect(x + 1.5, y + 1.5, size - 3, size - 3);
+  ctx.restore();
 }
 
 /**

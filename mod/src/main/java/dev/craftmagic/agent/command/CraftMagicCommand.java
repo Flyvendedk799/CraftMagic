@@ -7,16 +7,21 @@ import dev.craftmagic.agent.config.ModConfig;
 import dev.craftmagic.agent.net.AgentSocket;
 import dev.craftmagic.agent.wand.WandItem;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Rotation;
 import dev.craftmagic.agent.job.JobManager;
+import dev.craftmagic.agent.wand.WandHandler;
 
 /**
  * {@code /craftmagic} — the player's side of pairing a world to the website.
@@ -108,6 +113,7 @@ public final class CraftMagicCommand {
 			dispatcher.register(
 					Commands.literal("craftmagic")
 							.then(Commands.literal("status").executes(CraftMagicCommand::status))
+							.then(Commands.literal("help").executes(CraftMagicCommand::help))
 							.then(
 									Commands.literal("pair")
 											.requires(CraftMagicCommand::mayConfigure)
@@ -128,6 +134,11 @@ public final class CraftMagicCommand {
 							// `place` remain for the console, command blocks, and anyone who
 							// would rather type.
 							.then(Commands.literal("wand").executes(CraftMagicCommand::wand))
+							.then(
+									Commands.literal("offset")
+											.then(
+													Commands.argument("dy", IntegerArgumentType.integer(-64, 64))
+															.executes(CraftMagicCommand::offset)))
 							// Neither `wand` nor `build` needs elevated permission: a job only
 							// exists because someone paired this world and sent it, and it lands
 							// where the player chose. Rotation is optional — most people want it
@@ -150,6 +161,9 @@ public final class CraftMagicCommand {
 																	Commands.argument("rotation", IntegerArgumentType.integer(0, 3))
 																			.executes(context ->
 																					place(context, ROTATIONS[IntegerArgumentType.getInteger(context, "rotation")])))))
+							.then(Commands.literal("pause").executes(CraftMagicCommand::pause))
+							.then(Commands.literal("resume").executes(CraftMagicCommand::resume))
+							.then(Commands.literal("undo").executes(CraftMagicCommand::undo))
 							.then(Commands.literal("cancel").executes(CraftMagicCommand::cancel))
 							.then(
 									Commands.literal("speed")
@@ -157,13 +171,20 @@ public final class CraftMagicCommand {
 											.then(
 													Commands.argument("blocksPerSecond", IntegerArgumentType.integer(0, 4000))
 															.executes(CraftMagicCommand::setSpeed)))
-							.executes(CraftMagicCommand::status));
+							.executes(CraftMagicCommand::help));
 
 			// A bare `/wand`, because reaching for the wand is the one thing a player does
 			// before they have a build to place, and `/craftmagic wand` is six extra words at
 			// exactly the wrong moment. WorldEdit's wand is `//wand`, so this does not collide
 			// with the mod most likely to be installed alongside this one.
-			dispatcher.register(Commands.literal("wand").executes(CraftMagicCommand::wand));
+			dispatcher.register(
+					Commands.literal("wand")
+							.executes(CraftMagicCommand::wand)
+							.then(
+									Commands.literal("offset")
+											.then(
+													Commands.argument("dy", IntegerArgumentType.integer(-64, 64))
+															.executes(CraftMagicCommand::offset))));
 		});
 	}
 
@@ -311,5 +332,73 @@ public final class CraftMagicCommand {
 		config.save();
 		context.getSource().sendSuccess(() -> Component.literal("CraftMagic server set to " + url), true);
 		return 1;
+	}
+
+	private static int pause(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+		JobManager jobs = CraftMagicMod.jobs();
+		if (jobs != null && jobs.pauseActive()) {
+			context.getSource().sendSuccess(() -> Component.literal("CraftMagic: build paused."), true);
+			return 1;
+		}
+		context.getSource().sendFailure(Component.literal("CraftMagic: no active build to pause."));
+		return 0;
+	}
+
+	private static int resume(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+		JobManager jobs = CraftMagicMod.jobs();
+		if (jobs != null && jobs.resumeActive()) {
+			context.getSource().sendSuccess(() -> Component.literal("CraftMagic: build resumed."), true);
+			return 1;
+		}
+		context.getSource().sendFailure(Component.literal("CraftMagic: no paused build to resume."));
+		return 0;
+	}
+
+	private static int undo(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+		JobManager jobs = CraftMagicMod.jobs();
+		if (jobs != null && jobs.undoActive()) {
+			context.getSource().sendSuccess(() -> Component.literal("CraftMagic: undoing build in reverse..."), true);
+			return 1;
+		}
+		context.getSource().sendFailure(Component.literal("CraftMagic: no build available to undo."));
+		return 0;
+	}
+
+	private static int offset(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+		ServerPlayer player = context.getSource().getPlayer();
+		if (player == null) {
+			context.getSource().sendFailure(Component.literal("Run this as a player — offset applies to your wand."));
+			return 0;
+		}
+		int dy = IntegerArgumentType.getInteger(context, "dy");
+		WandHandler.setOffset(player, dy);
+		return 1;
+	}
+
+	private static int help(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
+		CommandSourceStack source = context.getSource();
+		source.sendSuccess(() -> Component.literal("=== CraftMagic Commands ===").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), false);
+		source.sendSuccess(() -> commandLine("/craftmagic wand", "Get a wand to aim and place builds", true), false);
+		source.sendSuccess(() -> commandLine("/craftmagic offset <dy>", "Adjust wand vertical Y-offset (-64..64)", false), false);
+		source.sendSuccess(() -> commandLine("/craftmagic build [0-3]", "Build waiting schematic at feet", false), false);
+		source.sendSuccess(() -> commandLine("/craftmagic pause", "Pause the in-progress build", true), false);
+		source.sendSuccess(() -> commandLine("/craftmagic resume", "Resume a paused build", true), false);
+		source.sendSuccess(() -> commandLine("/craftmagic undo", "Roll back placed blocks top-down", true), false);
+		source.sendSuccess(() -> commandLine("/craftmagic cancel", "Cancel the current build", true), false);
+		source.sendSuccess(() -> commandLine("/craftmagic status", "Show agent connection status", true), false);
+		source.sendSuccess(() -> commandLine("/craftmagic pair <code>", "Link world to website with code", false), false);
+		return 1;
+	}
+
+	private static Component commandLine(String command, String description, boolean run) {
+		String suggestOrRunText = run ? command : command.split("<|\\[")[0];
+		MutableComponent cmdPart = Component.literal(command)
+				.withStyle(style -> style
+						.withColor(ChatFormatting.AQUA)
+						.withUnderlined(true)
+						.withClickEvent(run ? new ClickEvent.RunCommand(suggestOrRunText) : new ClickEvent.SuggestCommand(suggestOrRunText))
+						.withHoverEvent(new HoverEvent.ShowText(Component.literal(run ? "Click to run " + suggestOrRunText : "Click to suggest " + suggestOrRunText))));
+
+		return cmdPart.append(Component.literal(" — " + description).withStyle(ChatFormatting.GRAY));
 	}
 }

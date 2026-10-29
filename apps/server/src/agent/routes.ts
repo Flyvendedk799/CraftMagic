@@ -909,6 +909,53 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 			return { ok: true };
 		});
 
+		app.post<{ Params: { id: string } }>('/api/agent/jobs/:id/pause', async (request, reply) => {
+			if (!requireDb(reply)) return;
+			const user = await auth.requireUser(request, reply);
+			if (!user) return;
+
+			const job = await store!.getJob(request.params.id, user.id);
+			if (!job) return reply.code(404).send({ error: 'unknown_job' });
+			hub!.pause(job);
+			await store!.updateJob(job.id, { status: 'paused' });
+			hub!.emit(job.id, {
+				jobId: job.id,
+				status: 'paused',
+				placed: job.progressPlaced,
+				total: job.progressTotal,
+			});
+			return { ok: true };
+		});
+
+		app.post<{ Params: { id: string } }>('/api/agent/jobs/:id/resume', async (request, reply) => {
+			if (!requireDb(reply)) return;
+			const user = await auth.requireUser(request, reply);
+			if (!user) return;
+
+			const job = await store!.getJob(request.params.id, user.id);
+			if (!job) return reply.code(404).send({ error: 'unknown_job' });
+			hub!.resume(job);
+			await store!.updateJob(job.id, { status: 'building' });
+			hub!.emit(job.id, {
+				jobId: job.id,
+				status: 'building',
+				placed: job.progressPlaced,
+				total: job.progressTotal,
+			});
+			return { ok: true };
+		});
+
+		app.post<{ Params: { id: string } }>('/api/agent/jobs/:id/undo', async (request, reply) => {
+			if (!requireDb(reply)) return;
+			const user = await auth.requireUser(request, reply);
+			if (!user) return;
+
+			const job = await store!.getJob(request.params.id, user.id);
+			if (!job) return reply.code(404).send({ error: 'unknown_job' });
+			hub!.undo(job);
+			return { ok: true };
+		});
+
 		/**
 		 * The build itself, as a `.schem`.
 		 *

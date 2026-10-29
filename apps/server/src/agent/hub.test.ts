@@ -414,3 +414,21 @@ describe('a reconnect re-offers a region as a region', () => {
 		expect(replayed[0]!.region?.anchor?.rotation).toBe(2);
 	});
 });
+
+describe('job control commands dispatch to connected agent', () => {
+	it('sends job.pause, job.resume, and job.undo over the connection', async () => {
+		const { store } = fakeStore({ 'build-1': 10 });
+		const hub = new AgentHub(store);
+		const { connection, sent } = fakeConnection();
+		await hub.attach(connection);
+
+		const testJob = job('job-1', 'build-1');
+		hub.pause(testJob);
+		hub.resume(testJob);
+		hub.undo(testJob);
+
+		expect(sent).toContainEqual({ t: 'job.pause', jobId: 'job-1' });
+		expect(sent).toContainEqual({ t: 'job.resume', jobId: 'job-1' });
+		expect(sent).toContainEqual({ t: 'job.undo', jobId: 'job-1' });
+	});
+});

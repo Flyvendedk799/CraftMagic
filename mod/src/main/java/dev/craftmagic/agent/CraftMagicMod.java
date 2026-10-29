@@ -75,6 +75,7 @@ public class CraftMagicMod implements ModInitializer {
 		// placement and entity movement are safe.
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if (jobs != null) jobs.tick();
+			WandHandler.tick(server);
 		});
 
 		LOGGER.info("CraftMagic agent {} initialised", modVersion);

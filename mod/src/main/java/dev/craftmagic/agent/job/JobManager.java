@@ -63,7 +63,10 @@ public final class JobManager {
 
 	private PendingJob awaitingPlacement;
 	private ActiveBuild active;
+	private ActiveBuild lastFinished;
 	private int ticksSinceReport;
+	private int blocksPlacedInWindow;
+	private int currentRate;
 
 	/** {@code region} is null for a lone build, which is what almost every job is. */
 	private record PendingJob(
@@ -73,12 +76,14 @@ public final class JobManager {
 		final String jobId;
 		final BuildTask task;
 		final BuilderBot bot;
+		final ServerLevel level;
 		int lastReported;
 
-		ActiveBuild(String jobId, BuildTask task, BuilderBot bot) {
+		ActiveBuild(String jobId, BuildTask task, BuilderBot bot, ServerLevel level) {
 			this.jobId = jobId;
 			this.task = task;
 			this.bot = bot;
+			this.level = level;
 		}
 	}
 
@@ -93,6 +98,9 @@ public final class JobManager {
 		switch (Protocol.type(message)) {
 			case "job.offer" -> onOffer(message);
 			case "job.cancel" -> onCancel(message.get("jobId").getAsString());
+			case "job.pause" -> onPause(message.get("jobId").getAsString());
+			case "job.resume" -> onResume(message.get("jobId").getAsString());
+			case "job.undo" -> onUndo(message.get("jobId").getAsString());
 			default -> LOGGER.debug("ignoring message {}", Protocol.type(message));
 		}
 	}
@@ -163,6 +171,24 @@ public final class JobManager {
 		}
 	}
 
+	private void onPause(String jobId) {
+		if (active != null && active.jobId.equals(jobId)) {
+			pauseActive();
+		}
+	}
+
+	private void onResume(String jobId) {
+		if (active != null && active.jobId.equals(jobId)) {
+			resumeActive();
+		}
+	}
+
+	private void onUndo(String jobId) {
+		if ((active != null && active.jobId.equals(jobId)) || (lastFinished != null && lastFinished.jobId.equals(jobId))) {
+			undoActive();
+		}
+	}
+
 	// --- the server tick -------------------------------------------------
 
 	public void tick() {
@@ -191,17 +217,35 @@ public final class JobManager {
 		if (active == null) return;
 
 		active.bot.tick();
-		active.task.tick();
+		int changed = active.task.tick();
+		blocksPlacedInWindow += changed;
 
 		// Report on a timer rather than per block: at 200 blocks a second a message per block
 		// would be thousands of frames a minute up the socket.
 		if (++ticksSinceReport >= PROGRESS_REPORT_TICKS) {
 			ticksSinceReport = 0;
+			currentRate = blocksPlacedInWindow;
+			blocksPlacedInWindow = 0;
 			if (active.task.placed() != active.lastReported) {
 				active.lastReported = active.task.placed();
-				socket.send(Protocol.jobState(active.jobId, "building", active.task.placed(), active.task.total()));
-				active.bot.setName("⚒ " + percent(active.task.placed(), active.task.total()) + "%");
+				String state = active.task.isPaused() ? "paused" : "building";
+				socket.send(Protocol.jobState(active.jobId, state, active.task.placed(), active.task.total()));
+				active.bot.setName((active.task.isPaused() ? "⏸ " : "⚒ ") + percent(active.task.placed(), active.task.total()) + "%");
 			}
+		}
+
+		// Action Bar HUD progress bar (C14): 10-char [████████░░], percent, block count, rate
+		int placed = active.task.isUndoing() ? Math.max(0, active.task.placedHistory().size()) : active.task.placed();
+		int total = active.task.total();
+		int pct = percent(placed, total);
+		int filled = Math.min(10, Math.max(0, (pct * 10) / 100));
+		String bar = "█".repeat(filled) + "░".repeat(10 - filled);
+		ChatFormatting color = active.task.isPaused() ? ChatFormatting.YELLOW : (active.task.isUndoing() ? ChatFormatting.GOLD : ChatFormatting.GREEN);
+		String prefix = active.task.isPaused() ? "PAUSED " : (active.task.isUndoing() ? "UNDOING " : "");
+		Component hud = Component.literal("[" + bar + "] " + prefix + pct + "% (" + placed + "/" + total + " blocks) " + currentRate + " blk/s")
+				.withStyle(color);
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			player.sendSystemMessage(hud, true);
 		}
 
 		if (active.task.isFinished()) finish();
@@ -211,12 +255,21 @@ public final class JobManager {
 		ActiveBuild finished = active;
 		active = null;
 
+		if (finished.task.isUndoing()) {
+			finished.bot.despawn();
+			socket.send(Protocol.jobState(finished.jobId, "cancelled", 0, finished.task.total()));
+			broadcast(Component.literal("CraftMagic: build undone.").withStyle(ChatFormatting.GOLD));
+			return;
+		}
+
+		finished.bot.celebrate(finished.level);
 		finished.bot.despawn();
 		socket.send(Protocol.jobState(finished.jobId, "done", finished.task.placed(), finished.task.total()));
 
 		BlockPos at = finished.task.origin();
 		broadcast(Component.literal("CraftMagic: done — " + finished.task.placed() + " blocks placed at "
 				+ at.getX() + ", " + at.getY() + ", " + at.getZ()).withStyle(ChatFormatting.GREEN));
+		lastFinished = finished;
 	}
 
 	// --- placement of a world, one region at a time ----------------------
@@ -384,7 +437,7 @@ public final class JobManager {
 		BuilderBot bot = BuilderBot.spawn(level, origin, job.name());
 		BuildTask task = new BuildTask(level, job.schematic(), origin, rotation, bot, ModConfig.get().buildSpeed);
 
-		active = new ActiveBuild(job.jobId(), task, bot);
+		active = new ActiveBuild(job.jobId(), task, bot, level);
 		ticksSinceReport = 0;
 
 		// The anchor goes up with the first progress report and nowhere else. For a lone build
@@ -401,6 +454,41 @@ public final class JobManager {
 		broadcast(Component.literal("CraftMagic: building \"" + job.name() + "\" — " + task.total() + " blocks.")
 				.withStyle(ChatFormatting.GREEN));
 		return null;
+	}
+
+	public boolean pauseActive() {
+		if (active == null || active.task.isFinished() || active.task.isPaused()) return false;
+		active.task.pause();
+		socket.send(Protocol.jobState(active.jobId, "paused", active.task.placed(), active.task.total()));
+		broadcast(Component.literal("CraftMagic: build paused.").withStyle(ChatFormatting.YELLOW));
+		return true;
+	}
+
+	public boolean resumeActive() {
+		if (active == null || active.task.isFinished() || !active.task.isPaused()) return false;
+		active.task.resume();
+		socket.send(Protocol.jobState(active.jobId, "building", active.task.placed(), active.task.total()));
+		broadcast(Component.literal("CraftMagic: build resumed.").withStyle(ChatFormatting.GREEN));
+		return true;
+	}
+
+	public boolean undoActive() {
+		if (active != null) {
+			active.task.startUndo();
+			broadcast(Component.literal("CraftMagic: undoing build in reverse...").withStyle(ChatFormatting.GOLD));
+			return true;
+		}
+		if (lastFinished != null && !lastFinished.task.placedHistory().isEmpty()) {
+			ServerLevel level = lastFinished.level;
+			BlockPos topPos = lastFinished.task.placedHistory().get(lastFinished.task.placedHistory().size() - 1);
+			BuilderBot bot = BuilderBot.spawn(level, topPos, "Undo");
+			active = new ActiveBuild(lastFinished.jobId, lastFinished.task, bot, level);
+			active.task.startUndo();
+			lastFinished = null;
+			broadcast(Component.literal("CraftMagic: undoing build in reverse...").withStyle(ChatFormatting.GOLD));
+			return true;
+		}
+		return false;
 	}
 
 	public boolean cancelActive() {

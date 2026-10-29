@@ -285,6 +285,18 @@ export class AgentHub {
 		this.connections.get(job.agentId)?.send({ t: 'job.cancel', jobId: job.id });
 	}
 
+	pause(job: JobRow): void {
+		this.connections.get(job.agentId)?.send({ t: 'job.pause', jobId: job.id });
+	}
+
+	resume(job: JobRow): void {
+		this.connections.get(job.agentId)?.send({ t: 'job.resume', jobId: job.id });
+	}
+
+	undo(job: JobRow): void {
+		this.connections.get(job.agentId)?.send({ t: 'job.undo', jobId: job.id });
+	}
+
 	revoke(agentId: string): void {
 		const connection = this.connections.get(agentId);
 		if (!connection) return;

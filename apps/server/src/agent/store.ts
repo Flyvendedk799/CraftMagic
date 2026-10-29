@@ -177,7 +177,7 @@ export interface WorldAnchorRecord {
 	footprint: { x: number; z: number } | null;
 }
 
-export const ACTIVE_JOB_STATUSES = ['pending', 'offered', 'previewing', 'building'] as const;
+export const ACTIVE_JOB_STATUSES = ['pending', 'offered', 'previewing', 'building', 'paused'] as const;
 
 function sha256(value: string): Buffer {
 	return createHash('sha256').update(value).digest();

@@ -17,6 +17,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
@@ -52,14 +53,11 @@ public final class WandHandler {
 	/** Ignore repeats within this many ticks, so a held mouse button is one build, not forty. */
 	private static final long PUNCH_COOLDOWN_TICKS = 10;
 
-	/** At most this many particles per footprint edge, whatever the build's size. */
-	private static final int OUTLINE_STEPS = 48;
-
 	private static final Map<UUID, Anchor> ANCHORS = new ConcurrentHashMap<>();
 	private static final Map<UUID, Long> LAST_PUNCH = new ConcurrentHashMap<>();
 
 	/** A marked spot. The dimension is part of it — a nether portal must not aim an overworld build. */
-	private record Anchor(ResourceKey<Level> dimension, BlockPos pos, Rotation rotation) {}
+	private record Anchor(ResourceKey<Level> dimension, BlockPos pos, Rotation rotation, int yOffset) {}
 
 	private WandHandler() {
 	}
@@ -124,28 +122,63 @@ public final class WandHandler {
 		return WandItem.isWand(player.getItemInHand(hand));
 	}
 
-	// --- right-click: mark, or turn ---------------------------------------
+	// --- right-click: mark, turn, or y-offset -----------------------------
 
 	private static void mark(ServerPlayer player, BlockPos pos) {
 		Anchor previous = ANCHORS.get(player.getUUID());
 
-		// Sneaking rotates instead of moving, so the whole gesture set stays on the mouse and
-		// nobody has to go back to chat to type a rotation number.
+		// Sneaking controls rotation or vertical Y-offset based on camera pitch
 		if (player.isShiftKeyDown() && previous != null && previous.dimension().equals(player.level().dimension())) {
-			Anchor turned = new Anchor(previous.dimension(), previous.pos(), quarterTurn(previous.rotation()));
-			ANCHORS.put(player.getUUID(), turned);
-			player.level().playSound(
-					null, turned.pos(), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
-			describe(player, turned, "Turned");
-			return;
+			float pitch = player.getXRot();
+			if (pitch > 35.0f) {
+				int newOffset = Math.min(64, previous.yOffset() + 1);
+				Anchor updated = new Anchor(previous.dimension(), previous.pos(), previous.rotation(), newOffset);
+				ANCHORS.put(player.getUUID(), updated);
+				player.level().playSound(
+						null, updated.pos().above(updated.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
+				describe(player, updated, "Height +1 (offset " + (newOffset >= 0 ? "+" : "") + newOffset + ")");
+				return;
+			} else if (pitch < -35.0f) {
+				int newOffset = Math.max(-64, previous.yOffset() - 1);
+				Anchor updated = new Anchor(previous.dimension(), previous.pos(), previous.rotation(), newOffset);
+				ANCHORS.put(player.getUUID(), updated);
+				player.level().playSound(
+						null, updated.pos().above(updated.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
+				describe(player, updated, "Height -1 (offset " + (newOffset >= 0 ? "+" : "") + newOffset + ")");
+				return;
+			} else {
+				Anchor turned = new Anchor(previous.dimension(), previous.pos(), quarterTurn(previous.rotation()), previous.yOffset());
+				ANCHORS.put(player.getUUID(), turned);
+				player.level().playSound(
+						null, turned.pos().above(turned.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
+				describe(player, turned, "Turned");
+				return;
+			}
 		}
 
+		int initialOffset = previous != null ? previous.yOffset() : 0;
 		Anchor anchor = new Anchor(
-				player.level().dimension(), pos, previous == null ? Rotation.NONE : previous.rotation());
+				player.level().dimension(), pos, previous == null ? Rotation.NONE : previous.rotation(), initialOffset);
 		ANCHORS.put(player.getUUID(), anchor);
 		player.level().playSound(
-				null, anchor.pos(), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.0f);
+				null, anchor.pos().above(anchor.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.0f);
 		describe(player, anchor, "Marked");
+	}
+
+	public static boolean setOffset(ServerPlayer player, int dy) {
+		int clamped = Math.max(-64, Math.min(64, dy));
+		Anchor previous = ANCHORS.get(player.getUUID());
+		Anchor updated;
+		if (previous == null || !previous.dimension().equals(player.level().dimension())) {
+			updated = new Anchor(player.level().dimension(), player.blockPosition(), Rotation.NONE, clamped);
+		} else {
+			updated = new Anchor(previous.dimension(), previous.pos(), previous.rotation(), clamped);
+		}
+		ANCHORS.put(player.getUUID(), updated);
+		player.level().playSound(
+				null, updated.pos().above(updated.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
+		describe(player, updated, "Height offset " + (clamped >= 0 ? "+" : "") + clamped);
+		return true;
 	}
 
 	private static Rotation quarterTurn(Rotation rotation) {
@@ -162,8 +195,9 @@ public final class WandHandler {
 		JobManager jobs = CraftMagicMod.jobs();
 		Schematic pending = jobs == null ? null : jobs.pendingSchematic();
 
-		BlockPos pos = anchor.pos();
-		String at = pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
+		BlockPos pos = anchor.pos().above(anchor.yOffset());
+		String at = pos.getX() + ", " + pos.getY() + ", " + pos.getZ()
+				+ (anchor.yOffset() != 0 ? " (Y offset " + (anchor.yOffset() > 0 ? "+" : "") + anchor.yOffset() + ")" : "");
 
 		if (pending == null) {
 			player.sendSystemMessage(
@@ -193,36 +227,124 @@ public final class WandHandler {
 	}
 
 	/**
-	 * Trace the footprint in particles.
-	 *
-	 * <p>Coordinates in chat are precise and unreadable; a rectangle on the ground is neither
-	 * but answers the only question being asked — will it eat my house? Stepped rather than
-	 * per-block, because a 200-block-wide build would otherwise flood every nearby client with
-	 * particle packets.
+	 * Full 3D cuboid particle wireframe in 12 edges:
+	 * 4 ground edges, 4 top rim edges, and 4 vertical corner pillars (NW/NE/SW/SE).
+	 * Dynamic step calculation ensures total particles stay strictly under 180.
 	 */
 	private static void outline(ServerPlayer player, Anchor anchor, Schematic schematic) {
 		ServerLevel level = player.level();
 		Rotation rotation = anchor.rotation();
-		BlockPos origin = Footprint.origin(schematic.width(), schematic.length(), rotation, anchor.pos());
+		BlockPos origin = Footprint.origin(schematic.width(), schematic.length(), rotation, anchor.pos().above(anchor.yOffset()));
 
 		int width = Footprint.width(schematic.width(), schematic.length(), rotation);
 		int length = Footprint.length(schematic.width(), schematic.length(), rotation);
+		int height = schematic.height();
 
-		int stepX = Math.max(1, width / OUTLINE_STEPS);
-		int stepZ = Math.max(1, length / OUTLINE_STEPS);
+		int stepX = Math.max(1, width / 12);
+		int stepZ = Math.max(1, length / 12);
+		int stepY = Math.max(1, height / 12);
 
+		int x0 = origin.getX();
+		int y0 = origin.getY();
+		int z0 = origin.getZ();
+		int x1 = x0 + width;
+		int y1 = y0 + height;
+		int z1 = z0 + length;
+
+		// 4 ground edges (y0) & 4 top rim edges (y1) along X
 		for (int x = 0; x <= width; x += stepX) {
-			spark(level, origin.getX() + x, origin.getY(), origin.getZ());
-			spark(level, origin.getX() + x, origin.getY(), origin.getZ() + length);
+			spark(level, x0 + x, y0, z0);
+			spark(level, x0 + x, y0, z1);
+			spark(level, x0 + x, y1, z0);
+			spark(level, x0 + x, y1, z1);
 		}
+		if (width % stepX != 0) {
+			spark(level, x1, y0, z0);
+			spark(level, x1, y0, z1);
+			spark(level, x1, y1, z0);
+			spark(level, x1, y1, z1);
+		}
+
+		// 4 ground edges (y0) & 4 top rim edges (y1) along Z
 		for (int z = 0; z <= length; z += stepZ) {
-			spark(level, origin.getX(), origin.getY(), origin.getZ() + z);
-			spark(level, origin.getX() + width, origin.getY(), origin.getZ() + z);
+			spark(level, x0, y0, z0 + z);
+			spark(level, x1, y0, z0 + z);
+			spark(level, x0, y1, z0 + z);
+			spark(level, x1, y1, z0 + z);
+		}
+		if (length % stepZ != 0) {
+			spark(level, x0, y0, z1);
+			spark(level, x1, y0, z1);
+			spark(level, x0, y1, z1);
+			spark(level, x1, y1, z1);
+		}
+
+		// 4 vertical corner pillars: NW (x0, z0), NE (x1, z0), SW (x0, z1), SE (x1, z1)
+		for (int y = 0; y <= height; y += stepY) {
+			spark(level, x0, y0 + y, z0);
+			spark(level, x1, y0 + y, z0);
+			spark(level, x0, y0 + y, z1);
+			spark(level, x1, y0 + y, z1);
+		}
+		if (height % stepY != 0) {
+			spark(level, x0, y1, z0);
+			spark(level, x1, y1, z0);
+			spark(level, x0, y1, z1);
+			spark(level, x1, y1, z1);
 		}
 	}
 
 	private static void spark(ServerLevel level, double x, double y, double z) {
 		level.sendParticles(ParticleTypes.END_ROD, x, y + 0.15, z, 1, 0.0, 0.0, 0.0, 0.0);
+	}
+
+	/**
+	 * Per-tick handler for players holding a wand:
+	 * sends real-time Action Bar HUD and refreshes the 3D particle wireframe every 20 ticks.
+	 */
+	public static void tick(MinecraftServer server) {
+		long tickCount = server.getTickCount();
+		JobManager jobs = CraftMagicMod.jobs();
+		Schematic pending = jobs == null ? null : jobs.pendingSchematic();
+
+		for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+			boolean holding = holdingWand(player, InteractionHand.MAIN_HAND) || holdingWand(player, InteractionHand.OFF_HAND);
+			if (!holding) continue;
+
+			Anchor anchor = ANCHORS.get(player.getUUID());
+
+			// Real-time Action Bar HUD
+			if (pending == null) {
+				player.sendSystemMessage(
+						Component.literal("CraftMagic Wand: No build waiting (send one from website)")
+								.withStyle(ChatFormatting.GRAY),
+						true);
+			} else {
+				Rotation rotation = anchor != null ? anchor.rotation() : Rotation.NONE;
+				int w = Footprint.width(pending.width(), pending.length(), rotation);
+				int l = Footprint.length(pending.width(), pending.length(), rotation);
+				int h = pending.height();
+				String facing = facing(rotation);
+				int yOff = anchor != null ? anchor.yOffset() : 0;
+				String yStr = (yOff >= 0 ? "+" : "") + yOff;
+
+				Component hud = Component.literal("\"" + jobs.pendingName() + "\" ")
+						.withStyle(ChatFormatting.LIGHT_PURPLE)
+						.append(Component.literal(w + "×" + h + "×" + l + " ").withStyle(ChatFormatting.AQUA))
+						.append(Component.literal("| Facing: " + facing + " ").withStyle(ChatFormatting.YELLOW))
+						.append(Component.literal("| Y: " + yStr + " ").withStyle(ChatFormatting.GREEN))
+						.append(Component.literal("| Sneak+R-Click: Pitch±Y/Turn | Punch: Build").withStyle(ChatFormatting.GRAY));
+
+				player.sendSystemMessage(hud, true);
+			}
+
+			// Wireframe periodic refresh every 20 ticks
+			if (tickCount % 20 == 0 && anchor != null && pending != null) {
+				if (anchor.dimension().equals(player.level().dimension())) {
+					outline(player, anchor, pending);
+				}
+			}
+		}
 	}
 
 	// --- punch: build it --------------------------------------------------
@@ -271,7 +393,7 @@ public final class WandHandler {
 		}
 
 		BlockPos origin =
-				Footprint.origin(schematic.width(), schematic.length(), anchor.rotation(), anchor.pos());
+				Footprint.origin(schematic.width(), schematic.length(), anchor.rotation(), anchor.pos().above(anchor.yOffset()));
 		String problem = jobs.startBuildAt(player.level(), origin, anchor.rotation());
 		if (problem != null) {
 			refuse(player, problem);
@@ -284,7 +406,7 @@ public final class WandHandler {
 		// Block sounds, both of them, and deliberately: the SoundEvents constants for ambient,
 		// music and note-block entries are Holder-typed and take a different playSound overload.
 		player.level().playSound(
-				null, anchor.pos(), SoundEvents.BEACON_ACTIVATE, SoundSource.PLAYERS, 0.7f, 1.4f);
+				null, anchor.pos().above(anchor.yOffset()), SoundEvents.BEACON_ACTIVATE, SoundSource.PLAYERS, 0.7f, 1.4f);
 	}
 
 	private static void refuse(ServerPlayer player, String reason) {

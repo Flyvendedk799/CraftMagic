@@ -1,9 +1,17 @@
 package dev.craftmagic.agent.build;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -35,19 +43,59 @@ public final class BuilderBot {
 		Vec3 start = new Vec3(near.getX() + 0.5, near.getY() + HOVER, near.getZ() + 0.5);
 
 		ArmorStand stand = new ArmorStand(level, start.x, start.y, start.z);
-		stand.setInvisible(true);
+		stand.setSmall(true);
+		stand.setInvisible(false);
+		stand.setShowArms(true);
+		stand.setNoBasePlate(true);
 		stand.setNoGravity(true);
 		stand.setInvulnerable(true);
-		// setMarker is private in 26.2, so the bot keeps a hitbox. Invulnerable plus silent
-		// covers the cases that matter — it cannot be destroyed and does not clutter the
-		// soundscape while the build runs.
-		stand.setNoBasePlate(true);
 		stand.setSilent(true);
+
+		ItemStack pickaxe = new ItemStack(Items.GOLDEN_PICKAXE);
+		pickaxe.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true);
+		stand.setItemSlot(EquipmentSlot.MAINHAND, pickaxe);
+
+		ItemStack helmet = new ItemStack(Items.GOLDEN_HELMET);
+		stand.setItemSlot(EquipmentSlot.HEAD, helmet);
+
 		stand.setCustomName(Component.literal("⚒ " + buildName));
 		stand.setCustomNameVisible(true);
 		level.addFreshEntity(stand);
 
 		return new BuilderBot(stand, start);
+	}
+
+	/** Trigger arm swing animation during block placement ticks. */
+	public void swing() {
+		if (!entity.isRemoved()) {
+			entity.swing(InteractionHand.MAIN_HAND);
+		}
+	}
+
+	/**
+	 * Completion fanfare: plays celebratory sounds, bursts firework and totem particles,
+	 * spins and salutes before despawning.
+	 */
+	public void celebrate(ServerLevel level) {
+		if (entity.isRemoved()) return;
+
+		BlockPos pos = entity.blockPosition();
+		double x = entity.getX();
+		double y = entity.getY();
+		double z = entity.getZ();
+
+		// Celebratory audio fanfare
+		level.playSound(null, pos, SoundEvents.UI_TOAST_CHALLENGE_COMPLETE, SoundSource.PLAYERS, 1.0f, 1.0f);
+		level.playSound(null, pos, SoundEvents.PLAYER_LEVELUP, SoundSource.PLAYERS, 0.8f, 1.2f);
+
+		// Fireworks and totem particles burst
+		level.sendParticles(ParticleTypes.FIREWORK, x, y + 0.8, z, 30, 0.4, 0.4, 0.4, 0.1);
+		level.sendParticles(ParticleTypes.TOTEM_OF_UNDYING, x, y + 0.5, z, 35, 0.3, 0.3, 0.3, 0.1);
+
+		// Bot spin and salute
+		entity.setYRot(entity.getYRot() + 180f);
+		entity.setYHeadRot(entity.getYHeadRot() + 180f);
+		entity.swing(InteractionHand.MAIN_HAND);
 	}
 
 	/** Point the bot at the block it is about to place. */

@@ -2,9 +2,13 @@ package dev.craftmagic.agent.build;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.particles.BlockParticleOption;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockState;
@@ -41,8 +45,12 @@ public final class BuildTask {
 	private final int blocksPerTick;
 
 	private final List<Placement> placements = new ArrayList<>();
+	private final List<BlockPos> placedHistory = new ArrayList<>();
 	private int cursor;
 	private boolean cancelled;
+	private boolean paused;
+	private boolean undoing;
+	private int undoCursor;
 
 	private record Placement(BlockPos pos, BlockState state) {}
 
@@ -110,16 +118,84 @@ public final class BuildTask {
 	}
 
 	public boolean isFinished() {
-		return cancelled || cursor >= placements.size();
+		if (cancelled) return true;
+		if (undoing) return undoCursor < 0;
+		return cursor >= placements.size();
 	}
 
 	public void cancel() {
 		cancelled = true;
 	}
 
-	/** Place this tick's budget. Returns how many blocks went down. */
+	public void pause() {
+		paused = true;
+	}
+
+	public void resume() {
+		paused = false;
+	}
+
+	public boolean isPaused() {
+		return paused;
+	}
+
+	public void startUndo() {
+		undoing = true;
+		paused = false;
+		undoCursor = placedHistory.size() - 1;
+	}
+
+	public boolean isUndoing() {
+		return undoing;
+	}
+
+	public List<BlockPos> placedHistory() {
+		return placedHistory;
+	}
+
+	/** Place this tick's budget, or dismantle in reverse if undoing. Returns how many blocks were changed. */
 	public int tick() {
-		if (isFinished()) return 0;
+		if (isFinished() || paused) return 0;
+
+		if (undoing) {
+			int undoneThisTick = 0;
+			BlockPos last = null;
+			while (undoneThisTick < blocksPerTick && undoCursor >= 0) {
+				BlockPos pos = placedHistory.get(undoCursor--);
+				if (level.isInWorldBounds(pos)) {
+					BlockState current = level.getBlockState(pos);
+					if (!current.isAir()) {
+						level.sendParticles(
+								new BlockParticleOption(ParticleTypes.BLOCK, current),
+								pos.getX() + 0.5,
+								pos.getY() + 0.5,
+								pos.getZ() + 0.5,
+								4,
+								0.2,
+								0.2,
+								0.2,
+								0.05);
+					}
+					level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
+					last = pos;
+					undoneThisTick++;
+				}
+			}
+
+			if (last != null) {
+				bot.moveTo(last);
+				bot.swing();
+				level.playSound(
+						null,
+						last,
+						SoundEvents.ITEM_BREAK,
+						SoundSource.BLOCKS,
+						0.5f,
+						1.0f);
+			}
+
+			return undoneThisTick;
+		}
 
 		int placedThisTick = 0;
 		BlockPos last = null;
@@ -132,13 +208,25 @@ public final class BuildTask {
 			if (!level.isInWorldBounds(placement.pos())) continue;
 
 			level.setBlock(placement.pos(), placement.state(), Block.UPDATE_CLIENTS);
+			placedHistory.add(placement.pos());
 			last = placement.pos();
 			placedThisTick++;
 		}
 
 		if (last != null) {
 			bot.moveTo(last);
+			bot.swing();
 			playPlacementSound(last);
+			level.sendParticles(
+					new BlockParticleOption(ParticleTypes.BLOCK, level.getBlockState(last)),
+					last.getX() + 0.5,
+					last.getY() + 0.5,
+					last.getZ() + 0.5,
+					5,
+					0.2,
+					0.2,
+					0.2,
+					0.05);
 		}
 
 		return placedThisTick;

@@ -59,7 +59,7 @@ public final class WandItem {
 				DataComponents.LORE,
 				new ItemLore(List.of(
 						Component.literal("Right-click — mark the spot").withStyle(ChatFormatting.GRAY),
-						Component.literal("Sneak + right-click — turn it 90°").withStyle(ChatFormatting.GRAY),
+						Component.literal("Sneak + right-click — pitch up/down: Y±1 | level: turn 90°").withStyle(ChatFormatting.GRAY),
 						Component.literal("Punch the air — build it").withStyle(ChatFormatting.GRAY))));
 
 		stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true);

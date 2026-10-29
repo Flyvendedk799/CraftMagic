@@ -12,7 +12,7 @@
 
 export const AGENT_PROTOCOL_VERSION = 1;
 
-export type JobState = 'previewing' | 'building' | 'done' | 'cancelled' | 'failed';
+export type JobState = 'previewing' | 'building' | 'paused' | 'done' | 'cancelled' | 'failed';
 
 export type AgentEnvType = 'integrated' | 'dedicated';
 
@@ -136,6 +136,9 @@ export type ServerToAgent =
       region?: JobRegion;
     }
   | { t: 'job.cancel'; jobId: string }
+  | { t: 'job.pause'; jobId: string }
+  | { t: 'job.resume'; jobId: string }
+  | { t: 'job.undo'; jobId: string }
   | { t: 'session.revoked' }
   | { t: 'ping'; id: number };
 

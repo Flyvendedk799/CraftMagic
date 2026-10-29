@@ -48,7 +48,10 @@ export type SendState =
   | { kind: 'saving' }
   | { kind: 'queued'; jobId: string }
   | { kind: 'progress'; jobId: string; status: string; placed: number; total: number }
-  | { kind: 'done'; placed: number }
+  | { kind: 'paused'; jobId: string; placed: number; total: number }
+  | { kind: 'undoing'; jobId: string; placed: number; total: number }
+  | { kind: 'done'; jobId?: string; placed: number }
+  | { kind: 'cancelled'; jobId?: string; placed?: number }
   | {
       kind: 'error';
       message: string;
@@ -59,6 +62,8 @@ export type SendState =
        * to, instead of telling someone to wait for a build they may not even have sent.
        */
       conflictJobId?: string;
+      jobId?: string;
+      cancelled?: boolean;
     };
 
 export interface UseAgents {
@@ -109,6 +114,21 @@ export interface UseAgents {
    * cancelling is a stop, not an undo, and nothing here can pretend otherwise.
    */
   cancelSend: () => Promise<void>;
+  /**
+   * Pause an active build job in Minecraft.
+   * Calls POST /api/agent/jobs/:id/pause.
+   */
+  pauseSend: () => Promise<void>;
+  /**
+   * Resume a paused build job in Minecraft.
+   * Calls POST /api/agent/jobs/:id/resume.
+   */
+  resumeSend: () => Promise<void>;
+  /**
+   * Dismantle placed blocks in Minecraft for a completed or cancelled build job.
+   * Calls POST /api/agent/jobs/:id/undo.
+   */
+  undoJob: (jobId: string) => Promise<void>;
 }
 
 /** Poll while a pairing code is on screen, so the list flips to "online" without a refresh. */
@@ -122,6 +142,7 @@ export function useAgents(): UseAgents {
   const [pairCode, setPairCode] = useState<PairCode | null>(null);
   const [send, setSend] = useState<SendState>({ kind: 'idle' });
   const sourceRef = useRef<EventSource | null>(null);
+  const lastJobIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -202,15 +223,147 @@ export function useAgents(): UseAgents {
    */
   const cancelSend = useCallback(async () => {
     const jobId =
-      send.kind === 'queued' || send.kind === 'progress' ? send.jobId : null;
+      send.kind === 'queued' ||
+      send.kind === 'progress' ||
+      send.kind === 'paused' ||
+      send.kind === 'undoing'
+        ? send.jobId
+        : lastJobIdRef.current;
     sourceRef.current?.close();
     sourceRef.current = null;
-    setSend({ kind: 'idle' });
+    const placed =
+      'placed' in send && typeof send.placed === 'number' ? send.placed : 0;
+    if (jobId) {
+      setSend({ kind: 'cancelled', jobId, placed });
+      try {
+        await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
+      } catch {
+        // Already stopped watching; the mod finds out over the socket either way.
+      }
+    } else {
+      setSend({ kind: 'idle' });
+    }
+  }, [send]);
+
+  const pauseSend = useCallback(async () => {
+    const jobId =
+      send.kind === 'progress' ||
+      send.kind === 'paused' ||
+      send.kind === 'queued'
+        ? send.jobId
+        : lastJobIdRef.current;
     if (!jobId) return;
     try {
-      await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
+      const response = await fetch(`/api/agent/jobs/${jobId}/pause`, { method: 'POST' });
+      if (response.ok) {
+        setSend((prev) => {
+          if (prev.kind === 'progress') {
+            return { kind: 'paused', jobId, placed: prev.placed, total: prev.total };
+          }
+          return prev;
+        });
+      }
     } catch {
-      // Already stopped watching; the mod finds out over the socket either way.
+      // mod will hear over the socket
+    }
+  }, [send]);
+
+  const resumeSend = useCallback(async () => {
+    const jobId =
+      send.kind === 'progress' ||
+      send.kind === 'paused' ||
+      send.kind === 'queued'
+        ? send.jobId
+        : lastJobIdRef.current;
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/agent/jobs/${jobId}/resume`, { method: 'POST' });
+      if (response.ok) {
+        setSend((prev) => {
+          if (prev.kind === 'paused') {
+            return {
+              kind: 'progress',
+              jobId,
+              status: 'building',
+              placed: prev.placed,
+              total: prev.total,
+            };
+          }
+          return prev;
+        });
+      }
+    } catch {
+      // mod will hear over the socket
+    }
+  }, [send]);
+
+  const undoJob = useCallback(async (jobIdToUndo: string) => {
+    const targetJobId =
+      jobIdToUndo ||
+      (send.kind === 'done' ||
+      send.kind === 'cancelled' ||
+      send.kind === 'progress' ||
+      send.kind === 'paused' ||
+      send.kind === 'undoing'
+        ? send.jobId
+        : lastJobIdRef.current);
+    if (!targetJobId) return;
+    sourceRef.current?.close();
+    setSend({ kind: 'undoing', jobId: targetJobId, placed: 0, total: 0 });
+
+    try {
+      const response = await fetch(`/api/agent/jobs/${targetJobId}/undo`, { method: 'POST' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setSend({
+          kind: 'error',
+          message: body.message ?? `could not undo the build (HTTP ${response.status})`,
+          jobId: targetJobId,
+        });
+        return;
+      }
+
+      // Reconnect SSE to stream teardown dismantling progress
+      if (typeof EventSource !== 'undefined') {
+        const source = new EventSource(`/api/agent/jobs/${targetJobId}/events`);
+        sourceRef.current = source;
+
+        source.onmessage = (event) => {
+          const progress: JobProgress = JSON.parse(event.data);
+          if (progress.status === 'done') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'done', jobId: targetJobId, placed: progress.placed ?? 0 });
+            return;
+          }
+          if (progress.status === 'failed' || progress.status === 'cancelled') {
+            source.close();
+            sourceRef.current = null;
+            setSend({
+              kind: 'error',
+              message: progress.error ?? `the undo was ${progress.status}`,
+              jobId: targetJobId,
+              cancelled: progress.status === 'cancelled',
+            });
+            return;
+          }
+          setSend({
+            kind: 'undoing',
+            jobId: targetJobId,
+            placed: progress.placed ?? 0,
+            total: progress.total ?? 0,
+          });
+        };
+
+        source.onerror = () => {
+          if (sourceRef.current === source) {
+            source.close();
+            sourceRef.current = null;
+          }
+        };
+      }
+    } catch (err) {
+      setSend({ kind: 'error', message: (err as Error).message, jobId: targetJobId });
     }
   }, [send]);
 
@@ -285,45 +438,72 @@ export function useAgents(): UseAgents {
       }
 
       const jobId: string = body.id;
+      lastJobIdRef.current = jobId;
       setSend({ kind: 'queued', jobId });
 
-      const source = new EventSource(`/api/agent/jobs/${jobId}/events`);
-      sourceRef.current = source;
+      if (typeof EventSource !== 'undefined') {
+        const source = new EventSource(`/api/agent/jobs/${jobId}/events`);
+        sourceRef.current = source;
 
-      source.onmessage = (event) => {
-        const progress: JobProgress = JSON.parse(event.data);
+        source.onmessage = (event) => {
+          const progress: JobProgress = JSON.parse(event.data);
 
-        if (progress.status === 'done') {
-          source.close();
-          sourceRef.current = null;
-          setSend({ kind: 'done', placed: progress.placed ?? 0 });
-          return;
-        }
-        if (progress.status === 'failed' || progress.status === 'cancelled') {
-          source.close();
-          sourceRef.current = null;
-          setSend({ kind: 'error', message: progress.error ?? `the build was ${progress.status}` });
-          return;
-        }
+          if (progress.status === 'done') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'done', jobId, placed: progress.placed ?? 0 });
+            return;
+          }
+          if (progress.status === 'cancelled') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'cancelled', jobId, placed: progress.placed ?? 0 });
+            return;
+          }
+          if (progress.status === 'failed') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'error', message: progress.error ?? 'the build failed', jobId });
+            return;
+          }
+          if (progress.status === 'paused') {
+            setSend({
+              kind: 'paused',
+              jobId,
+              placed: progress.placed ?? 0,
+              total: progress.total ?? 0,
+            });
+            return;
+          }
+          if (progress.status === 'undoing' || progress.status === 'dismantling') {
+            setSend({
+              kind: 'undoing',
+              jobId,
+              placed: progress.placed ?? 0,
+              total: progress.total ?? 0,
+            });
+            return;
+          }
 
-        setSend({
-          kind: 'progress',
-          jobId,
-          status: progress.status,
-          placed: progress.placed ?? 0,
-          total: progress.total ?? 0,
-        });
-      };
+          setSend({
+            kind: 'progress',
+            jobId,
+            status: progress.status,
+            placed: progress.placed ?? 0,
+            total: progress.total ?? 0,
+          });
+        };
 
-      source.onerror = () => {
-        // The server ends the stream after a terminal event, which surfaces as an error.
-        // Only treat it as a failure if this stream is still the live one.
-        if (sourceRef.current === source) {
-          source.close();
-          sourceRef.current = null;
-          setSend({ kind: 'error', message: 'lost the connection while building' });
-        }
-      };
+        source.onerror = () => {
+          // The server ends the stream after a terminal event, which surfaces as an error.
+          // Only treat it as a failure if this stream is still the live one.
+          if (sourceRef.current === source) {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'error', message: 'lost the connection while building', jobId });
+          }
+        };
+      }
     } catch (err) {
       setSend({ kind: 'error', message: (err as Error).message });
     }
@@ -338,6 +518,9 @@ export function useAgents(): UseAgents {
     send,
     cancelSend,
     cancelJob,
+    pauseSend,
+    resumeSend,
+    undoJob,
     refresh,
     createPairCode,
     clearPairCode,

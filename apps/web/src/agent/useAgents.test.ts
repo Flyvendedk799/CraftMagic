@@ -152,6 +152,38 @@ describe('stop', () => {
     expect(stream.closed).toBe(true);
   });
 
+  it('does not let a slow Stop take over a send started after the stream said cancelled', async () => {
+    const { hook, stream } = await building();
+    let answerCancel: (value: unknown) => void = () => undefined;
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+      String(url).endsWith('/cancel')
+        ? new Promise((resolve) => {
+            answerCancel = resolve;
+          })
+        : base(url, init),
+    );
+
+    let stop: Promise<void> = Promise.resolve();
+    act(() => {
+      stop = hook.result.current.cancelSend();
+    });
+    // The route emits `cancelled` before its HTTP answer gets back, freeing the panel.
+    act(() => stream.emit({ jobId: 'job-1', status: 'cancelled', placed: 25, total: 100 }));
+    await act(async () => {
+      await hook.result.current.sendToGame('agent-2', { name: 'Tower', grid, program: null });
+    });
+    const newStream = MockEventSource.latest();
+    act(() => newStream.emit({ jobId: 'job-1', status: 'building', placed: 5, total: 50 }));
+
+    await act(async () => {
+      answerCancel({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      await stop;
+    });
+    expect(newStream.closed).toBe(false);
+    expect(hook.result.current.send).toMatchObject({ kind: 'progress', placed: 5, total: 50 });
+  });
+
   it('never says Stopped when the cancel is refused, and keeps following the job', async () => {
     const { hook, stream } = await building();
     controlReplies.cancel = { status: 409, body: { error: 'invalid_state', message: 'cannot cancel a job that is done' } };

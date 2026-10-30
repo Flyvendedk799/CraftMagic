@@ -266,6 +266,10 @@ export function useAgents(): UseAgents {
       return;
     }
     setControlError(null);
+    // The stream can report `cancelled` before this request returns, which frees the panel for
+    // a new send. If one has started by then, this Stop's answer is about the old job and must
+    // not close the new one's stream or paint "Stopped" over its progress.
+    const generation = generationRef.current;
 
     // An undo that has not been accepted yet: the job is still `done`, so a cancel now would
     // be refused while the undo went ahead. Wait for its answer, then stop it.
@@ -282,6 +286,7 @@ export function useAgents(): UseAgents {
     } catch (err) {
       refusal = (err as Error).message;
     }
+    if (generation !== generationRef.current) return;
     if (refusal) {
       setControlError(refusal);
       return;

@@ -42,6 +42,31 @@ describe('CopyCommand component', () => {
     expect(btn.textContent).toBe('Copy');
     expect(btn.classList.contains('modpage__copy-btn--copied')).toBe(false);
   });
+
+  it('restarts the two seconds on a second copy instead of cutting it short', async () => {
+    render(<CopyCommand command="/wand" />);
+    const btn = screen.getByRole('button', { name: /copy command \/wand/i });
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    // The first copy's timer would have fired here.
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(btn.textContent).toBe('Copied');
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(btn.textContent).toBe('Copy');
+  });
 });
 
 describe('ModPage component', () => {
@@ -190,6 +215,88 @@ describe('ModPage component', () => {
     expect(lanTab.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText(/Host owns the pairing/i)).toBeTruthy();
     expect(screen.getByText(/Guests need OP permissions from the host/i)).toBeTruthy();
+  });
+
+  it('moves between guide tabs with the arrow keys, Home and End', () => {
+    mockAgentsState();
+    render(
+      <MemoryRouter>
+        <ModPage />
+      </MemoryRouter>,
+    );
+
+    const tablist = screen.getByRole('tablist');
+    const tab = (name: RegExp) => screen.getByRole('tab', { name });
+
+    // Only the selected tab is in the Tab order.
+    expect(tab(/Singleplayer/).getAttribute('tabindex')).toBe('0');
+    expect(tab(/Dedicated/).getAttribute('tabindex')).toBe('-1');
+
+    fireEvent.keyDown(tablist, { key: 'ArrowRight' });
+    expect(tab(/Dedicated/).getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab(/Dedicated/));
+
+    fireEvent.keyDown(tablist, { key: 'End' });
+    expect(tab(/LAN/).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.keyDown(tablist, { key: 'ArrowRight' }); // wraps
+    expect(tab(/Singleplayer/).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.keyDown(tablist, { key: 'ArrowLeft' }); // wraps back
+    expect(tab(/LAN/).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.keyDown(tablist, { key: 'Home' });
+    expect(tab(/Singleplayer/).getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tab(/Singleplayer/));
+  });
+
+  it('keeps asking whether the world is online while the page is open', () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi.fn().mockResolvedValue(undefined);
+      mockAgentsState({ refresh });
+      const view = render(
+        <MemoryRouter>
+          <ModPage />
+        </MemoryRouter>,
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+      expect(refresh).toHaveBeenCalledTimes(1);
+      act(() => {
+        vi.advanceTimersByTime(10_000);
+      });
+      expect(refresh).toHaveBeenCalledTimes(2);
+
+      view.unmount();
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not poll for a signed-out visitor, who has no worlds to watch', () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi.fn().mockResolvedValue(undefined);
+      mockAgentsState({ refresh, needsAccount: true });
+      render(
+        <MemoryRouter>
+          <ModPage />
+        </MemoryRouter>,
+      );
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+      expect(refresh).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders interactive click-to-copy for commands', () => {

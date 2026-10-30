@@ -11,7 +11,7 @@
  * than one that says nothing, and hardcoding is how that happens.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { AppNav } from '../shell/AppNav.js';
 import { useAgents } from '../agent/useAgents.js';
@@ -30,18 +30,36 @@ interface ModManifest {
 
 type SetupTab = 'singleplayer' | 'dedicated' | 'lan';
 
+const SETUP_TABS: SetupTab[] = ['singleplayer', 'dedicated', 'lan'];
+
+/**
+ * How often the connection card asks whether the world is online.
+ *
+ * This page is where someone reads "launch Minecraft and load your world" and then does it, so
+ * the card has to notice. Ten seconds is slow enough to be one cheap request now and then, and
+ * it stops while the tab is hidden.
+ */
+const STATUS_POLL_MS = 10_000;
+
 function formatBytes(bytes: number): string {
   return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
 
 export function CopyCommand({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);
+  // One timer per button, restarted on every copy: a second copy inside the two seconds would
+  // otherwise have its "Copied" cleared early by the first copy's timer.
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
 
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(command);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard access can be denied; user can still select/type.
     }
@@ -64,7 +82,16 @@ export function CopyCommand({ command }: { command: string }) {
 }
 
 function ConnectionStatusCard() {
-  const { agents, available, needsAccount, loading } = useAgents();
+  const { agents, available, needsAccount, loading, refresh } = useAgents();
+
+  useEffect(() => {
+    if (!available || needsAccount) return;
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void refresh();
+    }, STATUS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [available, needsAccount, refresh]);
 
   const onlineAgent = agents.find((a) => a.online);
   const offlineAgent = agents.find((a) => !a.online);
@@ -168,6 +195,28 @@ export function ModPage() {
   const [manifest, setManifest] = useState<ModManifest | null>(null);
   const [failed, setFailed] = useState(false);
   const [activeTab, setActiveTab] = useState<SetupTab>('singleplayer');
+  const tabRefs = useRef<Partial<Record<SetupTab, HTMLButtonElement | null>>>({});
+
+  // The usual tablist keys: arrows move between tabs (wrapping), Home and End jump to the ends,
+  // and focus follows the selection. Only the selected tab is in the Tab order (`tabIndex`), so
+  // Tab leaves the tablist instead of walking every tab.
+  const onTabKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    const index = SETUP_TABS.indexOf(activeTab);
+    const next =
+      event.key === 'ArrowRight'
+        ? SETUP_TABS[(index + 1) % SETUP_TABS.length]
+        : event.key === 'ArrowLeft'
+          ? SETUP_TABS[(index - 1 + SETUP_TABS.length) % SETUP_TABS.length]
+          : event.key === 'Home'
+            ? SETUP_TABS[0]
+            : event.key === 'End'
+              ? SETUP_TABS[SETUP_TABS.length - 1]
+              : undefined;
+    if (!next) return;
+    event.preventDefault();
+    setActiveTab(next);
+    tabRefs.current[next]?.focus();
+  }, [activeTab]);
 
   useEffect(() => {
     let cancelled = false;
@@ -260,11 +309,20 @@ export function ModPage() {
         <section className="panel">
           <h2>Setup Guides</h2>
 
-          <div className="modpage__tabs" role="tablist" aria-label="Setup guide environments">
+          <div
+            className="modpage__tabs"
+            role="tablist"
+            aria-label="Setup guide environments"
+            onKeyDown={onTabKeyDown}
+          >
             <button
               type="button"
               role="tab"
               id="tab-singleplayer"
+              ref={(el) => {
+                tabRefs.current.singleplayer = el;
+              }}
+              tabIndex={activeTab === 'singleplayer' ? 0 : -1}
               aria-selected={activeTab === 'singleplayer'}
               aria-controls="panel-singleplayer"
               className={`modpage__tab ${activeTab === 'singleplayer' ? 'modpage__tab--active' : ''}`}
@@ -276,6 +334,10 @@ export function ModPage() {
               type="button"
               role="tab"
               id="tab-dedicated"
+              ref={(el) => {
+                tabRefs.current.dedicated = el;
+              }}
+              tabIndex={activeTab === 'dedicated' ? 0 : -1}
               aria-selected={activeTab === 'dedicated'}
               aria-controls="panel-dedicated"
               className={`modpage__tab ${activeTab === 'dedicated' ? 'modpage__tab--active' : ''}`}
@@ -287,6 +349,10 @@ export function ModPage() {
               type="button"
               role="tab"
               id="tab-lan"
+              ref={(el) => {
+                tabRefs.current.lan = el;
+              }}
+              tabIndex={activeTab === 'lan' ? 0 : -1}
               aria-selected={activeTab === 'lan'}
               aria-controls="panel-lan"
               className={`modpage__tab ${activeTab === 'lan' ? 'modpage__tab--active' : ''}`}
@@ -380,8 +446,9 @@ export function ModPage() {
               <ol className="modpage__steps">
                 <li>
                   <strong>Host owns the pairing.</strong> The player hosting the world via “Open to
-                  LAN” links the session to their CraftMagic account. Only the host can run the
-                  initial pairing command <CopyCommand command="/craftmagic pair <code>" />.
+                  LAN” links the session to their CraftMagic account with{' '}
+                  <CopyCommand command="/craftmagic pair <code>" />. A guest can pair only if the
+                  host has made them an operator.
                 </li>
                 <li>
                   <strong>Guests need OP permissions from the host</strong> for pairing, settings,

@@ -6,6 +6,7 @@ import dev.craftmagic.agent.build.BuilderBot;
 import dev.craftmagic.agent.build.Footprint;
 import dev.craftmagic.agent.build.Schematic;
 import dev.craftmagic.agent.config.ModConfig;
+import dev.craftmagic.agent.hud.ActionBar;
 import dev.craftmagic.agent.net.AgentSocket;
 import dev.craftmagic.agent.net.Protocol;
 import net.minecraft.ChatFormatting;
@@ -23,6 +24,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -48,6 +55,18 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class JobManager {
 	private static final Logger LOGGER = LoggerFactory.getLogger("craftmagic-jobs");
 	private static final int PROGRESS_REPORT_TICKS = 20;
+	/**
+	 * Report even when nothing moved, every this many progress windows (30 s).
+	 *
+	 * <p>A paused build places nothing, and the server treats a job it has not heard about for
+	 * five minutes as a dropped connection — so without this, pausing a build for a coffee got
+	 * it reaped as failed. Well under the server's cutoff, well over its heartbeat.
+	 */
+	private static final int KEEPALIVE_REPORTS = 30;
+	/** How long the bot stays for its victory lap before it is removed. */
+	private static final int CELEBRATION_TICKS = 40;
+	/** Players this close to the bot see build progress when nobody in particular started it. */
+	private static final double PROGRESS_AUDIENCE_RANGE = 96;
 
 	private final MinecraftServer server;
 	private final AgentSocket socket;
@@ -63,7 +82,31 @@ public final class JobManager {
 
 	private PendingJob awaitingPlacement;
 	private ActiveBuild active;
+	/**
+	 * The most recent build that finished or was cancelled, kept so it can be undone.
+	 *
+	 * <p>Only one, and only in memory: its journal holds every block it replaced, which is the
+	 * whole cost of undo, and a restart forgets it. An undo for anything else is refused with a
+	 * reason rather than guessed at.
+	 */
+	private ActiveBuild lastFinished;
+	/** Bots finishing their celebration; despawned when their time is up. */
+	private final List<RetiringBot> retiring = new ArrayList<>();
+	/** Who is being shown build progress on the action bar, so the wand can stay out of the way. */
+	private final Set<UUID> progressAudience = new HashSet<>();
 	private int ticksSinceReport;
+	private int blocksChangedInWindow;
+	private int currentRate;
+
+	private static final class RetiringBot {
+		final BuilderBot bot;
+		int ticksLeft;
+
+		RetiringBot(BuilderBot bot, int ticksLeft) {
+			this.bot = bot;
+			this.ticksLeft = ticksLeft;
+		}
+	}
 
 	/** {@code region} is null for a lone build, which is what almost every job is. */
 	private record PendingJob(
@@ -73,12 +116,18 @@ public final class JobManager {
 		final String jobId;
 		final BuildTask task;
 		final BuilderBot bot;
-		int lastReported;
+		final ServerLevel level;
+		/** The player who started it, or null for the console, a command block, or a map region. */
+		final UUID owner;
+		int lastReported = -1;
+		int quietReports;
 
-		ActiveBuild(String jobId, BuildTask task, BuilderBot bot) {
+		ActiveBuild(String jobId, BuildTask task, BuilderBot bot, ServerLevel level, UUID owner) {
 			this.jobId = jobId;
 			this.task = task;
 			this.bot = bot;
+			this.level = level;
+			this.owner = owner;
 		}
 	}
 
@@ -93,6 +142,9 @@ public final class JobManager {
 		switch (Protocol.type(message)) {
 			case "job.offer" -> onOffer(message);
 			case "job.cancel" -> onCancel(message.get("jobId").getAsString());
+			case "job.pause" -> onPause(message.get("jobId").getAsString());
+			case "job.resume" -> onResume(message.get("jobId").getAsString());
+			case "job.undo" -> onUndo(message.get("jobId").getAsString());
 			default -> LOGGER.debug("ignoring message {}", Protocol.type(message));
 		}
 	}
@@ -163,9 +215,39 @@ public final class JobManager {
 		}
 	}
 
+	private void onPause(String jobId) {
+		if (active != null && active.jobId.equals(jobId)) {
+			pauseActive();
+		}
+	}
+
+	private void onResume(String jobId) {
+		if (active != null && active.jobId.equals(jobId)) {
+			resumeActive();
+		}
+	}
+
+	/**
+	 * An undo asked for from the website.
+	 *
+	 * <p>The server has already moved the job to {@code undoing}, so a refusal must say so —
+	 * otherwise the row sits in an active state with nothing behind it until the stale-job reaper
+	 * fails it. The reply puts it back to {@code done} (the only state the website offers undo
+	 * from) with the reason attached, and leaves its counts alone.
+	 */
+	private void onUndo(String jobId) {
+		if (active != null && active.jobId.equals(jobId) && active.task.isUndoing()) return;
+		String problem = undo(jobId);
+		if (problem != null) {
+			socket.send(Protocol.jobRefusal(jobId, "done", "could not undo: " + problem));
+		}
+	}
+
 	// --- the server tick -------------------------------------------------
 
 	public void tick() {
+		tickRetiring();
+
 		PendingJob arrived = ready.getAndSet(null);
 		if (arrived != null) {
 			awaitingPlacement = arrived;
@@ -188,35 +270,168 @@ public final class JobManager {
 			}
 		}
 
-		if (active == null) return;
+		if (active == null) {
+			progressAudience.clear();
+			return;
+		}
 
 		active.bot.tick();
-		active.task.tick();
+		int changed = active.task.tick();
+		blocksChangedInWindow += changed;
 
 		// Report on a timer rather than per block: at 200 blocks a second a message per block
 		// would be thousands of frames a minute up the socket.
 		if (++ticksSinceReport >= PROGRESS_REPORT_TICKS) {
 			ticksSinceReport = 0;
-			if (active.task.placed() != active.lastReported) {
-				active.lastReported = active.task.placed();
-				socket.send(Protocol.jobState(active.jobId, "building", active.task.placed(), active.task.total()));
-				active.bot.setName("⚒ " + percent(active.task.placed(), active.task.total()) + "%");
+			currentRate = blocksChangedInWindow;
+			blocksChangedInWindow = 0;
+			int progress = progressOf(active.task);
+			boolean moved = progress != active.lastReported;
+			if (moved || ++active.quietReports >= KEEPALIVE_REPORTS) {
+				active.lastReported = progress;
+				active.quietReports = 0;
+				report(active);
+			}
+			if (moved) {
+				active.bot.setName(botPrefix(active.task) + percentDone(active.task) + "%");
 			}
 		}
 
+		showProgress(active);
+
 		if (active.task.isFinished()) finish();
+	}
+
+	private void tickRetiring() {
+		for (Iterator<RetiringBot> it = retiring.iterator(); it.hasNext(); ) {
+			RetiringBot r = it.next();
+			r.bot.tickCelebration();
+			if (--r.ticksLeft <= 0) {
+				r.bot.despawn();
+				it.remove();
+			}
+		}
+	}
+
+	/** What the server calls the task's current activity. */
+	private static String stateOf(BuildTask task) {
+		if (task.isUndoing()) return "undoing";
+		return task.isPaused() ? "paused" : "building";
+	}
+
+	/**
+	 * The count reported to the server: how many of this build's blocks are in the world.
+	 *
+	 * <p>It rises while building and falls while undoing, so the job row means the same thing
+	 * throughout — and an undo starts from the count the row already holds rather than jumping
+	 * to zero and back.
+	 */
+	private static int progressOf(BuildTask task) {
+		return task.isUndoing() ? task.undoTotal() - task.undone() : task.placed();
+	}
+
+	/** For the action bar and the bot's name tag: how far the current activity has got. */
+	private static int percentDone(BuildTask task) {
+		return task.isUndoing() ? percent(task.undone(), task.undoTotal()) : percent(task.placed(), task.total());
+	}
+
+	private static String botPrefix(BuildTask task) {
+		if (task.isUndoing()) return "↺ ";
+		return task.isPaused() ? "⏸ " : "⚒ ";
+	}
+
+	/**
+	 * While undoing, the total is the journal's size, not the schematic's: blocks above the
+	 * height limit or identical to what was already there were never recorded, and measuring
+	 * the countdown against the larger number would show some of them as already put back.
+	 */
+	private void report(ActiveBuild build) {
+		BuildTask task = build.task;
+		int total = task.isUndoing() ? task.undoTotal() : task.total();
+		socket.send(Protocol.jobState(build.jobId, stateOf(task), progressOf(task), total));
+	}
+
+	/**
+	 * The action-bar progress line, for the people it concerns.
+	 *
+	 * <p>That is the player who started the build, when there is one and they are online —
+	 * nobody else on a server needs a stranger's progress bar over their hotbar. A build nobody
+	 * started (the console, a command block, a region of a map) is shown to whoever is near the
+	 * bot instead. {@link ActionBar} keeps it to a line when something changed.
+	 */
+	private void showProgress(ActiveBuild build) {
+		progressAudience.clear();
+		ServerPlayer owner = build.owner == null ? null : server.getPlayerList().getPlayer(build.owner);
+		if (owner != null) {
+			progressAudience.add(owner.getUUID());
+		} else {
+			BlockPos at = build.bot.blockPosition();
+			double range = PROGRESS_AUDIENCE_RANGE * PROGRESS_AUDIENCE_RANGE;
+			for (ServerPlayer player : build.level.players()) {
+				if (player.blockPosition().distSqr(at) <= range) progressAudience.add(player.getUUID());
+			}
+		}
+		if (progressAudience.isEmpty()) return;
+
+		BuildTask task = build.task;
+		int done = task.isUndoing() ? task.undone() : task.placed();
+		int total = task.isUndoing() ? task.undoTotal() : task.total();
+		int pct = percentDone(task);
+		int filled = Math.min(10, Math.max(0, pct / 10));
+		String bar = "█".repeat(filled) + "░".repeat(10 - filled);
+		ChatFormatting color = task.isPaused() ? ChatFormatting.YELLOW : (task.isUndoing() ? ChatFormatting.GOLD : ChatFormatting.GREEN);
+		String prefix = task.isPaused() ? "PAUSED " : (task.isUndoing() ? "UNDOING " : "");
+		Component line = Component.literal("[" + bar + "] " + prefix + pct + "% (" + done + "/" + total + " blocks) "
+						+ currentRate + " blk/s")
+				.withStyle(color);
+
+		long now = server.getTickCount();
+		for (UUID id : progressAudience) {
+			ServerPlayer player = server.getPlayerList().getPlayer(id);
+			if (player != null) ActionBar.show(player, line, now);
+		}
+	}
+
+	/** Whether this player is being shown build progress, which takes the action bar from the wand. */
+	public boolean isShowingProgressTo(ServerPlayer player) {
+		return active != null && progressAudience.contains(player.getUUID());
 	}
 
 	private void finish() {
 		ActiveBuild finished = active;
 		active = null;
+		progressAudience.clear();
+		BuildTask task = finished.task;
 
-		finished.bot.despawn();
-		socket.send(Protocol.jobState(finished.jobId, "done", finished.task.placed(), finished.task.total()));
+		// Cancelled — from the website, or by /craftmagic cancel. Kept as the last build so its
+		// blocks can still be taken back out with /craftmagic undo.
+		if (task.isCancelled()) {
+			finished.bot.despawn();
+			socket.send(Protocol.jobState(finished.jobId, "cancelled", progressOf(task), task.total()));
+			broadcast(Component.literal("CraftMagic: " + (task.isUndoing() ? "undo" : "build") + " stopped.")
+					.withStyle(ChatFormatting.GRAY));
+			lastFinished = finished;
+			return;
+		}
 
-		BlockPos at = finished.task.origin();
-		broadcast(Component.literal("CraftMagic: done — " + finished.task.placed() + " blocks placed at "
+		// A finished undo is its own outcome, not a cancellation: the website shows a cancelled
+		// job as something that went wrong, and this is the thing the player asked for.
+		if (task.isUndoing()) {
+			finished.bot.despawn();
+			socket.send(Protocol.jobState(finished.jobId, "undone", progressOf(task), task.total()));
+			broadcast(Component.literal("CraftMagic: build undone — " + task.undone() + " blocks put back.")
+					.withStyle(ChatFormatting.GOLD));
+			return;
+		}
+
+		finished.bot.celebrate(finished.level);
+		retiring.add(new RetiringBot(finished.bot, CELEBRATION_TICKS));
+		socket.send(Protocol.jobState(finished.jobId, "done", task.placed(), task.total()));
+
+		BlockPos at = task.origin();
+		broadcast(Component.literal("CraftMagic: done — " + task.placed() + " blocks placed at "
 				+ at.getX() + ", " + at.getY() + ", " + at.getZ()).withStyle(ChatFormatting.GREEN));
+		lastFinished = finished;
 	}
 
 	// --- placement of a world, one region at a time ----------------------
@@ -354,7 +569,7 @@ public final class JobManager {
 		if (placed != null) {
 			Rotation turned = Footprint.rotation(awaitingPlacement.region().anchorRotation());
 			ServerLevel level = levelFor(awaitingPlacement.region().anchorDimension());
-			return startBuildAt(level == null ? player.level() : level, placed, turned);
+			return startBuildAt(level == null ? player.level() : level, placed, turned, player);
 		}
 
 		// Centred on the player and rising from the block they stand on, which is what
@@ -364,7 +579,7 @@ public final class JobManager {
 		Schematic schematic = awaitingPlacement.schematic();
 		BlockPos origin =
 				Footprint.origin(schematic.width(), schematic.length(), rotation, player.blockPosition());
-		return startBuildAt(player.level(), origin, rotation);
+		return startBuildAt(player.level(), origin, rotation, player);
 	}
 
 	/**
@@ -375,6 +590,11 @@ public final class JobManager {
 	 * drive, since nothing else works without a human standing in the world.
 	 */
 	public String startBuildAt(ServerLevel level, BlockPos origin, Rotation rotation) {
+		return startBuildAt(level, origin, rotation, null);
+	}
+
+	/** As above, remembering who asked, so their action bar is the one that shows progress. */
+	public String startBuildAt(ServerLevel level, BlockPos origin, Rotation rotation, ServerPlayer by) {
 		if (active != null) return "a build is already in progress";
 		if (awaitingPlacement == null) return "no build is waiting — send one from the website first";
 
@@ -384,7 +604,9 @@ public final class JobManager {
 		BuilderBot bot = BuilderBot.spawn(level, origin, job.name());
 		BuildTask task = new BuildTask(level, job.schematic(), origin, rotation, bot, ModConfig.get().buildSpeed);
 
-		active = new ActiveBuild(job.jobId(), task, bot);
+		active = new ActiveBuild(job.jobId(), task, bot, level, by == null ? null : by.getUUID());
+		// A new build replaces the undo record: only the latest build can be undone.
+		lastFinished = null;
 		ticksSinceReport = 0;
 
 		// The anchor goes up with the first progress report and nowhere else. For a lone build
@@ -403,12 +625,68 @@ public final class JobManager {
 		return null;
 	}
 
+	public boolean pauseActive() {
+		// Not an undo: pause/resume speak "building" to the server, and a resumed undo reported
+		// as building would put a job that is being torn down back on the website's progress bar.
+		if (active == null || active.task.isFinished() || active.task.isPaused() || active.task.isUndoing()) return false;
+		active.task.pause();
+		report(active);
+		broadcast(Component.literal("CraftMagic: build paused.").withStyle(ChatFormatting.YELLOW));
+		return true;
+	}
+
+	public boolean resumeActive() {
+		if (active == null || active.task.isFinished() || !active.task.isPaused()) return false;
+		active.task.resume();
+		report(active);
+		broadcast(Component.literal("CraftMagic: build resumed.").withStyle(ChatFormatting.GREEN));
+		return true;
+	}
+
+	/**
+	 * Roll a build back, putting back what it replaced. Returns null on success, or why not.
+	 *
+	 * <p>{@code jobId} null is the in-game command, which means "the build in progress, or else
+	 * the last one". A job id is the website, and then it must be exactly that job: undoing
+	 * whatever happens to be active because <em>some</em> undo arrived would tear down a build
+	 * nobody asked about.
+	 */
+	public String undo(String jobId) {
+		if (active != null) {
+			if (jobId != null && !active.jobId.equals(jobId)) {
+				return "another build is in progress — wait for it to finish, or cancel it";
+			}
+			if (active.task.isUndoing()) return "that build is already being undone";
+			active.task.startUndo();
+			active.lastReported = -1;
+			report(active);
+			broadcast(Component.literal("CraftMagic: undoing build in reverse...").withStyle(ChatFormatting.GOLD));
+			return null;
+		}
+
+		if (lastFinished == null || (jobId != null && !lastFinished.jobId.equals(jobId))) {
+			return "this world only remembers its most recent build, and only until it restarts";
+		}
+
+		// The build's own bot is gone (despawned when it finished), so the undo gets a new one
+		// and the task is pointed at it — driving the old one would move an entity that no
+		// longer exists.
+		ActiveBuild previous = lastFinished;
+		lastFinished = null;
+		BuilderBot bot = BuilderBot.spawn(previous.level, previous.task.lastChanged(), "Undo");
+		previous.task.attachBot(bot);
+		previous.task.startUndo();
+		active = new ActiveBuild(previous.jobId, previous.task, bot, previous.level, previous.owner);
+		ticksSinceReport = 0;
+		report(active);
+		broadcast(Component.literal("CraftMagic: undoing build in reverse...").withStyle(ChatFormatting.GOLD));
+		return null;
+	}
+
 	public boolean cancelActive() {
 		if (active == null) return false;
 		active.task.cancel();
-		socket.send(Protocol.jobState(active.jobId, "cancelled", active.task.placed(), active.task.total()));
-		active.bot.despawn();
-		active = null;
+		finish();
 		return true;
 	}
 
@@ -417,6 +695,9 @@ public final class JobManager {
 			active.bot.despawn();
 			active = null;
 		}
+		for (RetiringBot r : retiring) r.bot.despawn();
+		retiring.clear();
+		lastFinished = null;
 	}
 
 	private static int percent(int placed, int total) {

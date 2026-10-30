@@ -48,7 +48,19 @@ export type SendState =
   | { kind: 'saving' }
   | { kind: 'queued'; jobId: string }
   | { kind: 'progress'; jobId: string; status: string; placed: number; total: number }
-  | { kind: 'done'; placed: number }
+  | { kind: 'paused'; jobId: string; placed: number; total: number }
+  /**
+   * The mod is putting back what a finished build replaced. `placed` is how many of the
+   * build's blocks are still standing, so it falls toward zero; `total` is the build's size.
+   */
+  | { kind: 'undoing'; jobId: string; placed: number; total: number }
+  /**
+   * Finished. `undoError` is set when an undo was asked for and the mod refused it — the build
+   * is still standing, so this is still `done`, with the reason beside it.
+   */
+  | { kind: 'done'; jobId?: string; placed: number; undoError?: string }
+  | { kind: 'undone'; jobId: string }
+  | { kind: 'cancelled'; jobId?: string; placed?: number }
   | {
       kind: 'error';
       message: string;
@@ -59,6 +71,8 @@ export type SendState =
        * to, instead of telling someone to wait for a build they may not even have sent.
        */
       conflictJobId?: string;
+      jobId?: string;
+      cancelled?: boolean;
     };
 
 export interface UseAgents {
@@ -109,6 +123,24 @@ export interface UseAgents {
    * cancelling is a stop, not an undo, and nothing here can pretend otherwise.
    */
   cancelSend: () => Promise<void>;
+  /** Pause the build this panel is watching. The server only allows it while it is building. */
+  pauseSend: () => Promise<void>;
+  /** Resume it. Only from paused. */
+  resumeSend: () => Promise<void>;
+  /**
+   * Take a finished build back out of the world, putting back what it replaced.
+   *
+   * Only for a `done` build — the server refuses anything else, because the mod only keeps
+   * what it needs for this about its most recent build. Defaults to the job this panel sent.
+   */
+  undoJob: (jobId?: string) => Promise<void>;
+  /**
+   * Why the last pause, resume or undo was refused, or null.
+   *
+   * Kept apart from `send`: a refused pause has not changed the build, and replacing its
+   * progress bar with an error would say it had. Cleared by the next control or send.
+   */
+  controlError: string | null;
 }
 
 /** Poll while a pairing code is on screen, so the list flips to "online" without a refresh. */
@@ -121,7 +153,26 @@ export function useAgents(): UseAgents {
   const [loading, setLoading] = useState(true);
   const [pairCode, setPairCode] = useState<PairCode | null>(null);
   const [send, setSend] = useState<SendState>({ kind: 'idle' });
+  const [controlError, setControlError] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
+  const lastJobIdRef = useRef<string | null>(null);
+  /**
+   * Bumped by every action that takes over the panel (a send, an undo, a reset).
+   *
+   * An undo awaits its request before it touches the panel, and the user can start a new send
+   * in that time; when the old request comes back it must not close the new send's stream and
+   * put the old job's undo on screen. Each action remembers the number it started with and
+   * gives up if it has moved on.
+   */
+  const generationRef = useRef(0);
+  /**
+   * The undo request still in flight, resolving to whether the server accepted it.
+   *
+   * The panel shows `undoing` (and its Stop) from the moment Undo is pressed, but the job is
+   * still `done` on the server until this resolves — a cancel sent in that window is refused,
+   * and the undo then goes ahead anyway. So a Stop pressed then waits for this first.
+   */
+  const undoRequestRef = useRef<Promise<boolean> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -188,31 +239,196 @@ export function useAgents(): UseAgents {
   const resetSend = useCallback(() => {
     sourceRef.current?.close();
     sourceRef.current = null;
+    setControlError(null);
+    generationRef.current++;
     setSend({ kind: 'idle' });
   }, []);
 
   /**
-   * Stop a running build.
+   * Stop a running build (or a running undo).
    *
-   * The stream is closed first and the state cleared regardless of what the server says: a
-   * cancel that fails still means the user asked to stop watching, and leaving a progress
-   * bar creeping upward after they pressed Stop is worse than losing the last few percent
-   * of a count. The server has its own copy of the truth and the mod hears it over the
-   * socket, so nothing depends on this response.
+   * The panel only says "Stopped" once the server has accepted the cancel. It used to say so
+   * straight away and ignore the answer, which was fine while the route accepted anything — it
+   * no longer does, and a refused cancel (the build finished in the meantime, or an undo had
+   * not been accepted yet) means nothing stopped. A refusal is shown as `controlError` and the
+   * panel keeps following the job.
    */
   const cancelSend = useCallback(async () => {
     const jobId =
-      send.kind === 'queued' || send.kind === 'progress' ? send.jobId : null;
+      send.kind === 'queued' ||
+      send.kind === 'progress' ||
+      send.kind === 'paused' ||
+      send.kind === 'undoing'
+        ? send.jobId
+        : lastJobIdRef.current;
+    if (!jobId) {
+      setSend({ kind: 'idle' });
+      return;
+    }
+    setControlError(null);
+    // The stream can report `cancelled` before this request returns, which frees the panel for
+    // a new send. If one has started by then, this Stop's answer is about the old job and must
+    // not close the new one's stream or paint "Stopped" over its progress.
+    const generation = generationRef.current;
+
+    // An undo that has not been accepted yet: the job is still `done`, so a cancel now would
+    // be refused while the undo went ahead. Wait for its answer, then stop it.
+    const pendingUndo = undoRequestRef.current;
+    if (pendingUndo && !(await pendingUndo)) return; // refused: nothing is running to stop
+
+    let refusal: string | null = null;
+    try {
+      const response = await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        refusal = body.message ?? `could not stop it (HTTP ${response.status})`;
+      }
+    } catch (err) {
+      refusal = (err as Error).message;
+    }
+    if (generation !== generationRef.current) return;
+    if (refusal) {
+      setControlError(refusal);
+      return;
+    }
+
     sourceRef.current?.close();
     sourceRef.current = null;
-    setSend({ kind: 'idle' });
-    if (!jobId) return;
-    try {
-      await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
-    } catch {
-      // Already stopped watching; the mod finds out over the socket either way.
-    }
+    setSend((prev) => ({
+      kind: 'cancelled',
+      jobId,
+      placed: 'placed' in prev && typeof prev.placed === 'number' ? prev.placed : 0,
+    }));
   }, [send]);
+
+  /**
+   * POST one of the job controls and say whether it was accepted.
+   *
+   * A refusal is shown, not swallowed: a 409 here means the world is offline or the job has
+   * already moved on (finished while the button was being pressed), and a button that silently
+   * does nothing reads as a broken button.
+   */
+  const control = useCallback(async (jobId: string, action: 'pause' | 'resume' | 'undo'): Promise<boolean> => {
+    setControlError(null);
+    try {
+      const response = await fetch(`/api/agent/jobs/${jobId}/${action}`, { method: 'POST' });
+      if (response.ok) return true;
+      const body = await response.json().catch(() => ({}));
+      setControlError(body.message ?? `could not ${action} the build (HTTP ${response.status})`);
+    } catch (err) {
+      setControlError((err as Error).message);
+    }
+    return false;
+  }, []);
+
+  const pauseSend = useCallback(async () => {
+    if (send.kind !== 'progress') return;
+    const { jobId } = send;
+    if (!(await control(jobId, 'pause'))) return;
+    // The stream says so too, a moment later; this just keeps the button from flickering.
+    setSend((prev) =>
+      prev.kind === 'progress' && prev.jobId === jobId
+        ? { kind: 'paused', jobId, placed: prev.placed, total: prev.total }
+        : prev,
+    );
+  }, [send, control]);
+
+  const resumeSend = useCallback(async () => {
+    if (send.kind !== 'paused') return;
+    const { jobId } = send;
+    if (!(await control(jobId, 'resume'))) return;
+    setSend((prev) =>
+      prev.kind === 'paused' && prev.jobId === jobId
+        ? { kind: 'progress', jobId, status: 'building', placed: prev.placed, total: prev.total }
+        : prev,
+    );
+  }, [send, control]);
+
+  const undoJob = useCallback(
+    async (jobIdToUndo?: string) => {
+      const targetJobId =
+        jobIdToUndo || (send.kind === 'done' && send.jobId ? send.jobId : lastJobIdRef.current);
+      if (!targetJobId) return;
+      // Only one undo at a time: a second press while the first request is out would be
+      // refused by the server (the job is already `undoing`) and leave neither with a stream.
+      if (send.kind === 'undoing') return;
+      const before = send;
+      const placedBefore = send.kind === 'done' ? send.placed : 0;
+
+      // Into `undoing` before the request, not after: the panel stops offering Undo and Build
+      // here at once, so neither a repeat press nor a new send can start while it is in flight.
+      const generation = ++generationRef.current;
+      sourceRef.current?.close();
+      sourceRef.current = null;
+      setSend({ kind: 'undoing', jobId: targetJobId, placed: placedBefore, total: placedBefore });
+
+      const request = control(targetJobId, 'undo');
+      undoRequestRef.current = request;
+      const accepted = await request;
+      if (undoRequestRef.current === request) undoRequestRef.current = null;
+      if (generation !== generationRef.current) return;
+      if (!accepted) {
+        // Refused (offline, or no longer done): nothing changed in the world, so put the panel
+        // back as it was. `controlError` carries the reason.
+        setSend(before);
+        return;
+      }
+
+      if (typeof EventSource === 'undefined') return;
+
+      // The route has already moved the job to `undoing`, so the first thing this stream
+      // replays is that, not the `done` it was a moment ago.
+      const source = new EventSource(`/api/agent/jobs/${targetJobId}/events`);
+      sourceRef.current = source;
+      const finish = (next: SendState) => {
+        source.close();
+        if (sourceRef.current === source) sourceRef.current = null;
+        setSend(next);
+      };
+
+      source.onmessage = (event) => {
+        const progress: JobProgress = JSON.parse(event.data);
+        switch (progress.status) {
+          case 'undoing':
+            setSend({
+              kind: 'undoing',
+              jobId: targetJobId,
+              placed: progress.placed ?? 0,
+              total: progress.total ?? 0,
+            });
+            return;
+          case 'undone':
+            finish({ kind: 'undone', jobId: targetJobId });
+            return;
+          case 'done':
+            // The mod refused: it no longer remembers this build (restarted, or something newer
+            // was built since). The blocks are all still there.
+            finish({
+              kind: 'done',
+              jobId: targetJobId,
+              placed: progress.placed ?? placedBefore,
+              undoError: progress.error ?? 'Minecraft could not undo this build.',
+            });
+            return;
+          case 'cancelled':
+            finish({ kind: 'cancelled', jobId: targetJobId, placed: progress.placed ?? 0 });
+            return;
+          case 'failed':
+            finish({ kind: 'error', message: progress.error ?? 'the undo failed', jobId: targetJobId });
+            return;
+          default:
+            return;
+        }
+      };
+
+      source.onerror = () => {
+        if (sourceRef.current === source) {
+          finish({ kind: 'error', message: 'lost the connection while undoing', jobId: targetJobId });
+        }
+      };
+    },
+    [send, control],
+  );
 
   const cancelJob = useCallback(async (jobId: string) => {
     try {
@@ -226,6 +442,8 @@ export function useAgents(): UseAgents {
 
   const sendToGame = useCallback<UseAgents['sendToGame']>(async (agentId, build) => {
     sourceRef.current?.close();
+    setControlError(null);
+    generationRef.current++;
     setSend({ kind: 'saving' });
 
     try {
@@ -285,45 +503,80 @@ export function useAgents(): UseAgents {
       }
 
       const jobId: string = body.id;
+      lastJobIdRef.current = jobId;
       setSend({ kind: 'queued', jobId });
 
-      const source = new EventSource(`/api/agent/jobs/${jobId}/events`);
-      sourceRef.current = source;
+      if (typeof EventSource !== 'undefined') {
+        const source = new EventSource(`/api/agent/jobs/${jobId}/events`);
+        sourceRef.current = source;
 
-      source.onmessage = (event) => {
-        const progress: JobProgress = JSON.parse(event.data);
+        source.onmessage = (event) => {
+          const progress: JobProgress = JSON.parse(event.data);
 
-        if (progress.status === 'done') {
-          source.close();
-          sourceRef.current = null;
-          setSend({ kind: 'done', placed: progress.placed ?? 0 });
-          return;
-        }
-        if (progress.status === 'failed' || progress.status === 'cancelled') {
-          source.close();
-          sourceRef.current = null;
-          setSend({ kind: 'error', message: progress.error ?? `the build was ${progress.status}` });
-          return;
-        }
+          if (progress.status === 'done') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'done', jobId, placed: progress.placed ?? 0 });
+            return;
+          }
+          if (progress.status === 'cancelled') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'cancelled', jobId, placed: progress.placed ?? 0 });
+            return;
+          }
+          if (progress.status === 'failed') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'error', message: progress.error ?? 'the build failed', jobId });
+            return;
+          }
+          if (progress.status === 'paused') {
+            setSend({
+              kind: 'paused',
+              jobId,
+              placed: progress.placed ?? 0,
+              total: progress.total ?? 0,
+            });
+            return;
+          }
+          // An undo started in game (/craftmagic undo) while this panel was still watching
+          // the build — the mod reports it on the same job.
+          if (progress.status === 'undoing') {
+            setSend({
+              kind: 'undoing',
+              jobId,
+              placed: progress.placed ?? 0,
+              total: progress.total ?? 0,
+            });
+            return;
+          }
+          if (progress.status === 'undone') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'undone', jobId });
+            return;
+          }
 
-        setSend({
-          kind: 'progress',
-          jobId,
-          status: progress.status,
-          placed: progress.placed ?? 0,
-          total: progress.total ?? 0,
-        });
-      };
+          setSend({
+            kind: 'progress',
+            jobId,
+            status: progress.status,
+            placed: progress.placed ?? 0,
+            total: progress.total ?? 0,
+          });
+        };
 
-      source.onerror = () => {
-        // The server ends the stream after a terminal event, which surfaces as an error.
-        // Only treat it as a failure if this stream is still the live one.
-        if (sourceRef.current === source) {
-          source.close();
-          sourceRef.current = null;
-          setSend({ kind: 'error', message: 'lost the connection while building' });
-        }
-      };
+        source.onerror = () => {
+          // The server ends the stream after a terminal event, which surfaces as an error.
+          // Only treat it as a failure if this stream is still the live one.
+          if (sourceRef.current === source) {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'error', message: 'lost the connection while building', jobId });
+          }
+        };
+      }
     } catch (err) {
       setSend({ kind: 'error', message: (err as Error).message });
     }
@@ -338,6 +591,10 @@ export function useAgents(): UseAgents {
     send,
     cancelSend,
     cancelJob,
+    pauseSend,
+    resumeSend,
+    undoJob,
+    controlError,
     refresh,
     createPairCode,
     clearPairCode,

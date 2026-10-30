@@ -80,6 +80,23 @@ public final class Protocol {
 	}
 
 	/**
+	 * A state with a reason and no progress counts.
+	 *
+	 * <p>For answering a request this agent cannot carry out, such as an undo for a build it no
+	 * longer remembers. The progress object is left out rather than sent as zeros, because the
+	 * server keeps whatever counts it already has for a field that is absent and would
+	 * overwrite them with zeros otherwise.
+	 */
+	public static String jobRefusal(String jobId, String state, String error) {
+		JsonObject o = new JsonObject();
+		o.addProperty("t", "job.state");
+		o.addProperty("jobId", jobId);
+		o.addProperty("state", state);
+		o.addProperty("error", error);
+		return o.toString();
+	}
+
+	/**
 	 * Where a build was put: the corner it was built from, the quarter turns applied to it, and
 	 * the dimension it went into.
 	 *

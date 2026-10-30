@@ -61,6 +61,12 @@ export async function closeTestDb(): Promise<void> {
 export interface TestApp {
 	app: FastifyInstance;
 	db: Db;
+	/**
+	 * The app's own hub and store, for tests that need a connected world: a route that only
+	 * acts when the mod is online can be driven by attaching a fake connection here.
+	 */
+	hub: AgentHub;
+	store: AgentStore;
 	/** POST/PATCH/DELETE as a signed-in user; `cookie` omitted means signed out. */
 	call(
 		method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
@@ -180,5 +186,5 @@ export async function buildTestApp(db: Db, options: BuildTestAppOptions = {}): P
 		return { cookie: result.cookie, id: (result.body.user as { id: string }).id, email };
 	};
 
-	return { app, db, call, signUp };
+	return { app, db, hub, store, call, signUp };
 }

@@ -16,6 +16,10 @@
  *   GET    /api/agent/agents               paired worlds, with online status
  *   POST   /api/agent/jobs                 send a build to a world
  *   GET    /api/agent/jobs/summary         how many of the caller's sends finished
+ *   POST   /api/agent/jobs/:id/cancel      stop a job (pending, offered, building, paused, undoing)
+ *   POST   /api/agent/jobs/:id/pause       pause a building job (world must be connected)
+ *   POST   /api/agent/jobs/:id/resume      resume a paused job (world must be connected)
+ *   POST   /api/agent/jobs/:id/undo        put back what a done build replaced (world connected)
  *   GET    /api/agent/jobs/:id/events      SSE progress for the website
  *   GET    /api/agent/jobs/:id/schem       the mod fetches the build (agent token required)
  *
@@ -42,12 +46,15 @@ import {
 	writeSchematic,
 	WORLD_LIMITS,
 	WORLD_VERSION,
+	TERMINAL_JOB_STATES,
 	type VoxelGrid,
 	type JobRegion,
+	type JobState,
 } from '@craftmagic/core';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { Auth } from '../auth/session.js';
 import type { AgentHub } from './hub.js';
+import { ACTIVE_JOB_STATUSES } from './store.js';
 import type { AgentStore, BuildKind, WorldDocument, WorldRow } from './store.js';
 
 export interface AgentRoutesOptions {
@@ -71,6 +78,24 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  * Reaching for a third value here is the symptom, not the fix.
  */
 const BUILD_KINDS = ['structure', 'interior'] as const;
+
+/**
+ * Which statuses each website control may move a job from, and to.
+ *
+ * Exported for the tests, which pin every allowed and refused move. `cancel` works on any job
+ * still occupying its world and needs no connection — a job queued for an offline world is
+ * cancelled by the row alone, since only `pending` and `offered` rows are ever replayed. The
+ * other three need the mod to act, and only make sense from one status each: undo is offered
+ * for a `done` build because that is the only one the mod is sure to still remember.
+ */
+export const JOB_CONTROLS = {
+	cancel: { from: ACTIVE_JOB_STATUSES, to: 'cancelled', needsAgent: false },
+	pause: { from: ['building'], to: 'paused', needsAgent: true },
+	resume: { from: ['paused'], to: 'building', needsAgent: true },
+	undo: { from: ['done'], to: 'undoing', needsAgent: true },
+} as const satisfies Record<string, { from: readonly string[]; to: string; needsAgent: boolean }>;
+
+export type JobControl = keyof typeof JOB_CONTROLS;
 
 /**
  * The region metadata on a job, or `null` for a lone build.
@@ -895,19 +920,59 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 			return job;
 		});
 
-		/** Session-authenticated. */
-		app.post<{ Params: { id: string } }>('/api/agent/jobs/:id/cancel', async (request, reply) => {
-			if (!requireDb(reply)) return;
-			const user = await auth.requireUser(request, reply);
-			if (!user) return;
+		/**
+		 * Session-authenticated. The website's controls over a job: cancel, pause, resume, undo.
+		 *
+		 * Each one is a move between statuses, and only from the statuses it makes sense from —
+		 * see `JOB_CONTROLS`. These used to write their status whatever the job was doing, so
+		 * pausing a finished build marked it `paused` for good, and pausing one still waiting
+		 * for an offline world took it out of the set that is replayed when the world connects,
+		 * so it never arrived. The move is a compare-and-set (`transitionJob`), because the mod
+		 * reports on its own schedule and can finish the build between a read and a write here.
+		 *
+		 * Pause, resume and undo also need the world to be connected: the mod is the only thing
+		 * that can carry them out, and a status that says `paused` over a build that never heard
+		 * the word is a lie the dashboard would keep telling.
+		 */
+		for (const [action, control] of Object.entries(JOB_CONTROLS) as [JobControl, (typeof JOB_CONTROLS)[JobControl]][]) {
+			app.post<{ Params: { id: string } }>(`/api/agent/jobs/:id/${action}`, async (request, reply) => {
+				if (!requireDb(reply)) return;
+				const user = await auth.requireUser(request, reply);
+				if (!user) return;
 
-			const job = await store!.getJob(request.params.id, user.id);
-			if (!job) return reply.code(404).send({ error: 'unknown_job' });
-			hub!.cancel(job);
-			await store!.updateJob(job.id, { status: 'cancelled' });
-			hub!.emit(job.id, { jobId: job.id, status: 'cancelled' });
-			return { ok: true };
-		});
+				const job = await store!.getJob(request.params.id, user.id);
+				if (!job) return reply.code(404).send({ error: 'unknown_job' });
+
+				if (control.needsAgent && !hub!.isOnline(job.agentId)) {
+					return reply.code(409).send({
+						error: 'agent_offline',
+						message: 'That Minecraft world is not connected right now. Start it, then try again.',
+						status: job.status,
+					});
+				}
+
+				const moved = await store!.transitionJob(job.id, user.id, control.from, control.to);
+				if (!moved) {
+					// Re-read for the message: the status that refused the move may be one the mod
+					// wrote a moment ago, not the one read above.
+					const current = (await store!.getJob(job.id, user.id))?.status ?? job.status;
+					return reply.code(409).send({
+						error: 'invalid_state',
+						message: `cannot ${action} a job that is ${current}`,
+						status: current,
+					});
+				}
+
+				hub![action](moved);
+				hub!.emit(moved.id, {
+					jobId: moved.id,
+					status: moved.status,
+					placed: moved.progressPlaced,
+					total: moved.progressTotal,
+				});
+				return { ok: true, status: moved.status };
+			});
+		}
 
 		/**
 		 * The build itself, as a `.schem`.
@@ -979,11 +1044,14 @@ export function agentRoutes(options: AgentRoutesOptions): FastifyPluginAsync {
 				status: job.status,
 				placed: job.progressPlaced,
 				total: job.progressTotal,
+				// A refusal can land before the browser's stream connects — the mod answers an
+				// undo it cannot do within milliseconds — and the reason is the useful part.
+				error: job.error,
 			});
 
 			const unsubscribe = hub!.subscribe(request.params.id, (event) => {
 				write(event);
-				if (['done', 'cancelled', 'failed'].includes(event.status)) reply.raw.end();
+				if (TERMINAL_JOB_STATES.includes(event.status as JobState)) reply.raw.end();
 			});
 
 			request.raw.on('close', unsubscribe);

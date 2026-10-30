@@ -12,7 +12,33 @@
 
 export const AGENT_PROTOCOL_VERSION = 1;
 
-export type JobState = 'previewing' | 'building' | 'done' | 'cancelled' | 'failed';
+/**
+ * Every state an agent may report for a job.
+ *
+ * `undoing` and `undone` belong to an undo: the mod reports `undoing` while it puts back what a
+ * finished build replaced, then `undone`. `undone` is a finish in its own right, not a
+ * cancellation — the website shows a cancelled job as something that went wrong, and an undo
+ * is what the player asked for.
+ */
+export const JOB_STATES = [
+  'previewing',
+  'building',
+  'paused',
+  'undoing',
+  'done',
+  'undone',
+  'cancelled',
+  'failed',
+] as const;
+
+export type JobState = (typeof JOB_STATES)[number];
+
+/** States after which nothing more will happen to a job, and a progress stream can close. */
+export const TERMINAL_JOB_STATES: readonly JobState[] = ['done', 'undone', 'cancelled', 'failed'];
+
+export function isJobState(value: unknown): value is JobState {
+  return typeof value === 'string' && (JOB_STATES as readonly string[]).includes(value);
+}
 
 export type AgentEnvType = 'integrated' | 'dedicated';
 
@@ -136,6 +162,9 @@ export type ServerToAgent =
       region?: JobRegion;
     }
   | { t: 'job.cancel'; jobId: string }
+  | { t: 'job.pause'; jobId: string }
+  | { t: 'job.resume'; jobId: string }
+  | { t: 'job.undo'; jobId: string }
   | { t: 'session.revoked' }
   | { t: 'ping'; id: number };
 

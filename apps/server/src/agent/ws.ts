@@ -2,7 +2,9 @@ import {
 	AGENT_LIMITS,
 	AGENT_PROTOCOL_VERSION,
 	isBuildAnchor,
+	isJobState,
 	parseAgentMessage,
+	TERMINAL_JOB_STATES,
 	type ServerToAgent,
 } from '@craftmagic/core';
 import type { FastifyPluginAsync } from 'fastify';
@@ -145,6 +147,14 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 					case 'job.state': {
 						if (!options.store || !options.hub || !agentId) return;
 
+						// The frame is the mod's word, and the column has a CHECK constraint: a state
+						// outside the protocol would throw inside the UPDATE below rather than be
+						// refused here with a reason in the log.
+						if (!isJobState(message.state)) {
+							log.warn({ jobId: message.jobId, state: message.state }, 'ignoring an unknown job state');
+							return;
+						}
+
 						const job = await options.store.getJobForAgent(message.jobId);
 						// Only the agent the job belongs to may move it, or one paired world
 						// could drive another's build.
@@ -179,7 +189,7 @@ export function registerAgentWs(options: AgentWsOptions): FastifyPluginAsync {
 							error: message.error ?? null,
 						});
 
-						if (updated && ['done', 'cancelled', 'failed'].includes(message.state)) {
+						if (updated && TERMINAL_JOB_STATES.includes(message.state)) {
 							log.info({ jobId: message.jobId, state: message.state }, 'job finished');
 						}
 						return;

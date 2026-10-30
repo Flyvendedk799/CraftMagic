@@ -85,6 +85,7 @@ describe('ModPage component', () => {
       pauseSend: vi.fn().mockResolvedValue(undefined),
       resumeSend: vi.fn().mockResolvedValue(undefined),
       undoJob: vi.fn().mockResolvedValue(undefined),
+      controlError: null,
       ...overrides,
     });
   }

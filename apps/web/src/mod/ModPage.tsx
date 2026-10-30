@@ -182,6 +182,9 @@ export function ModPage() {
 
   return (
     <>
+      {/* Outside `.modpage`, which is a centred 52rem column: the bar is chrome and spans the
+          window. It replaces the single back-link this page used to carry, which could only
+          ever point at one of the several places somebody arrives here from. */}
       <AppNav current="mod" />
 
       <div className="modpage" data-ready={manifest || failed ? '1' : '0'}>
@@ -242,6 +245,9 @@ export function ModPage() {
               <strong>Launch the Fabric profile</strong> and open a world — single-player is fine.
             </li>
           </ol>
+          {/* Most Fabric mods require the Fabric API jar alongside them, so people reasonably
+              assume this one does too and go looking for it. Saying so plainly here saves a
+              support question and a wasted download. */}
           <p className="modpage__note">
             <strong>You do not need the Fabric API jar.</strong> Most mods ask you to install it
             separately; this one bundles the parts it uses, so the file above is the only one that
@@ -337,14 +343,18 @@ export function ModPage() {
                 <li>
                   <strong>Vanilla clients can connect without the mod.</strong> Install Fabric and
                   the CraftMagic mod jar into the server’s <code>mods/</code> directory. Players
-                  joining the dedicated server do <strong>not</strong> need the mod or Fabric
-                  installed on their clients.
+                  can join without the mod or Fabric, and see the builder bot like anyone else.
+                  One thing needs the mod on their own game: punching <em>the air</em> with the
+                  wand. Without it, punch a block instead, or use{' '}
+                  <code>/craftmagic build</code>.
                 </li>
                 <li>
                   <strong>Operator level 2 requirement.</strong> Because pairing enables placing
                   blocks anywhere in the world, running <CopyCommand command="/craftmagic pair <code>" />{' '}
-                  and mod configuration commands requires Minecraft <strong>OP level 2</strong> or
-                  higher. Server administrators can grant this in console using <code>op &lt;player&gt;</code>.
+                  and the settings commands needs Minecraft <strong>OP level 2</strong> or higher —
+                  and so do pausing, resuming, cancelling and undoing a build, so another player
+                  cannot stop or tear down yours. Server administrators can grant it in the console
+                  with <code>op &lt;player&gt;</code>.
                 </li>
                 <li>
                   <strong>No open incoming ports needed.</strong> The mod dials outbound directly to
@@ -353,8 +363,9 @@ export function ModPage() {
                 </li>
               </ol>
               <p className="modpage__note">
-                Once paired by a server operator, any permitted player can place authorized builds in
-                designated areas.
+                Once an operator has paired the server, builds sent to it can be placed by any player
+                with the wand or <code>/craftmagic build</code>, wherever they choose — there is no
+                protected-area check, so pair only servers where you trust who is playing.
               </p>
             </div>
           )}
@@ -373,15 +384,15 @@ export function ModPage() {
                   initial pairing command <CopyCommand command="/craftmagic pair <code>" />.
                 </li>
                 <li>
-                  <strong>Guests need OP permissions from the host.</strong> Friends joining the
-                  LAN world do not need to pair, but they require operator permission (level 2) to
-                  run wand and placement commands. The host can grant this by typing{' '}
+                  <strong>Guests need OP permissions from the host</strong> for pairing, settings,
+                  and pausing, resuming, cancelling or undoing a build. The wand and{' '}
+                  <code>/craftmagic build</code> work for everyone. The host can grant OP by typing{' '}
                   <code>/op &lt;player&gt;</code> in chat.
                 </li>
                 <li>
-                  <strong>Shared building.</strong> When a build is sent to the LAN world, all
-                  connected players can see the live outline preview and watch the bot construct the
-                  build in real time.
+                  <strong>Shared building.</strong> When a build is sent to the LAN world, everyone
+                  connected can watch the bot construct it. The outline preview is shown only to
+                  the player aiming the wand, so it does not clutter everyone else’s view.
                 </li>
               </ol>
             </div>
@@ -401,10 +412,10 @@ export function ModPage() {
               <CopyCommand command="/wand" />
             </dt>
             <dd>
-              Get the magic wand. <strong>Right-click</strong> marks the spot,{' '}
-              <strong>sneak + right-click</strong> turns the build 90°, and{' '}
-              <strong>punching the air</strong> builds it. Nothing is placed until you punch, so
-              you can re-aim as many times as you like.
+              Get the magic wand. <strong>Right-click</strong> marks the spot.{' '}
+              <strong>Sneak + right-click</strong> looking level turns the build 90°; looking up
+              or down raises or lowers it a block. <strong>Punching the air</strong> builds it.
+              Nothing is placed until you punch, so you can re-aim as many times as you like.
             </dd>
 
             <dt>
@@ -420,27 +431,34 @@ export function ModPage() {
             <dt>
               <CopyCommand command="/craftmagic pause" />
             </dt>
-            <dd>Pause an active build in progress in Minecraft.</dd>
+            <dd>Pause the build that is going up.</dd>
 
             <dt>
               <CopyCommand command="/craftmagic resume" />
             </dt>
-            <dd>Resume a paused build in Minecraft.</dd>
+            <dd>Carry on with a paused build.</dd>
 
             <dt>
               <CopyCommand command="/craftmagic undo" />
             </dt>
-            <dd>Tear down and dismantle the placed blocks from the last build.</dd>
+            <dd>
+              Take the most recent build back out, putting back whatever it replaced. Blocks you
+              have changed since are left alone. Only the latest build can be undone, and only
+              until the world restarts.
+            </dd>
 
             <dt>
               <CopyCommand command="/craftmagic offset <dy>" />
             </dt>
-            <dd>Adjust the vertical placement offset in blocks.</dd>
+            <dd>Raise or lower where the wand will build, in blocks (−64 to 64).</dd>
 
             <dt>
               <CopyCommand command="/craftmagic speed <n>" />
             </dt>
-            <dd>Blocks placed per second. <code>0</code> places everything at once.</dd>
+            <dd>
+              Blocks placed per second. <code>0</code> means as fast as the mod allows (400 a
+              tick) — never all at once, which would freeze the server on a big build.
+            </dd>
 
             <dt>
               <CopyCommand command="/craftmagic status" />
@@ -454,8 +472,12 @@ export function ModPage() {
           </dl>
           <p className="modpage__note">
             In your own singleplayer world these all work as-is — you do <strong>not</strong> need
-            to enable cheats. On a dedicated server, pairing and settings need operator permission.
-            On LAN, the host can pair it, and guests need <code>/op</code> first.
+            to enable cheats. On a dedicated server, pairing, settings, and pause, resume, cancel
+            and undo need operator permission, since they act on every player’s builds. Same on a
+            world opened to LAN: the host can do all of it, and guests need <code>/op</code> first.
+            {/* Brigadier hides subcommands you lack permission for, and the resulting parse error
+                points at the word rather than saying "you are not an operator" — so this reads as
+                a broken command unless someone tells you otherwise. */}
           </p>
         </section>
 
@@ -473,7 +495,8 @@ export function ModPage() {
             </dt>
             <dd>
               On a dedicated server you need operator permission — Minecraft hides subcommands you
-              can’t use, and the error points at the word instead of explaining why. Ask an admin
+              can’t use, and the error points at the word instead of explaining why. The same goes
+              for <code>pause</code>, <code>resume</code>, <code>cancel</code> and <code>undo</code>. Ask an admin
               for <code>/op</code>. In your own world this should just work; if it doesn’t, you’re
               on an old build of the mod, so download it again.
             </dd>

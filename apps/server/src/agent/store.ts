@@ -177,7 +177,15 @@ export interface WorldAnchorRecord {
 	footprint: { x: number; z: number } | null;
 }
 
-export const ACTIVE_JOB_STATUSES = ['pending', 'offered', 'previewing', 'building', 'paused'] as const;
+/**
+ * Statuses in which a job occupies its agent.
+ *
+ * `paused` and `undoing` included: the mod has a single build slot and either one is using it.
+ * Both are still subject to the stale-job cutoff in `activeJob`, which is correct only because
+ * the mod keeps reporting while it holds the slot — every 30 seconds even when nothing has
+ * moved, which is what keeps a paused build from reading as a dropped connection.
+ */
+export const ACTIVE_JOB_STATUSES = ['pending', 'offered', 'previewing', 'building', 'paused', 'undoing'] as const;
 
 function sha256(value: string): Buffer {
 	return createHash('sha256').update(value).digest();
@@ -922,6 +930,29 @@ export class AgentStore {
 				patch.anchor === undefined ? null : JSON.stringify(patch.anchor),
 				patch.error ?? null,
 			],
+		);
+		return rows[0] ? toJob(rows[0]) : null;
+	}
+
+	/**
+	 * Move a job from one of `from` to `to`, or do nothing and return null.
+	 *
+	 * Compare-and-set in one statement, for the website's pause/resume/undo/cancel. Reading the
+	 * status and then writing it lets the mod's own report land in between: a build that
+	 * reported `done` a moment after the route read `building` would be written back to
+	 * `paused`, and sit there — no longer building, never reporting, until the stale-job reaper
+	 * failed it. Scoped by owner like `getJob`, so another account's id moves nothing.
+	 *
+	 * Clears `error`: none of these moves starts from a failure, and the one message a `done`
+	 * row can carry — an earlier undo the mod refused — is stale the moment undo is asked again.
+	 */
+	async transitionJob(id: string, userId: string, from: readonly string[], to: string): Promise<JobRow | null> {
+		const { rows } = await this.db.query(
+			`UPDATE agent_jobs
+			    SET status = $4, error = NULL, updated_at = now()
+			  WHERE id = $1 AND user_id = $2::uuid AND status = ANY($3)
+			 RETURNING id, agent_id, build_id, status, progress_placed, progress_total, anchor, error, region`,
+			[id, userId, from, to],
 		);
 		return rows[0] ? toJob(rows[0]) : null;
 	}

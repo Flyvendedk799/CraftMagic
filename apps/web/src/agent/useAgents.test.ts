@@ -1,110 +1,222 @@
 // @vitest-environment jsdom
+/**
+ * The send panel's controls, driven end to end through the hook: the request each one makes,
+ * what the progress stream then says, and what the panel ends up showing.
+ *
+ * The stream is a stand-in EventSource the test pushes frames into, in the shapes the server's
+ * events route writes. A control's request is answered per test, because the interesting cases
+ * are the refusals — a 409 from the route, or the mod declining an undo over the socket.
+ */
 import { renderHook, act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { VoxelGrid } from '@craftmagic/core';
 import { useAgents } from './useAgents.js';
 
-describe('useAgents pause, resume, and undo actions', () => {
-  const originalFetch = globalThis.fetch;
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  closed = false;
+  constructor(readonly url: string) {
+    MockEventSource.instances.push(this);
+  }
+  close() {
+    this.closed = true;
+  }
+  /** Deliver one frame, as the server's `data: {...}` line would. */
+  emit(frame: Record<string, unknown>) {
+    this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+  }
+  static latest(): MockEventSource {
+    const source = MockEventSource.instances.at(-1);
+    if (!source) throw new Error('no EventSource was opened');
+    return source;
+  }
+}
 
-  beforeEach(() => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
-        if (url === '/api/agent/agents') {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              available: true,
-              agents: [
-                {
-                  id: 'agent-1',
-                  name: 'SMP',
-                  mcVersion: '1.21.4',
-                  online: true,
-                  envType: 'integrated',
-                  lastSeenAt: new Date().toISOString(),
-                },
-              ],
-            }),
-          });
-        }
-        if (url === '/api/agent/status') {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({ available: true, activeJobs: 0, pendingPairs: 0 }),
-          });
-        }
-        if (url.includes('/pause')) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({ ok: true }),
-          });
-        }
-        if (url.includes('/resume')) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({ ok: true }),
-          });
-        }
-        if (url.includes('/undo')) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({ ok: true, jobId: 'job-undo-1' }),
-          });
-        }
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({}),
-        });
-      }),
-    );
-  });
+const grid: VoxelGrid = {
+  size: { x: 2, y: 2, z: 2 },
+  voxels: new Uint16Array(8).fill(1),
+  palette: ['minecraft:air', 'minecraft:stone'],
+};
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    vi.restoreAllMocks();
-  });
+/** Answers for the control routes, per test. Anything not listed is a 200. */
+let controlReplies: Record<string, { status: number; body: Record<string, unknown> }> = {};
+let fetchMock: ReturnType<typeof vi.fn>;
 
-  it('provides pauseSend, resumeSend, and undoJob functions', () => {
-    const { result } = renderHook(() => useAgents());
-    expect(typeof result.current.pauseSend).toBe('function');
-    expect(typeof result.current.resumeSend).toBe('function');
-    expect(typeof result.current.undoJob).toBe('function');
-  });
+function reply(status: number, body: unknown) {
+  return Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
+}
 
-  it('calls POST /api/agent/jobs/:id/undo on undoJob', async () => {
-    const { result } = renderHook(() => useAgents());
-
-    await act(async () => {
-      await result.current.undoJob('job-999');
-    });
-
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/agent/jobs/job-999/undo',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    expect(result.current.send.kind).toBe('undoing');
-  });
-
-  it('handles pause and resume with mocked EventSource', async () => {
-    class MockEventSource {
-      url: string;
-      onmessage: ((ev: MessageEvent) => void) | null = null;
-      onerror: (() => void) | null = null;
-      close = vi.fn();
-      constructor(url: string) {
-        this.url = url;
-      }
+beforeEach(() => {
+  MockEventSource.instances = [];
+  controlReplies = {};
+  vi.stubGlobal('EventSource', MockEventSource);
+  fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    if (url === '/api/agent/agents') return reply(200, { agents: [] });
+    if (url === '/api/builds' && init?.method === 'POST') return reply(201, { id: 'build-1' });
+    if (url === '/api/agent/jobs' && init?.method === 'POST') return reply(202, { id: 'job-1', delivered: true });
+    const action = /\/api\/agent\/jobs\/[^/]+\/(pause|resume|undo|cancel)$/.exec(url)?.[1];
+    if (action) {
+      const answer = controlReplies[action] ?? { status: 200, body: { ok: true } };
+      return reply(answer.status, answer.body);
     }
-    vi.stubGlobal('EventSource', MockEventSource);
+    return reply(200, {});
+  });
+  vi.stubGlobal('fetch', fetchMock);
+});
 
-    const { result } = renderHook(() => useAgents());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
-    // Trigger undo with event stream
+/** A hook that has sent a build and is watching it go down at 25 of 100. */
+async function building() {
+  const hook = renderHook(() => useAgents());
+  await act(async () => {
+    await hook.result.current.sendToGame('agent-1', { name: 'Castle', grid, program: null });
+  });
+  const stream = MockEventSource.latest();
+  expect(stream.url).toBe('/api/agent/jobs/job-1/events');
+  act(() => stream.emit({ jobId: 'job-1', status: 'building', placed: 25, total: 100 }));
+  expect(hook.result.current.send).toMatchObject({ kind: 'progress', status: 'building', placed: 25 });
+  return { hook, stream };
+}
+
+function calls(action: string): unknown[][] {
+  return fetchMock.mock.calls.filter(([url]) => String(url).endsWith(`/${action}`));
+}
+
+describe('pause and resume', () => {
+  it('pauses, then resumes, the job it is watching', async () => {
+    const { hook, stream } = await building();
+
     await act(async () => {
-      await result.current.undoJob('job-sse-test');
+      await hook.result.current.pauseSend();
     });
+    expect(calls('pause')).toEqual([['/api/agent/jobs/job-1/pause', { method: 'POST' }]]);
+    expect(hook.result.current.send).toEqual({ kind: 'paused', jobId: 'job-1', placed: 25, total: 100 });
 
-    expect(result.current.send.kind).toBe('undoing');
+    // The route emits the move too; the panel agrees with it rather than flickering.
+    act(() => stream.emit({ jobId: 'job-1', status: 'paused', placed: 25, total: 100 }));
+    expect(hook.result.current.send.kind).toBe('paused');
+
+    await act(async () => {
+      await hook.result.current.resumeSend();
+    });
+    expect(calls('resume')).toEqual([['/api/agent/jobs/job-1/resume', { method: 'POST' }]]);
+    expect(hook.result.current.send).toMatchObject({ kind: 'progress', status: 'building', placed: 25 });
+    expect(hook.result.current.controlError).toBeNull();
+  });
+
+  it('follows a pause made in game, from the stream alone', async () => {
+    const { hook, stream } = await building();
+    act(() => stream.emit({ jobId: 'job-1', status: 'paused', placed: 30, total: 100 }));
+    expect(hook.result.current.send).toEqual({ kind: 'paused', jobId: 'job-1', placed: 30, total: 100 });
+  });
+
+  it('shows a refused pause without pretending the build paused', async () => {
+    const { hook } = await building();
+    controlReplies.pause = {
+      status: 409,
+      body: { error: 'agent_offline', message: 'That Minecraft world is not connected right now.' },
+    };
+
+    await act(async () => {
+      await hook.result.current.pauseSend();
+    });
+    expect(hook.result.current.send.kind).toBe('progress');
+    expect(hook.result.current.controlError).toBe('That Minecraft world is not connected right now.');
+  });
+
+  it('sends nothing when there is no build in progress to pause', async () => {
+    const hook = renderHook(() => useAgents());
+    await act(async () => {
+      await hook.result.current.pauseSend();
+      await hook.result.current.resumeSend();
+    });
+    expect(calls('pause')).toEqual([]);
+    expect(calls('resume')).toEqual([]);
+  });
+});
+
+describe('undo', () => {
+  /** A hook whose build has finished: 100 blocks, done. */
+  async function done() {
+    const { hook, stream } = await building();
+    act(() => stream.emit({ jobId: 'job-1', status: 'done', placed: 100, total: 100 }));
+    expect(hook.result.current.send).toEqual({ kind: 'done', jobId: 'job-1', placed: 100 });
+    return hook;
+  }
+
+  it('undoes a finished build and follows it to undone', async () => {
+    const hook = await done();
+
+    await act(async () => {
+      await hook.result.current.undoJob();
+    });
+    expect(calls('undo')).toEqual([['/api/agent/jobs/job-1/undo', { method: 'POST' }]]);
+    const stream = MockEventSource.latest();
+    expect(stream.url).toBe('/api/agent/jobs/job-1/events');
+
+    // The replay is `undoing` — the route moved the job before answering — and the count
+    // falls as blocks come back out.
+    act(() => stream.emit({ jobId: 'job-1', status: 'undoing', placed: 100, total: 100 }));
+    act(() => stream.emit({ jobId: 'job-1', status: 'undoing', placed: 40, total: 100 }));
+    expect(hook.result.current.send).toEqual({ kind: 'undoing', jobId: 'job-1', placed: 40, total: 100 });
+
+    act(() => stream.emit({ jobId: 'job-1', status: 'undone', placed: 0, total: 100 }));
+    expect(hook.result.current.send).toEqual({ kind: 'undone', jobId: 'job-1' });
+    expect(stream.closed).toBe(true);
+  });
+
+  it('keeps the build as done, with the reason, when the mod refuses the undo', async () => {
+    const hook = await done();
+    await act(async () => {
+      await hook.result.current.undoJob();
+    });
+    const stream = MockEventSource.latest();
+
+    act(() =>
+      stream.emit({ jobId: 'job-1', status: 'done', error: 'could not undo: this world only remembers its most recent build' }),
+    );
+    expect(hook.result.current.send).toEqual({
+      kind: 'done',
+      jobId: 'job-1',
+      placed: 100,
+      undoError: 'could not undo: this world only remembers its most recent build',
+    });
+  });
+
+  it('does not open a stream, or leave done, when the route refuses', async () => {
+    const hook = await done();
+    const streamsBefore = MockEventSource.instances.length;
+    controlReplies.undo = { status: 409, body: { error: 'invalid_state', message: 'cannot undo a job that is cancelled' } };
+
+    await act(async () => {
+      await hook.result.current.undoJob();
+    });
+    expect(MockEventSource.instances.length).toBe(streamsBefore);
+    expect(hook.result.current.send.kind).toBe('done');
+    expect(hook.result.current.controlError).toBe('cannot undo a job that is cancelled');
+  });
+
+  it('reports a lost stream during an undo instead of hanging on undoing', async () => {
+    const hook = await done();
+    await act(async () => {
+      await hook.result.current.undoJob();
+    });
+    const stream = MockEventSource.latest();
+    act(() => stream.onerror?.());
+    expect(hook.result.current.send).toMatchObject({ kind: 'error', message: 'lost the connection while undoing' });
+  });
+
+  it('follows an undo started in game while it was still watching the build', async () => {
+    const { hook, stream } = await building();
+    act(() => stream.emit({ jobId: 'job-1', status: 'undoing', placed: 20, total: 100 }));
+    expect(hook.result.current.send.kind).toBe('undoing');
+    act(() => stream.emit({ jobId: 'job-1', status: 'undone', placed: 0, total: 100 }));
+    expect(hook.result.current.send).toEqual({ kind: 'undone', jobId: 'job-1' });
   });
 });

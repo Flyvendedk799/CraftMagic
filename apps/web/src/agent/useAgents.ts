@@ -49,8 +49,17 @@ export type SendState =
   | { kind: 'queued'; jobId: string }
   | { kind: 'progress'; jobId: string; status: string; placed: number; total: number }
   | { kind: 'paused'; jobId: string; placed: number; total: number }
+  /**
+   * The mod is putting back what a finished build replaced. `placed` is how many of the
+   * build's blocks are still standing, so it falls toward zero; `total` is the build's size.
+   */
   | { kind: 'undoing'; jobId: string; placed: number; total: number }
-  | { kind: 'done'; jobId?: string; placed: number }
+  /**
+   * Finished. `undoError` is set when an undo was asked for and the mod refused it — the build
+   * is still standing, so this is still `done`, with the reason beside it.
+   */
+  | { kind: 'done'; jobId?: string; placed: number; undoError?: string }
+  | { kind: 'undone'; jobId: string }
   | { kind: 'cancelled'; jobId?: string; placed?: number }
   | {
       kind: 'error';
@@ -114,21 +123,24 @@ export interface UseAgents {
    * cancelling is a stop, not an undo, and nothing here can pretend otherwise.
    */
   cancelSend: () => Promise<void>;
-  /**
-   * Pause an active build job in Minecraft.
-   * Calls POST /api/agent/jobs/:id/pause.
-   */
+  /** Pause the build this panel is watching. The server only allows it while it is building. */
   pauseSend: () => Promise<void>;
-  /**
-   * Resume a paused build job in Minecraft.
-   * Calls POST /api/agent/jobs/:id/resume.
-   */
+  /** Resume it. Only from paused. */
   resumeSend: () => Promise<void>;
   /**
-   * Dismantle placed blocks in Minecraft for a completed or cancelled build job.
-   * Calls POST /api/agent/jobs/:id/undo.
+   * Take a finished build back out of the world, putting back what it replaced.
+   *
+   * Only for a `done` build — the server refuses anything else, because the mod only keeps
+   * what it needs for this about its most recent build. Defaults to the job this panel sent.
    */
-  undoJob: (jobId: string) => Promise<void>;
+  undoJob: (jobId?: string) => Promise<void>;
+  /**
+   * Why the last pause, resume or undo was refused, or null.
+   *
+   * Kept apart from `send`: a refused pause has not changed the build, and replacing its
+   * progress bar with an error would say it had. Cleared by the next control or send.
+   */
+  controlError: string | null;
 }
 
 /** Poll while a pairing code is on screen, so the list flips to "online" without a refresh. */
@@ -141,6 +153,7 @@ export function useAgents(): UseAgents {
   const [loading, setLoading] = useState(true);
   const [pairCode, setPairCode] = useState<PairCode | null>(null);
   const [send, setSend] = useState<SendState>({ kind: 'idle' });
+  const [controlError, setControlError] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const lastJobIdRef = useRef<string | null>(null);
 
@@ -209,6 +222,7 @@ export function useAgents(): UseAgents {
   const resetSend = useCallback(() => {
     sourceRef.current?.close();
     sourceRef.current = null;
+    setControlError(null);
     setSend({ kind: 'idle' });
   }, []);
 
@@ -245,127 +259,117 @@ export function useAgents(): UseAgents {
     }
   }, [send]);
 
-  const pauseSend = useCallback(async () => {
-    const jobId =
-      send.kind === 'progress' ||
-      send.kind === 'paused' ||
-      send.kind === 'queued'
-        ? send.jobId
-        : lastJobIdRef.current;
-    if (!jobId) return;
+  /**
+   * POST one of the job controls and say whether it was accepted.
+   *
+   * A refusal is shown, not swallowed: a 409 here means the world is offline or the job has
+   * already moved on (finished while the button was being pressed), and a button that silently
+   * does nothing reads as a broken button.
+   */
+  const control = useCallback(async (jobId: string, action: 'pause' | 'resume' | 'undo'): Promise<boolean> => {
+    setControlError(null);
     try {
-      const response = await fetch(`/api/agent/jobs/${jobId}/pause`, { method: 'POST' });
-      if (response.ok) {
-        setSend((prev) => {
-          if (prev.kind === 'progress') {
-            return { kind: 'paused', jobId, placed: prev.placed, total: prev.total };
-          }
-          return prev;
-        });
-      }
-    } catch {
-      // mod will hear over the socket
+      const response = await fetch(`/api/agent/jobs/${jobId}/${action}`, { method: 'POST' });
+      if (response.ok) return true;
+      const body = await response.json().catch(() => ({}));
+      setControlError(body.message ?? `could not ${action} the build (HTTP ${response.status})`);
+    } catch (err) {
+      setControlError((err as Error).message);
     }
-  }, [send]);
+    return false;
+  }, []);
+
+  const pauseSend = useCallback(async () => {
+    if (send.kind !== 'progress') return;
+    const { jobId } = send;
+    if (!(await control(jobId, 'pause'))) return;
+    // The stream says so too, a moment later; this just keeps the button from flickering.
+    setSend((prev) =>
+      prev.kind === 'progress' && prev.jobId === jobId
+        ? { kind: 'paused', jobId, placed: prev.placed, total: prev.total }
+        : prev,
+    );
+  }, [send, control]);
 
   const resumeSend = useCallback(async () => {
-    const jobId =
-      send.kind === 'progress' ||
-      send.kind === 'paused' ||
-      send.kind === 'queued'
-        ? send.jobId
-        : lastJobIdRef.current;
-    if (!jobId) return;
-    try {
-      const response = await fetch(`/api/agent/jobs/${jobId}/resume`, { method: 'POST' });
-      if (response.ok) {
-        setSend((prev) => {
-          if (prev.kind === 'paused') {
-            return {
-              kind: 'progress',
-              jobId,
-              status: 'building',
-              placed: prev.placed,
-              total: prev.total,
-            };
-          }
-          return prev;
-        });
-      }
-    } catch {
-      // mod will hear over the socket
-    }
-  }, [send]);
+    if (send.kind !== 'paused') return;
+    const { jobId } = send;
+    if (!(await control(jobId, 'resume'))) return;
+    setSend((prev) =>
+      prev.kind === 'paused' && prev.jobId === jobId
+        ? { kind: 'progress', jobId, status: 'building', placed: prev.placed, total: prev.total }
+        : prev,
+    );
+  }, [send, control]);
 
-  const undoJob = useCallback(async (jobIdToUndo: string) => {
-    const targetJobId =
-      jobIdToUndo ||
-      (send.kind === 'done' ||
-      send.kind === 'cancelled' ||
-      send.kind === 'progress' ||
-      send.kind === 'paused' ||
-      send.kind === 'undoing'
-        ? send.jobId
-        : lastJobIdRef.current);
-    if (!targetJobId) return;
-    sourceRef.current?.close();
-    setSend({ kind: 'undoing', jobId: targetJobId, placed: 0, total: 0 });
+  const undoJob = useCallback(
+    async (jobIdToUndo?: string) => {
+      const targetJobId =
+        jobIdToUndo || (send.kind === 'done' && send.jobId ? send.jobId : lastJobIdRef.current);
+      if (!targetJobId) return;
+      const placedBefore = send.kind === 'done' ? send.placed : 0;
 
-    try {
-      const response = await fetch(`/api/agent/jobs/${targetJobId}/undo`, { method: 'POST' });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        setSend({
-          kind: 'error',
-          message: body.message ?? `could not undo the build (HTTP ${response.status})`,
-          jobId: targetJobId,
-        });
-        return;
-      }
+      if (!(await control(targetJobId, 'undo'))) return;
 
-      // Reconnect SSE to stream teardown dismantling progress
-      if (typeof EventSource !== 'undefined') {
-        const source = new EventSource(`/api/agent/jobs/${targetJobId}/events`);
-        sourceRef.current = source;
+      sourceRef.current?.close();
+      sourceRef.current = null;
+      setSend({ kind: 'undoing', jobId: targetJobId, placed: placedBefore, total: placedBefore });
 
-        source.onmessage = (event) => {
-          const progress: JobProgress = JSON.parse(event.data);
-          if (progress.status === 'done') {
-            source.close();
-            sourceRef.current = null;
-            setSend({ kind: 'done', jobId: targetJobId, placed: progress.placed ?? 0 });
-            return;
-          }
-          if (progress.status === 'failed' || progress.status === 'cancelled') {
-            source.close();
-            sourceRef.current = null;
+      if (typeof EventSource === 'undefined') return;
+
+      // The route has already moved the job to `undoing`, so the first thing this stream
+      // replays is that, not the `done` it was a moment ago.
+      const source = new EventSource(`/api/agent/jobs/${targetJobId}/events`);
+      sourceRef.current = source;
+      const finish = (next: SendState) => {
+        source.close();
+        if (sourceRef.current === source) sourceRef.current = null;
+        setSend(next);
+      };
+
+      source.onmessage = (event) => {
+        const progress: JobProgress = JSON.parse(event.data);
+        switch (progress.status) {
+          case 'undoing':
             setSend({
-              kind: 'error',
-              message: progress.error ?? `the undo was ${progress.status}`,
+              kind: 'undoing',
               jobId: targetJobId,
-              cancelled: progress.status === 'cancelled',
+              placed: progress.placed ?? 0,
+              total: progress.total ?? 0,
             });
             return;
-          }
-          setSend({
-            kind: 'undoing',
-            jobId: targetJobId,
-            placed: progress.placed ?? 0,
-            total: progress.total ?? 0,
-          });
-        };
+          case 'undone':
+            finish({ kind: 'undone', jobId: targetJobId });
+            return;
+          case 'done':
+            // The mod refused: it no longer remembers this build (restarted, or something newer
+            // was built since). The blocks are all still there.
+            finish({
+              kind: 'done',
+              jobId: targetJobId,
+              placed: progress.placed ?? placedBefore,
+              undoError: progress.error ?? 'Minecraft could not undo this build.',
+            });
+            return;
+          case 'cancelled':
+            finish({ kind: 'cancelled', jobId: targetJobId, placed: progress.placed ?? 0 });
+            return;
+          case 'failed':
+            finish({ kind: 'error', message: progress.error ?? 'the undo failed', jobId: targetJobId });
+            return;
+          default:
+            return;
+        }
+      };
 
-        source.onerror = () => {
-          if (sourceRef.current === source) {
-            source.close();
-            sourceRef.current = null;
-          }
-        };
-      }
-    } catch (err) {
-      setSend({ kind: 'error', message: (err as Error).message, jobId: targetJobId });
-    }
-  }, [send]);
+      source.onerror = () => {
+        if (sourceRef.current === source) {
+          finish({ kind: 'error', message: 'lost the connection while undoing', jobId: targetJobId });
+        }
+      };
+    },
+    [send, control],
+  );
 
   const cancelJob = useCallback(async (jobId: string) => {
     try {
@@ -379,6 +383,7 @@ export function useAgents(): UseAgents {
 
   const sendToGame = useCallback<UseAgents['sendToGame']>(async (agentId, build) => {
     sourceRef.current?.close();
+    setControlError(null);
     setSend({ kind: 'saving' });
 
     try {
@@ -475,13 +480,21 @@ export function useAgents(): UseAgents {
             });
             return;
           }
-          if (progress.status === 'undoing' || progress.status === 'dismantling') {
+          // An undo started in game (/craftmagic undo) while this panel was still watching
+          // the build — the mod reports it on the same job.
+          if (progress.status === 'undoing') {
             setSend({
               kind: 'undoing',
               jobId,
               placed: progress.placed ?? 0,
               total: progress.total ?? 0,
             });
+            return;
+          }
+          if (progress.status === 'undone') {
+            source.close();
+            sourceRef.current = null;
+            setSend({ kind: 'undone', jobId });
             return;
           }
 
@@ -521,6 +534,7 @@ export function useAgents(): UseAgents {
     pauseSend,
     resumeSend,
     undoJob,
+    controlError,
     refresh,
     createPairCode,
     clearPairCode,

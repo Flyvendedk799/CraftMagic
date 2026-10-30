@@ -293,7 +293,7 @@ public final class JobManager {
 				report(active);
 			}
 			if (moved) {
-				active.bot.setName(botPrefix(active.task) + percent(progress, totalOf(active.task)) + "%");
+				active.bot.setName(botPrefix(active.task) + percentDone(active.task) + "%");
 			}
 		}
 
@@ -319,13 +319,20 @@ public final class JobManager {
 		return task.isPaused() ? "paused" : "building";
 	}
 
-	/** Blocks placed while building, or blocks put back while undoing. */
+	/**
+	 * The count reported to the server: how many of this build's blocks are in the world.
+	 *
+	 * <p>It rises while building and falls while undoing, so the job row means the same thing
+	 * throughout — and an undo starts from the count the row already holds rather than jumping
+	 * to zero and back.
+	 */
 	private static int progressOf(BuildTask task) {
-		return task.isUndoing() ? task.undone() : task.placed();
+		return task.isUndoing() ? task.undoTotal() - task.undone() : task.placed();
 	}
 
-	private static int totalOf(BuildTask task) {
-		return task.isUndoing() ? task.undoTotal() : task.total();
+	/** For the action bar and the bot's name tag: how far the current activity has got. */
+	private static int percentDone(BuildTask task) {
+		return task.isUndoing() ? percent(task.undone(), task.undoTotal()) : percent(task.placed(), task.total());
 	}
 
 	private static String botPrefix(BuildTask task) {
@@ -334,7 +341,7 @@ public final class JobManager {
 	}
 
 	private void report(ActiveBuild build) {
-		socket.send(Protocol.jobState(build.jobId, stateOf(build.task), progressOf(build.task), totalOf(build.task)));
+		socket.send(Protocol.jobState(build.jobId, stateOf(build.task), progressOf(build.task), build.task.total()));
 	}
 
 	/**
@@ -360,9 +367,9 @@ public final class JobManager {
 		if (progressAudience.isEmpty()) return;
 
 		BuildTask task = build.task;
-		int done = progressOf(task);
-		int total = totalOf(task);
-		int pct = percent(done, total);
+		int done = task.isUndoing() ? task.undone() : task.placed();
+		int total = task.isUndoing() ? task.undoTotal() : task.total();
+		int pct = percentDone(task);
 		int filled = Math.min(10, Math.max(0, pct / 10));
 		String bar = "█".repeat(filled) + "░".repeat(10 - filled);
 		ChatFormatting color = task.isPaused() ? ChatFormatting.YELLOW : (task.isUndoing() ? ChatFormatting.GOLD : ChatFormatting.GREEN);
@@ -393,7 +400,7 @@ public final class JobManager {
 		// blocks can still be taken back out with /craftmagic undo.
 		if (task.isCancelled()) {
 			finished.bot.despawn();
-			socket.send(Protocol.jobState(finished.jobId, "cancelled", progressOf(task), totalOf(task)));
+			socket.send(Protocol.jobState(finished.jobId, "cancelled", progressOf(task), task.total()));
 			broadcast(Component.literal("CraftMagic: " + (task.isUndoing() ? "undo" : "build") + " stopped.")
 					.withStyle(ChatFormatting.GRAY));
 			lastFinished = finished;
@@ -404,7 +411,7 @@ public final class JobManager {
 		// job as something that went wrong, and this is the thing the player asked for.
 		if (task.isUndoing()) {
 			finished.bot.despawn();
-			socket.send(Protocol.jobState(finished.jobId, "undone", task.undone(), task.undoTotal()));
+			socket.send(Protocol.jobState(finished.jobId, "undone", progressOf(task), task.total()));
 			broadcast(Component.literal("CraftMagic: build undone — " + task.undone() + " blocks put back.")
 					.withStyle(ChatFormatting.GOLD));
 			return;

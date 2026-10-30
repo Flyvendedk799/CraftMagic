@@ -65,36 +65,13 @@ export function SendToGame({ name, grid, program, detached = false, getEdits }: 
     pauseSend,
     resumeSend,
     undoJob,
+    controlError,
   } = useAgents();
   const [copied, setCopied] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-
-  const isNativeConfirm =
-    typeof window !== 'undefined' &&
-    typeof window.confirm === 'function' &&
-    window.confirm.toString().includes('[native code]');
-
-  const handleUndo = useCallback(
-    (targetJobId?: string) => {
-      if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-        try {
-          const confirmed = window.confirm('Tear down the placed blocks in Minecraft?');
-          if (confirmed) {
-            void undoJob(targetJobId ?? '');
-            setShowConfirm(false);
-            return;
-          }
-          if (isNativeConfirm) {
-            return;
-          }
-        } catch {
-          // jsdom without mock throws
-        }
-      }
-      setShowConfirm(true);
-    },
-    [undoJob, isNativeConfirm],
-  );
+  // Undo rewrites a whole build's worth of the player's world, so it asks first — in the page
+  // rather than with window.confirm, which some embedded browsers suppress and which cannot be
+  // styled to say what is about to happen.
+  const [confirmingUndo, setConfirmingUndo] = useState(false);
 
   const copyCommand = useCallback(async () => {
     if (!pairCode) return;
@@ -240,11 +217,15 @@ export function SendToGame({ name, grid, program, detached = false, getEdits }: 
               </span>
             </>
           )}{' '}
-          {send.status !== 'previewing' && (
+          {/* Only while blocks are going down: the server refuses to pause anything else, and
+              a job still waiting to be placed has nothing to pause. */}
+          {send.status === 'building' && (
             <button type="button" className="tools__inline" onClick={() => void pauseSend()}>
               Pause
             </button>
           )}{' '}
+          {/* Stopping matters most here, once blocks are actually going down. It is a stop, not
+              an undo — what is placed stays placed — and the wording has to say so. */}
           <button type="button" className="tools__inline" onClick={() => void cancelSend()}>
             Stop building
           </button>
@@ -275,26 +256,73 @@ export function SendToGame({ name, grid, program, detached = false, getEdits }: 
 
       {send.kind === 'undoing' && (
         <div className="agent__status">
-          Dismantling… {send.placed.toLocaleString()} / {send.total.toLocaleString()}
+          Undoing… {(send.total - send.placed).toLocaleString()} / {send.total.toLocaleString()} put back
           <span className="agent__bar agent__bar--teardown">
-            <span style={{ width: `${send.total ? Math.round((send.placed / send.total) * 100) : 0}%` }} />
+            <span
+              style={{
+                width: `${send.total ? Math.round(((send.total - send.placed) / send.total) * 100) : 0}%`,
+              }}
+            />
           </span>{' '}
           <button type="button" className="tools__inline" onClick={() => void cancelSend()}>
-            stop
+            stop undoing
           </button>
         </div>
       )}
 
       {send.kind === 'done' && (
+        <div className="agent__status agent__status--ok">
+          <p>
+            Built — {send.placed.toLocaleString()} blocks placed.{' '}
+            {/* Undo is only offered here: the mod keeps what it needs to put the world back for
+                its most recent build only, and a finished one is the case it is sure of. */}
+            {!confirmingUndo && (
+              <button
+                type="button"
+                className="tools__inline agent__undo-btn"
+                onClick={() => setConfirmingUndo(true)}
+              >
+                Undo in game
+              </button>
+            )}{' '}
+            <button type="button" className="agent__link" onClick={resetSend}>
+              Send again
+            </button>
+          </p>
+          {send.undoError && (
+            <p className="agent__status--error" role="alert">
+              {send.undoError}
+            </p>
+          )}
+          {confirmingUndo && (
+            <div className="agent__confirm" role="dialog" aria-label="Confirm undo">
+              <p className="agent__confirm-prompt">
+                Take this build back out of Minecraft? Whatever it replaced is put back; blocks
+                you have changed since are left alone.
+              </p>
+              <div className="agent__confirm-actions">
+                <button
+                  type="button"
+                  className="tools__inline agent__confirm-btn--danger"
+                  onClick={() => {
+                    setConfirmingUndo(false);
+                    void undoJob(send.jobId);
+                  }}
+                >
+                  Undo it
+                </button>
+                <button type="button" className="tools__inline" onClick={() => setConfirmingUndo(false)}>
+                  Keep it
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {send.kind === 'undone' && (
         <p className="agent__status agent__status--ok">
-          Built — {send.placed.toLocaleString()} blocks placed.{' '}
-          <button
-            type="button"
-            className="tools__inline agent__undo-btn"
-            onClick={() => handleUndo(send.jobId)}
-          >
-            Undo in game
-          </button>{' '}
+          Undone — what was there before is back.{' '}
           <button type="button" className="agent__link" onClick={resetSend}>
             Send again
           </button>
@@ -303,45 +331,22 @@ export function SendToGame({ name, grid, program, detached = false, getEdits }: 
 
       {send.kind === 'cancelled' && (
         <p className="agent__status">
-          Cancelled — {send.placed ? `${send.placed.toLocaleString()} blocks placed.` : 'build stopped.'}{' '}
-          <button
-            type="button"
-            className="tools__inline agent__undo-btn"
-            onClick={() => handleUndo(send.jobId)}
-          >
-            Undo in game
-          </button>{' '}
+          Stopped — {send.placed ? `${send.placed.toLocaleString()} blocks were placed and stay placed.` : 'nothing was placed.'}{' '}
+          {send.placed ? (
+            <>
+              To take them back out, run <code>/craftmagic undo</code> in game.{' '}
+            </>
+          ) : null}
           <button type="button" className="agent__link" onClick={resetSend}>
             Dismiss
           </button>
         </p>
       )}
 
-      {showConfirm && (
-        <div className="agent__confirm" role="dialog" aria-label="Confirm undo">
-          <p className="agent__confirm-prompt">Tear down the placed blocks in Minecraft?</p>
-          <div className="agent__confirm-actions">
-            <button
-              type="button"
-              className="tools__inline agent__confirm-btn--danger"
-              onClick={() => {
-                setShowConfirm(false);
-                const targetJobId =
-                  send.kind === 'done' || send.kind === 'cancelled' ? send.jobId : undefined;
-                void undoJob(targetJobId ?? '');
-              }}
-            >
-              Tear down
-            </button>
-            <button
-              type="button"
-              className="tools__inline"
-              onClick={() => setShowConfirm(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
+      {controlError && (
+        <p className="agent__status agent__status--error" role="alert">
+          {controlError}
+        </p>
       )}
 
       {send.kind === 'error' && (

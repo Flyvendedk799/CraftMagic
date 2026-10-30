@@ -165,6 +165,14 @@ export function useAgents(): UseAgents {
    * gives up if it has moved on.
    */
   const generationRef = useRef(0);
+  /**
+   * The undo request still in flight, resolving to whether the server accepted it.
+   *
+   * The panel shows `undoing` (and its Stop) from the moment Undo is pressed, but the job is
+   * still `done` on the server until this resolves — a cancel sent in that window is refused,
+   * and the undo then goes ahead anyway. So a Stop pressed then waits for this first.
+   */
+  const undoRequestRef = useRef<Promise<boolean> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -237,13 +245,13 @@ export function useAgents(): UseAgents {
   }, []);
 
   /**
-   * Stop a running build.
+   * Stop a running build (or a running undo).
    *
-   * The stream is closed first and the state cleared regardless of what the server says: a
-   * cancel that fails still means the user asked to stop watching, and leaving a progress
-   * bar creeping upward after they pressed Stop is worse than losing the last few percent
-   * of a count. The server has its own copy of the truth and the mod hears it over the
-   * socket, so nothing depends on this response.
+   * The panel only says "Stopped" once the server has accepted the cancel. It used to say so
+   * straight away and ignore the answer, which was fine while the route accepted anything — it
+   * no longer does, and a refused cancel (the build finished in the meantime, or an undo had
+   * not been accepted yet) means nothing stopped. A refusal is shown as `controlError` and the
+   * panel keeps following the job.
    */
   const cancelSend = useCallback(async () => {
     const jobId =
@@ -253,20 +261,39 @@ export function useAgents(): UseAgents {
       send.kind === 'undoing'
         ? send.jobId
         : lastJobIdRef.current;
+    if (!jobId) {
+      setSend({ kind: 'idle' });
+      return;
+    }
+    setControlError(null);
+
+    // An undo that has not been accepted yet: the job is still `done`, so a cancel now would
+    // be refused while the undo went ahead. Wait for its answer, then stop it.
+    const pendingUndo = undoRequestRef.current;
+    if (pendingUndo && !(await pendingUndo)) return; // refused: nothing is running to stop
+
+    let refusal: string | null = null;
+    try {
+      const response = await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        refusal = body.message ?? `could not stop it (HTTP ${response.status})`;
+      }
+    } catch (err) {
+      refusal = (err as Error).message;
+    }
+    if (refusal) {
+      setControlError(refusal);
+      return;
+    }
+
     sourceRef.current?.close();
     sourceRef.current = null;
-    const placed =
-      'placed' in send && typeof send.placed === 'number' ? send.placed : 0;
-    if (jobId) {
-      setSend({ kind: 'cancelled', jobId, placed });
-      try {
-        await fetch(`/api/agent/jobs/${jobId}/cancel`, { method: 'POST' });
-      } catch {
-        // Already stopped watching; the mod finds out over the socket either way.
-      }
-    } else {
-      setSend({ kind: 'idle' });
-    }
+    setSend((prev) => ({
+      kind: 'cancelled',
+      jobId,
+      placed: 'placed' in prev && typeof prev.placed === 'number' ? prev.placed : 0,
+    }));
   }, [send]);
 
   /**
@@ -330,7 +357,10 @@ export function useAgents(): UseAgents {
       sourceRef.current = null;
       setSend({ kind: 'undoing', jobId: targetJobId, placed: placedBefore, total: placedBefore });
 
-      const accepted = await control(targetJobId, 'undo');
+      const request = control(targetJobId, 'undo');
+      undoRequestRef.current = request;
+      const accepted = await request;
+      if (undoRequestRef.current === request) undoRequestRef.current = null;
       if (generation !== generationRef.current) return;
       if (!accepted) {
         // Refused (offline, or no longer done): nothing changed in the world, so put the panel

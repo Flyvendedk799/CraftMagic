@@ -141,6 +141,32 @@ describe('pause and resume', () => {
   });
 });
 
+describe('stop', () => {
+  it('says Stopped once the server accepts the cancel', async () => {
+    const { hook, stream } = await building();
+    await act(async () => {
+      await hook.result.current.cancelSend();
+    });
+    expect(calls('cancel')).toEqual([['/api/agent/jobs/job-1/cancel', { method: 'POST' }]]);
+    expect(hook.result.current.send).toEqual({ kind: 'cancelled', jobId: 'job-1', placed: 25 });
+    expect(stream.closed).toBe(true);
+  });
+
+  it('never says Stopped when the cancel is refused, and keeps following the job', async () => {
+    const { hook, stream } = await building();
+    controlReplies.cancel = { status: 409, body: { error: 'invalid_state', message: 'cannot cancel a job that is done' } };
+
+    await act(async () => {
+      await hook.result.current.cancelSend();
+    });
+    expect(hook.result.current.send.kind).toBe('progress');
+    expect(hook.result.current.controlError).toBe('cannot cancel a job that is done');
+    expect(stream.closed).toBe(false);
+    act(() => stream.emit({ jobId: 'job-1', status: 'done', placed: 100, total: 100 }));
+    expect(hook.result.current.send.kind).toBe('done');
+  });
+});
+
 describe('undo', () => {
   /** A hook whose build has finished: 100 blocks, done. */
   async function done() {
@@ -272,6 +298,73 @@ describe('undo', () => {
     });
     expect(MockEventSource.latest().url).toBe('/api/agent/jobs/job-1/events');
     expect(hook.result.current.send.kind).toBe('undoing');
+  });
+
+  /** Hold the undo request open until the test answers it. */
+  function holdUndo(): (status: number, body?: Record<string, unknown>) => void {
+    let answer: (value: unknown) => void = () => undefined;
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+      String(url).endsWith('/undo')
+        ? new Promise((resolve) => {
+            answer = resolve;
+          })
+        : base(url, init),
+    );
+    return (status, body = { ok: true }) =>
+      answer({ ok: status >= 200 && status < 300, status, json: async () => body });
+  }
+
+  it('holds a Stop pressed before the undo is accepted, then stops the undo', async () => {
+    const hook = await done();
+    const answerUndo = holdUndo();
+
+    let undo: Promise<void> = Promise.resolve();
+    act(() => {
+      undo = hook.result.current.undoJob();
+    });
+    let stop: Promise<void> = Promise.resolve();
+    act(() => {
+      stop = hook.result.current.cancelSend();
+    });
+    // The job is still `done` on the server: a cancel now would be refused and the undo would
+    // go ahead regardless. Nothing is sent, and nothing says "Stopped".
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(calls('cancel')).toEqual([]);
+    expect(hook.result.current.send.kind).toBe('undoing');
+
+    await act(async () => {
+      answerUndo(200);
+      await undo;
+      await stop;
+    });
+    const order = fetchMock.mock.calls.map(([url]) => String(url)).filter((u) => /\/(undo|cancel)$/.test(u));
+    expect(order).toEqual(['/api/agent/jobs/job-1/undo', '/api/agent/jobs/job-1/cancel']);
+    expect(hook.result.current.send.kind).toBe('cancelled');
+    expect(hook.result.current.controlError).toBeNull();
+  });
+
+  it('sends no cancel when the pending undo it was waiting for is refused', async () => {
+    const hook = await done();
+    const answerUndo = holdUndo();
+
+    let undo: Promise<void> = Promise.resolve();
+    let stop: Promise<void> = Promise.resolve();
+    act(() => {
+      undo = hook.result.current.undoJob();
+    });
+    act(() => {
+      stop = hook.result.current.cancelSend();
+    });
+    await act(async () => {
+      answerUndo(409, { error: 'agent_offline', message: 'That Minecraft world is not connected right now.' });
+      await undo;
+      await stop;
+    });
+    expect(calls('cancel')).toEqual([]);
+    expect(hook.result.current.send).toEqual({ kind: 'done', jobId: 'job-1', placed: 100 });
   });
 
   it('follows an undo started in game while it was still watching the build', async () => {

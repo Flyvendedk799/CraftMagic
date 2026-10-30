@@ -426,7 +426,9 @@ public final class WandHandler {
 
 		BlockPos origin =
 				Footprint.origin(schematic.width(), schematic.length(), anchor.rotation(), anchor.pos().above(anchor.yOffset()));
-		String problem = jobs.startBuildAt(player.level(), origin, anchor.rotation());
+		// The player is passed through so the build's progress follows them on the action bar,
+		// rather than going to whoever happens to be near the bot.
+		String problem = jobs.startBuildAt(player.level(), origin, anchor.rotation(), player);
 		if (problem != null) {
 			refuse(player, problem);
 			return;

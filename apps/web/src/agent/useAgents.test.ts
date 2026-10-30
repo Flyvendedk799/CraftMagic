@@ -212,6 +212,37 @@ describe('undo', () => {
     expect(hook.result.current.send).toMatchObject({ kind: 'error', message: 'lost the connection while undoing' });
   });
 
+  it('does not let a slow undo request take over a send started while it was waiting', async () => {
+    const hook = await done();
+    let answerUndo: (value: unknown) => void = () => undefined;
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+      String(url).endsWith('/undo')
+        ? new Promise((resolve) => {
+            answerUndo = resolve;
+          })
+        : base(url, init),
+    );
+
+    let undoing: Promise<void> = Promise.resolve();
+    act(() => {
+      undoing = hook.result.current.undoJob();
+    });
+    await act(async () => {
+      await hook.result.current.sendToGame('agent-2', { name: 'Tower', grid, program: null });
+    });
+    const newStream = MockEventSource.latest();
+    act(() => newStream.emit({ jobId: 'job-1', status: 'building', placed: 5, total: 50 }));
+
+    await act(async () => {
+      answerUndo({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      await undoing;
+    });
+    expect(newStream.closed).toBe(false);
+    expect(MockEventSource.latest()).toBe(newStream);
+    expect(hook.result.current.send).toMatchObject({ kind: 'progress', placed: 5, total: 50 });
+  });
+
   it('follows an undo started in game while it was still watching the build', async () => {
     const { hook, stream } = await building();
     act(() => stream.emit({ jobId: 'job-1', status: 'undoing', placed: 20, total: 100 }));

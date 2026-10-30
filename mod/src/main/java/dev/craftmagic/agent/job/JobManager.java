@@ -340,8 +340,15 @@ public final class JobManager {
 		return task.isPaused() ? "⏸ " : "⚒ ";
 	}
 
+	/**
+	 * While undoing, the total is the journal's size, not the schematic's: blocks above the
+	 * height limit or identical to what was already there were never recorded, and measuring
+	 * the countdown against the larger number would show some of them as already put back.
+	 */
 	private void report(ActiveBuild build) {
-		socket.send(Protocol.jobState(build.jobId, stateOf(build.task), progressOf(build.task), build.task.total()));
+		BuildTask task = build.task;
+		int total = task.isUndoing() ? task.undoTotal() : task.total();
+		socket.send(Protocol.jobState(build.jobId, stateOf(task), progressOf(task), total));
 	}
 
 	/**

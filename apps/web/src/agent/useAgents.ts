@@ -156,6 +156,15 @@ export function useAgents(): UseAgents {
   const [controlError, setControlError] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const lastJobIdRef = useRef<string | null>(null);
+  /**
+   * Bumped by every action that takes over the panel (a send, an undo, a reset).
+   *
+   * An undo awaits its request before it touches the panel, and the user can start a new send
+   * in that time; when the old request comes back it must not close the new send's stream and
+   * put the old job's undo on screen. Each action remembers the number it started with and
+   * gives up if it has moved on.
+   */
+  const generationRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -223,6 +232,7 @@ export function useAgents(): UseAgents {
     sourceRef.current?.close();
     sourceRef.current = null;
     setControlError(null);
+    generationRef.current++;
     setSend({ kind: 'idle' });
   }, []);
 
@@ -309,7 +319,9 @@ export function useAgents(): UseAgents {
       if (!targetJobId) return;
       const placedBefore = send.kind === 'done' ? send.placed : 0;
 
-      if (!(await control(targetJobId, 'undo'))) return;
+      const generation = ++generationRef.current;
+      const accepted = await control(targetJobId, 'undo');
+      if (!accepted || generation !== generationRef.current) return;
 
       sourceRef.current?.close();
       sourceRef.current = null;
@@ -384,6 +396,7 @@ export function useAgents(): UseAgents {
   const sendToGame = useCallback<UseAgents['sendToGame']>(async (agentId, build) => {
     sourceRef.current?.close();
     setControlError(null);
+    generationRef.current++;
     setSend({ kind: 'saving' });
 
     try {

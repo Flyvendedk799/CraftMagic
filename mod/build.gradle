@@ -153,3 +153,39 @@ tasks.register('verifyPermissions', JavaExec) {
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'dev.craftmagic.agent.tools.PermissionPolicyCheck'
 }
+
+/**
+ * Check that undo restores what a build replaced, newest first, within its per-tick budget,
+ * and leaves alone any block the player has changed since. The first version set every placed
+ * position to air, which took the terrain under a build away with it.
+ *
+ *   gradlew verifyUndo
+ */
+tasks.register('verifyUndo', JavaExec) {
+	group = 'verification'
+	description = 'Assert undo restores the previous blocks in reverse order and skips player changes.'
+	dependsOn tasks.named('classes')
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'dev.craftmagic.agent.tools.UndoCheck'
+}
+
+/**
+ * Check the wand's pitch direction, the wireframe's particle cap at every size, and the
+ * action-bar throttle.
+ *
+ *   gradlew verifyWand
+ */
+tasks.register('verifyWand', JavaExec) {
+	group = 'verification'
+	description = 'Assert wand pitch direction, the outline particle cap, and action-bar throttling.'
+	dependsOn tasks.named('classes')
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'dev.craftmagic.agent.tools.WandCheck'
+}
+
+// The checks that need no input file run with `gradlew build`, so a regression in any of them
+// fails the build rather than waiting for someone to remember the task name. verifySchematic
+// is left out: it reads a generated .schem that a fresh checkout does not have.
+tasks.named('check') {
+	dependsOn 'verifyPlacement', 'verifyPermissions', 'verifyUndo', 'verifyWand'
+}

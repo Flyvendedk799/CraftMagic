@@ -22,7 +22,7 @@ import net.minecraft.world.phys.Vec3;
  * without installing anything. A custom entity would be invisible to them, or worse, show as
  * a missing-entity error.
  *
- * <p>It is a marker with no gravity and no collision — a hovering construction drone, not a
+ * <p>It has no gravity and moves by teleporting — a hovering construction drone, not a
  * pathfinding creature. Anything that walks would get stuck on the structure it is building.
  */
 public final class BuilderBot {
@@ -43,7 +43,14 @@ public final class BuilderBot {
 		Vec3 start = new Vec3(near.getX() + 0.5, near.getY() + HOVER, near.getZ() + 0.5);
 
 		ArmorStand stand = new ArmorStand(level, start.x, start.y, start.z);
-		stand.setSmall(true);
+		// The stand used to be invisible, so the only thing a player saw was its floating name
+		// tag. It is visible now because it is dressed for the job — arms, a gold helmet, a
+		// glinting pickaxe it swings at every block — and all of that is vanilla equipment on a
+		// vanilla entity, so a client without the mod draws it like any other armour stand.
+		//
+		// setMarker and setSmall are both private in 26.2, so the bot keeps a full-size stand's
+		// hitbox. Invulnerable plus silent covers the cases that matter — it cannot be destroyed
+		// and does not clutter the soundscape while the build runs.
 		stand.setInvisible(false);
 		stand.setShowArms(true);
 		stand.setNoBasePlate(true);
@@ -73,8 +80,9 @@ public final class BuilderBot {
 	}
 
 	/**
-	 * Completion fanfare: plays celebratory sounds, bursts firework and totem particles,
-	 * spins and salutes before despawning.
+	 * Completion fanfare: celebratory sounds, a burst of firework and totem particles, and a
+	 * salute. The caller keeps the bot alive for a moment afterwards ({@link #tickCelebration})
+	 * — despawning it in the same tick would remove it before any client had drawn the burst.
 	 */
 	public void celebrate(ServerLevel level) {
 		if (entity.isRemoved()) return;
@@ -96,6 +104,14 @@ public final class BuilderBot {
 		entity.setYRot(entity.getYRot() + 180f);
 		entity.setYHeadRot(entity.getYHeadRot() + 180f);
 		entity.swing(InteractionHand.MAIN_HAND);
+	}
+
+	/** One tick of the victory spin, while the bot waits to be despawned. */
+	public void tickCelebration() {
+		if (entity.isRemoved()) return;
+		float yaw = entity.getYRot() + 18f;
+		entity.setYRot(yaw);
+		entity.setYHeadRot(yaw);
 	}
 
 	/** Point the bot at the block it is about to place. */

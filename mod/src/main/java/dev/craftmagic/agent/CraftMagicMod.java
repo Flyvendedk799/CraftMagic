@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.craftmagic.agent.command.CraftMagicCommand;
 import dev.craftmagic.agent.config.ModConfig;
+import dev.craftmagic.agent.hud.ActionBar;
 import dev.craftmagic.agent.job.JobManager;
 import dev.craftmagic.agent.net.AgentSocket;
 import dev.craftmagic.agent.net.Protocol;
@@ -178,6 +179,7 @@ public class CraftMagicMod implements ModInitializer {
 		// Marked spots name a world that is going away; keeping them would hold its players
 		// alive, and in singleplayer a session moves between worlds all evening.
 		WandHandler.clear();
+		ActionBar.clear();
 		if (jobs != null) {
 			jobs.shutdown();
 			jobs = null;

@@ -3,6 +3,7 @@ package dev.craftmagic.agent.wand;
 import dev.craftmagic.agent.CraftMagicMod;
 import dev.craftmagic.agent.build.Footprint;
 import dev.craftmagic.agent.build.Schematic;
+import dev.craftmagic.agent.hud.ActionBar;
 import dev.craftmagic.agent.job.JobManager;
 import dev.craftmagic.agent.net.WandPunchPayload;
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
@@ -52,6 +53,16 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class WandHandler {
 	/** Ignore repeats within this many ticks, so a held mouse button is one build, not forty. */
 	private static final long PUNCH_COOLDOWN_TICKS = 10;
+	/** How far the camera must tilt from level before sneak + right-click moves the height. */
+	static final float PITCH_THRESHOLD = 35.0f;
+	/** The furthest the height offset goes, either way. */
+	public static final int MAX_Y_OFFSET = 64;
+	/** The wireframe never sends this many particles or more, whatever the build's size. */
+	public static final int MAX_OUTLINE_PARTICLES = 180;
+	/** Segments per edge: the step widens past this, so an edge has at most 13 points. */
+	private static final int OUTLINE_SEGMENTS = 12;
+	/** How often the wireframe is redrawn while the wand is held (END_ROD particles live ~1-2 s). */
+	private static final long OUTLINE_REFRESH_TICKS = 20;
 
 	private static final Map<UUID, Anchor> ANCHORS = new ConcurrentHashMap<>();
 	private static final Map<UUID, Long> LAST_PUNCH = new ConcurrentHashMap<>();
@@ -127,33 +138,25 @@ public final class WandHandler {
 	private static void mark(ServerPlayer player, BlockPos pos) {
 		Anchor previous = ANCHORS.get(player.getUUID());
 
-		// Sneaking controls rotation or vertical Y-offset based on camera pitch
+		// Sneaking adjusts the mark instead of moving it: tilt the camera up to raise the build a
+		// block, down to lower it, and keep it level to turn it a quarter.
 		if (player.isShiftKeyDown() && previous != null && previous.dimension().equals(player.level().dimension())) {
-			float pitch = player.getXRot();
-			if (pitch > 35.0f) {
-				int newOffset = Math.min(64, previous.yOffset() + 1);
+			int step = heightStep(player.getXRot());
+			if (step != 0) {
+				int newOffset = clampOffset(previous.yOffset() + step);
 				Anchor updated = new Anchor(previous.dimension(), previous.pos(), previous.rotation(), newOffset);
 				ANCHORS.put(player.getUUID(), updated);
 				player.level().playSound(
 						null, updated.pos().above(updated.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
-				describe(player, updated, "Height +1 (offset " + (newOffset >= 0 ? "+" : "") + newOffset + ")");
-				return;
-			} else if (pitch < -35.0f) {
-				int newOffset = Math.max(-64, previous.yOffset() - 1);
-				Anchor updated = new Anchor(previous.dimension(), previous.pos(), previous.rotation(), newOffset);
-				ANCHORS.put(player.getUUID(), updated);
-				player.level().playSound(
-						null, updated.pos().above(updated.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
-				describe(player, updated, "Height -1 (offset " + (newOffset >= 0 ? "+" : "") + newOffset + ")");
-				return;
-			} else {
-				Anchor turned = new Anchor(previous.dimension(), previous.pos(), quarterTurn(previous.rotation()), previous.yOffset());
-				ANCHORS.put(player.getUUID(), turned);
-				player.level().playSound(
-						null, turned.pos().above(turned.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
-				describe(player, turned, "Turned");
+				describe(player, updated, "Height " + (step > 0 ? "+1" : "-1") + " (offset " + signed(newOffset) + ")");
 				return;
 			}
+			Anchor turned = new Anchor(previous.dimension(), previous.pos(), quarterTurn(previous.rotation()), previous.yOffset());
+			ANCHORS.put(player.getUUID(), turned);
+			player.level().playSound(
+					null, turned.pos().above(turned.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
+			describe(player, turned, "Turned");
+			return;
 		}
 
 		int initialOffset = previous != null ? previous.yOffset() : 0;
@@ -165,8 +168,30 @@ public final class WandHandler {
 		describe(player, anchor, "Marked");
 	}
 
+	/**
+	 * Which way a sneak + right-click moves the height, from the camera's pitch.
+	 *
+	 * <p>Minecraft's pitch ({@code getXRot}) is positive looking <em>down</em> and negative
+	 * looking up — the opposite of what the word suggests, and the first version of this had it
+	 * backwards, so looking up lowered the build. Returns +1 (looking up), -1 (looking down), or
+	 * 0 for "level", which turns the build instead. Checked by {@code gradlew verifyWand}.
+	 */
+	public static int heightStep(float xRot) {
+		if (xRot < -PITCH_THRESHOLD) return 1;
+		if (xRot > PITCH_THRESHOLD) return -1;
+		return 0;
+	}
+
+	public static int clampOffset(int dy) {
+		return Math.max(-MAX_Y_OFFSET, Math.min(MAX_Y_OFFSET, dy));
+	}
+
+	private static String signed(int n) {
+		return (n >= 0 ? "+" : "") + n;
+	}
+
 	public static boolean setOffset(ServerPlayer player, int dy) {
-		int clamped = Math.max(-64, Math.min(64, dy));
+		int clamped = clampOffset(dy);
 		Anchor previous = ANCHORS.get(player.getUUID());
 		Anchor updated;
 		if (previous == null || !previous.dimension().equals(player.level().dimension())) {
@@ -177,7 +202,7 @@ public final class WandHandler {
 		ANCHORS.put(player.getUUID(), updated);
 		player.level().playSound(
 				null, updated.pos().above(updated.yOffset()), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 0.6f, 1.4f);
-		describe(player, updated, "Height offset " + (clamped >= 0 ? "+" : "") + clamped);
+		describe(player, updated, "Height offset " + signed(clamped));
 		return true;
 	}
 
@@ -227,22 +252,23 @@ public final class WandHandler {
 	}
 
 	/**
-	 * Full 3D cuboid particle wireframe in 12 edges:
-	 * 4 ground edges, 4 top rim edges, and 4 vertical corner pillars (NW/NE/SW/SE).
-	 * Dynamic step calculation ensures total particles stay strictly under 180.
+	 * The footprint as a wireframe box: four ground edges, four top edges, four corner pillars.
+	 *
+	 * <p>Sent to the one player holding the wand, not to the level. {@code level.sendParticles}
+	 * without a player goes to everyone nearby, so on a server every player near someone aiming
+	 * a build saw that build's outline flicker over their own view once a second.
+	 *
+	 * <p>Each edge gets at most {@code OUTLINE_SEGMENTS + 1} points (see {@link #edgeOffsets}), so
+	 * the twelve edges stay under {@link #MAX_OUTLINE_PARTICLES} for a build of any size —
+	 * checked by {@code gradlew verifyWand}.
 	 */
 	private static void outline(ServerPlayer player, Anchor anchor, Schematic schematic) {
-		ServerLevel level = player.level();
 		Rotation rotation = anchor.rotation();
 		BlockPos origin = Footprint.origin(schematic.width(), schematic.length(), rotation, anchor.pos().above(anchor.yOffset()));
 
 		int width = Footprint.width(schematic.width(), schematic.length(), rotation);
 		int length = Footprint.length(schematic.width(), schematic.length(), rotation);
 		int height = schematic.height();
-
-		int stepX = Math.max(1, width / 12);
-		int stepZ = Math.max(1, length / 12);
-		int stepY = Math.max(1, height / 12);
 
 		int x0 = origin.getX();
 		int y0 = origin.getY();
@@ -251,56 +277,64 @@ public final class WandHandler {
 		int y1 = y0 + height;
 		int z1 = z0 + length;
 
-		// 4 ground edges (y0) & 4 top rim edges (y1) along X
-		for (int x = 0; x <= width; x += stepX) {
-			spark(level, x0 + x, y0, z0);
-			spark(level, x0 + x, y0, z1);
-			spark(level, x0 + x, y1, z0);
-			spark(level, x0 + x, y1, z1);
+		for (int x : edgeOffsets(width)) {
+			spark(player, x0 + x, y0, z0);
+			spark(player, x0 + x, y0, z1);
+			spark(player, x0 + x, y1, z0);
+			spark(player, x0 + x, y1, z1);
 		}
-		if (width % stepX != 0) {
-			spark(level, x1, y0, z0);
-			spark(level, x1, y0, z1);
-			spark(level, x1, y1, z0);
-			spark(level, x1, y1, z1);
+		for (int z : edgeOffsets(length)) {
+			spark(player, x0, y0, z0 + z);
+			spark(player, x1, y0, z0 + z);
+			spark(player, x0, y1, z0 + z);
+			spark(player, x1, y1, z0 + z);
 		}
-
-		// 4 ground edges (y0) & 4 top rim edges (y1) along Z
-		for (int z = 0; z <= length; z += stepZ) {
-			spark(level, x0, y0, z0 + z);
-			spark(level, x1, y0, z0 + z);
-			spark(level, x0, y1, z0 + z);
-			spark(level, x1, y1, z0 + z);
+		for (int y : edgeOffsets(height)) {
+			spark(player, x0, y0 + y, z0);
+			spark(player, x1, y0 + y, z0);
+			spark(player, x0, y0 + y, z1);
+			spark(player, x1, y0 + y, z1);
 		}
-		if (length % stepZ != 0) {
-			spark(level, x0, y0, z1);
-			spark(level, x1, y0, z1);
-			spark(level, x0, y1, z1);
-			spark(level, x1, y1, z1);
-		}
-
-		// 4 vertical corner pillars: NW (x0, z0), NE (x1, z0), SW (x0, z1), SE (x1, z1)
-		for (int y = 0; y <= height; y += stepY) {
-			spark(level, x0, y0 + y, z0);
-			spark(level, x1, y0 + y, z0);
-			spark(level, x0, y0 + y, z1);
-			spark(level, x1, y0 + y, z1);
-		}
-		if (height % stepY != 0) {
-			spark(level, x0, y1, z0);
-			spark(level, x1, y1, z0);
-			spark(level, x0, y1, z1);
-			spark(level, x1, y1, z1);
-		}
-	}
-
-	private static void spark(ServerLevel level, double x, double y, double z) {
-		level.sendParticles(ParticleTypes.END_ROD, x, y + 0.15, z, 1, 0.0, 0.0, 0.0, 0.0);
 	}
 
 	/**
-	 * Per-tick handler for players holding a wand:
-	 * sends real-time Action Bar HUD and refreshes the 3D particle wireframe every 20 ticks.
+	 * Where along an edge of this length the particles go: evenly spaced from 0, always ending
+	 * exactly on the far corner.
+	 *
+	 * <p>The step is the length divided by the segment count <em>rounded up</em>. It used to be
+	 * rounded down, which made it 1 for anything under 24 blocks — a 23-block edge then got 24
+	 * points rather than 13, and the "under 180" promise in this file's comments broke for
+	 * ordinary house-sized builds.
+	 */
+	public static int[] edgeOffsets(int extent) {
+		if (extent <= 0) return new int[] {0};
+		int step = (extent + OUTLINE_SEGMENTS - 1) / OUTLINE_SEGMENTS;
+		int count = extent / step + 1;
+		boolean endsOnCorner = extent % step == 0;
+		int[] offsets = new int[endsOnCorner ? count : count + 1];
+		for (int i = 0; i < count; i++) offsets[i] = i * step;
+		if (!endsOnCorner) offsets[count] = extent;
+		return offsets;
+	}
+
+	/** How many particles one outline of a box this size sends. */
+	public static int outlineParticleCount(int width, int height, int length) {
+		return 4 * (edgeOffsets(width).length + edgeOffsets(height).length + edgeOffsets(length).length);
+	}
+
+	private static void spark(ServerPlayer player, double x, double y, double z) {
+		// overrideLimiter: a big build's far corner can be past the 32-block range a client
+		// otherwise culls particles at, and this goes to one player, a bounded number of times.
+		player.level().sendParticles(player, ParticleTypes.END_ROD, true, false, x, y + 0.15, z, 1, 0.0, 0.0, 0.0, 0.0);
+	}
+
+	/**
+	 * Per tick, for players holding a wand: the action-bar readout and, once a second, the
+	 * wireframe.
+	 *
+	 * <p>The readout goes through {@link ActionBar}, so it is only actually sent when it changes
+	 * or is about to fade, and it gives way to build progress for a player who is being shown
+	 * that — the two used to overwrite each other every tick.
 	 */
 	public static void tick(MinecraftServer server) {
 		long tickCount = server.getTickCount();
@@ -313,38 +347,36 @@ public final class WandHandler {
 
 			Anchor anchor = ANCHORS.get(player.getUUID());
 
-			// Real-time Action Bar HUD
-			if (pending == null) {
-				player.sendSystemMessage(
-						Component.literal("CraftMagic Wand: No build waiting (send one from website)")
-								.withStyle(ChatFormatting.GRAY),
-						true);
-			} else {
-				Rotation rotation = anchor != null ? anchor.rotation() : Rotation.NONE;
-				int w = Footprint.width(pending.width(), pending.length(), rotation);
-				int l = Footprint.length(pending.width(), pending.length(), rotation);
-				int h = pending.height();
-				String facing = facing(rotation);
-				int yOff = anchor != null ? anchor.yOffset() : 0;
-				String yStr = (yOff >= 0 ? "+" : "") + yOff;
-
-				Component hud = Component.literal("\"" + jobs.pendingName() + "\" ")
-						.withStyle(ChatFormatting.LIGHT_PURPLE)
-						.append(Component.literal(w + "×" + h + "×" + l + " ").withStyle(ChatFormatting.AQUA))
-						.append(Component.literal("| Facing: " + facing + " ").withStyle(ChatFormatting.YELLOW))
-						.append(Component.literal("| Y: " + yStr + " ").withStyle(ChatFormatting.GREEN))
-						.append(Component.literal("| Sneak+R-Click: Pitch±Y/Turn | Punch: Build").withStyle(ChatFormatting.GRAY));
-
-				player.sendSystemMessage(hud, true);
+			if (jobs == null || !jobs.isShowingProgressTo(player)) {
+				ActionBar.show(player, readout(jobs, pending, anchor), tickCount);
 			}
 
-			// Wireframe periodic refresh every 20 ticks
-			if (tickCount % 20 == 0 && anchor != null && pending != null) {
-				if (anchor.dimension().equals(player.level().dimension())) {
-					outline(player, anchor, pending);
-				}
+			if (tickCount % OUTLINE_REFRESH_TICKS == 0 && anchor != null && pending != null
+					&& anchor.dimension().equals(player.level().dimension())) {
+				outline(player, anchor, pending);
 			}
 		}
+	}
+
+	private static Component readout(JobManager jobs, Schematic pending, Anchor anchor) {
+		if (pending == null) {
+			return Component.literal("CraftMagic wand: no build waiting — send one from the website")
+					.withStyle(ChatFormatting.GRAY);
+		}
+		Rotation rotation = anchor != null ? anchor.rotation() : Rotation.NONE;
+		int w = Footprint.width(pending.width(), pending.length(), rotation);
+		int l = Footprint.length(pending.width(), pending.length(), rotation);
+		int yOff = anchor != null ? anchor.yOffset() : 0;
+
+		return Component.literal("\"" + jobs.pendingName() + "\" ")
+				.withStyle(ChatFormatting.LIGHT_PURPLE)
+				.append(Component.literal(w + "×" + pending.height() + "×" + l + " ").withStyle(ChatFormatting.AQUA))
+				.append(Component.literal("| Facing: " + facing(rotation) + " ").withStyle(ChatFormatting.YELLOW))
+				.append(Component.literal("| Y: " + signed(yOff) + " ").withStyle(ChatFormatting.GREEN))
+				.append(Component.literal(anchor == null
+								? "| Right-click: mark"
+								: "| Sneak+right-click: look up/down ±Y, level = turn | Punch: build")
+						.withStyle(ChatFormatting.GRAY));
 	}
 
 	// --- punch: build it --------------------------------------------------

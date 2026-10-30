@@ -161,10 +161,15 @@ public final class CraftMagicCommand {
 																	Commands.argument("rotation", IntegerArgumentType.integer(0, 3))
 																			.executes(context ->
 																					place(context, ROTATIONS[IntegerArgumentType.getInteger(context, "rotation")])))))
-							.then(Commands.literal("pause").executes(CraftMagicCommand::pause))
-							.then(Commands.literal("resume").executes(CraftMagicCommand::resume))
-							.then(Commands.literal("undo").executes(CraftMagicCommand::undo))
-							.then(Commands.literal("cancel").executes(CraftMagicCommand::cancel))
+							// Controlling a build is gated like pairing. `undo` rewrites every block a
+							// build touched, and on a dedicated server any player could otherwise
+							// tear down someone else's build — or stop or freeze it with `cancel` and
+							// `pause`. In singleplayer the owner passes regardless of cheats; see
+							// mayConfigure.
+							.then(Commands.literal("pause").requires(CraftMagicCommand::mayConfigure).executes(CraftMagicCommand::pause))
+							.then(Commands.literal("resume").requires(CraftMagicCommand::mayConfigure).executes(CraftMagicCommand::resume))
+							.then(Commands.literal("undo").requires(CraftMagicCommand::mayConfigure).executes(CraftMagicCommand::undo))
+							.then(Commands.literal("cancel").requires(CraftMagicCommand::mayConfigure).executes(CraftMagicCommand::cancel))
 							.then(
 									Commands.literal("speed")
 											.requires(CraftMagicCommand::mayConfigure)
@@ -295,7 +300,8 @@ public final class CraftMagicCommand {
 		}
 
 		BlockPos origin = BlockPosArgument.getLoadedBlockPos(context, "pos");
-		String problem = jobs.startBuildAt(context.getSource().getLevel(), origin, rotation);
+		String problem =
+				jobs.startBuildAt(context.getSource().getLevel(), origin, rotation, context.getSource().getPlayer());
 		if (problem != null) {
 			context.getSource().sendFailure(Component.literal("CraftMagic: " + problem));
 			return 0;
@@ -305,10 +311,8 @@ public final class CraftMagicCommand {
 
 	private static int cancel(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
 		JobManager jobs = CraftMagicMod.jobs();
-		if (jobs != null && jobs.cancelActive()) {
-			context.getSource().sendSuccess(() -> Component.literal("CraftMagic: build cancelled."), true);
-			return 1;
-		}
+		// JobManager announces the stop to every player.
+		if (jobs != null && jobs.cancelActive()) return 1;
 		context.getSource().sendFailure(Component.literal("CraftMagic: nothing is being built."));
 		return 0;
 	}
@@ -336,32 +340,32 @@ public final class CraftMagicCommand {
 
 	private static int pause(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
 		JobManager jobs = CraftMagicMod.jobs();
-		if (jobs != null && jobs.pauseActive()) {
-			context.getSource().sendSuccess(() -> Component.literal("CraftMagic: build paused."), true);
-			return 1;
-		}
+		// No success line here: JobManager already tells every player, and saying it twice reads
+		// as two pauses.
+		if (jobs != null && jobs.pauseActive()) return 1;
 		context.getSource().sendFailure(Component.literal("CraftMagic: no active build to pause."));
 		return 0;
 	}
 
 	private static int resume(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
 		JobManager jobs = CraftMagicMod.jobs();
-		if (jobs != null && jobs.resumeActive()) {
-			context.getSource().sendSuccess(() -> Component.literal("CraftMagic: build resumed."), true);
-			return 1;
-		}
+		if (jobs != null && jobs.resumeActive()) return 1;
 		context.getSource().sendFailure(Component.literal("CraftMagic: no paused build to resume."));
 		return 0;
 	}
 
 	private static int undo(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
 		JobManager jobs = CraftMagicMod.jobs();
-		if (jobs != null && jobs.undoActive()) {
-			context.getSource().sendSuccess(() -> Component.literal("CraftMagic: undoing build in reverse..."), true);
-			return 1;
+		if (jobs == null) {
+			context.getSource().sendFailure(Component.literal("CraftMagic is not running."));
+			return 0;
 		}
-		context.getSource().sendFailure(Component.literal("CraftMagic: no build available to undo."));
-		return 0;
+		String problem = jobs.undo(null);
+		if (problem != null) {
+			context.getSource().sendFailure(Component.literal("CraftMagic: nothing to undo — " + problem + "."));
+			return 0;
+		}
+		return 1;
 	}
 
 	private static int offset(com.mojang.brigadier.context.CommandContext<CommandSourceStack> context) {
@@ -383,7 +387,7 @@ public final class CraftMagicCommand {
 		source.sendSuccess(() -> commandLine("/craftmagic build [0-3]", "Build waiting schematic at feet", false), false);
 		source.sendSuccess(() -> commandLine("/craftmagic pause", "Pause the in-progress build", true), false);
 		source.sendSuccess(() -> commandLine("/craftmagic resume", "Resume a paused build", true), false);
-		source.sendSuccess(() -> commandLine("/craftmagic undo", "Roll back placed blocks top-down", true), false);
+		source.sendSuccess(() -> commandLine("/craftmagic undo", "Take the last build back out, restoring what was there", true), false);
 		source.sendSuccess(() -> commandLine("/craftmagic cancel", "Cancel the current build", true), false);
 		source.sendSuccess(() -> commandLine("/craftmagic status", "Show agent connection status", true), false);
 		source.sendSuccess(() -> commandLine("/craftmagic pair <code>", "Link world to website with code", false), false);

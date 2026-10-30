@@ -243,6 +243,37 @@ describe('undo', () => {
     expect(hook.result.current.send).toMatchObject({ kind: 'progress', placed: 5, total: 50 });
   });
 
+  it('sends one undo however often it is pressed while the first is in flight', async () => {
+    const hook = await done();
+    let answerUndo: (value: unknown) => void = () => undefined;
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+      String(url).endsWith('/undo')
+        ? new Promise((resolve) => {
+            answerUndo = resolve;
+          })
+        : base(url, init),
+    );
+
+    let first: Promise<void> = Promise.resolve();
+    act(() => {
+      first = hook.result.current.undoJob();
+    });
+    // The panel has already left `done`, so it no longer offers Undo or Build here.
+    expect(hook.result.current.send.kind).toBe('undoing');
+    await act(async () => {
+      await hook.result.current.undoJob();
+    });
+    expect(calls('undo')).toHaveLength(1);
+
+    await act(async () => {
+      answerUndo({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      await first;
+    });
+    expect(MockEventSource.latest().url).toBe('/api/agent/jobs/job-1/events');
+    expect(hook.result.current.send.kind).toBe('undoing');
+  });
+
   it('follows an undo started in game while it was still watching the build', async () => {
     const { hook, stream } = await building();
     act(() => stream.emit({ jobId: 'job-1', status: 'undoing', placed: 20, total: 100 }));

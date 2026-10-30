@@ -317,15 +317,27 @@ export function useAgents(): UseAgents {
       const targetJobId =
         jobIdToUndo || (send.kind === 'done' && send.jobId ? send.jobId : lastJobIdRef.current);
       if (!targetJobId) return;
+      // Only one undo at a time: a second press while the first request is out would be
+      // refused by the server (the job is already `undoing`) and leave neither with a stream.
+      if (send.kind === 'undoing') return;
+      const before = send;
       const placedBefore = send.kind === 'done' ? send.placed : 0;
 
+      // Into `undoing` before the request, not after: the panel stops offering Undo and Build
+      // here at once, so neither a repeat press nor a new send can start while it is in flight.
       const generation = ++generationRef.current;
-      const accepted = await control(targetJobId, 'undo');
-      if (!accepted || generation !== generationRef.current) return;
-
       sourceRef.current?.close();
       sourceRef.current = null;
       setSend({ kind: 'undoing', jobId: targetJobId, placed: placedBefore, total: placedBefore });
+
+      const accepted = await control(targetJobId, 'undo');
+      if (generation !== generationRef.current) return;
+      if (!accepted) {
+        // Refused (offline, or no longer done): nothing changed in the world, so put the panel
+        // back as it was. `controlError` carries the reason.
+        setSend(before);
+        return;
+      }
 
       if (typeof EventSource === 'undefined') return;
 

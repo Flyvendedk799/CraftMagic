@@ -62,6 +62,9 @@ export function ResizeHandle({
         else if (event.key === 'End') next = 480;
         else return;
         event.preventDefault();
+        // The editors listen for these same keys on `window` (arrows and Page Up/Down nudge the
+        // selection), so a key the panel has claimed must not travel on and edit the document.
+        event.stopPropagation();
         onChange(clampWidth(next));
       }}
     />

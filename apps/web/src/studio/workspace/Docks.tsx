@@ -142,6 +142,8 @@ export function WorkspaceDock({
                 if (event.key === 'End') target = specs.length - 1;
                 if (target !== null) {
                   event.preventDefault();
+                  // Keep the editors' window-level arrow shortcuts from also nudging the selection.
+                  event.stopPropagation();
                   onTab(specs[target]!.id);
                   document
                     .getElementById(`dock-tab-${side}-${specs[target]!.id}`)

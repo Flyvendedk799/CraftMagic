@@ -258,6 +258,66 @@ describe('Workspace shell UX and navigation', () => {
     expect(onChange).toHaveBeenCalledWith(272);
   });
 
+  it('keeps panel and mode-switch keys away from the window-level editor shortcuts', () => {
+    // Build and Architecture listen on `window` for arrows and Page Up/Down and nudge the
+    // selection; a key the shell has already used must not also edit the document.
+    const seen: string[] = [];
+    const onWindowKey = (event: KeyboardEvent) => seen.push(event.key);
+    window.addEventListener('keydown', onWindowKey);
+
+    try {
+      const { unmount } = render(<ResizeHandle side="left" width={272} onChange={vi.fn()} />);
+      const resizer = screen.getByRole('separator', { name: 'Resize left panel' });
+      for (const key of ['ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End']) {
+        fireEvent.keyDown(resizer, { key });
+      }
+      unmount();
+
+      const { unmount: unmountDock } = render(
+        <DockProvider reveal={vi.fn()}>
+          <WorkspaceDock side="left" mode="build" layout={defaultLayout()} onTab={vi.fn()} onClose={vi.fn()} />
+        </DockProvider>,
+      );
+      const tab = screen.getByRole('tab', { name: 'Tools' });
+      for (const key of ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End']) {
+        fireEvent.keyDown(tab, { key });
+      }
+      unmountDock();
+
+      render(
+        <MemoryRouter>
+          <WorkspaceFrame
+            {...defaultFrameProps}
+            mode="build"
+            onMode={vi.fn()}
+            onCommands={vi.fn()}
+            onFiles={vi.fn()}
+            onOpen={vi.fn()}
+            signedIn={false}
+            canUndo={false}
+            canRedo={false}
+            onUndo={vi.fn()}
+            onRedo={vi.fn()}
+          >
+            <div>Canvas</div>
+          </WorkspaceFrame>
+        </MemoryRouter>,
+      );
+      const modeButton = screen.getByRole('button', { name: 'Build' });
+      for (const key of ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End']) {
+        fireEvent.keyDown(modeButton, { key });
+      }
+
+      expect(seen).toEqual([]);
+
+      // Keys the shell does not claim still reach the editors.
+      fireEvent.keyDown(modeButton, { key: 'PageUp' });
+      expect(seen).toEqual(['PageUp']);
+    } finally {
+      window.removeEventListener('keydown', onWindowKey);
+    }
+  });
+
   it('routes dock slot identifiers correctly across build, arch, and world modes', () => {
     // Left dock slots
     expect(sectionDock('tools')).toEqual({ side: 'left', tab: 'tools' });

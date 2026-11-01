@@ -352,6 +352,8 @@ export function WorkspaceFrame(props: Props) {
                   }
                   if (targetIndex !== null) {
                     event.preventDefault();
+                    // Keep the editors' window-level arrow shortcuts from also nudging the selection.
+                    event.stopPropagation();
                     const nextMode = modes[targetIndex]!;
                     props.onMode(nextMode);
                     const nav = (

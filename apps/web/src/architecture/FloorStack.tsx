@@ -79,6 +79,11 @@ export function FloorStack({ plan, active, showBelow, onShowBelow, onSelect, onC
 
   return (
     <div className="floors">
+      <div className="floors__nav-hint">
+        <span className="floors__nav-label">Storeys (top down)</span>
+        <span className="floors__nav-keys" title="Use [ and ] keys on the canvas to step through storeys">[ ] keys</span>
+      </div>
+
       <ol className="floors__list">
         {plan.floors
           .map((floor, index) => ({ floor, index }))
@@ -93,56 +98,71 @@ export function FloorStack({ plan, active, showBelow, onShowBelow, onSelect, onC
               >
                 <span className="floors__index">{index}</span>
                 <span className="floors__name">{floor.name}</span>
-                <span className="floors__count">{floor.items.length}</span>
+                <span className="floors__meta">
+                  {floor.height !== undefined && (
+                    <span className="floors__height-tag" title={`Storey height: ${floor.height} blocks`}>
+                      {floor.height}b
+                    </span>
+                  )}
+                  <span className="floors__count" title={`${floor.items.length} items on this floor`}>
+                    {floor.items.length} {floor.items.length === 1 ? 'item' : 'items'}
+                  </span>
+                </span>
               </button>
             </li>
           ))}
       </ol>
 
-      <label className="field">
-        <span className="field__label">Name</span>
-        <input
-          className="field__input"
-          type="text"
-          maxLength={40}
-          value={plan.floors[active]?.name ?? ''}
-          onChange={(event) => rename(active, event.target.value)}
-        />
-      </label>
+      <div className="floors__active-card">
+        <div className="floors__card-header">
+          <span className="floors__card-title">Storey {active} · {plan.floors[active]?.name}</span>
+        </div>
 
-      {/* This storey's own height. "Building" is the absence of an override, so raising the
-          global height later still carries every storey that never asked for its own. */}
-      <label className="field">
-        <span className="field__label">Height</span>
-        <select
-          className="field__input"
-          value={plan.floors[active]?.height ?? ''}
-          onChange={(event) => setHeight(active, event.target.value)}
-        >
-          <option value="">Building ({plan.storeyHeight})</option>
-          {HEIGHTS.map((h) => (
-            <option key={h} value={h}>
-              {h} blocks — {h - 1} clear
-            </option>
-          ))}
-        </select>
-      </label>
+        <div className="floors__field-grid">
+          <label className="field">
+            <span className="field__label">Name</span>
+            <input
+              className="field__input"
+              type="text"
+              maxLength={40}
+              value={plan.floors[active]?.name ?? ''}
+              onChange={(event) => rename(active, event.target.value)}
+            />
+          </label>
 
-      <div className="floors__actions">
-        <button type="button" onClick={addAbove} disabled={plan.floors.length >= 12}>
-          Add above
-        </button>
-        <button type="button" onClick={duplicate} disabled={plan.floors.length >= 12}>
-          Duplicate
-        </button>
-        <button type="button" onClick={remove} disabled={plan.floors.length <= 1}>
-          Delete
-        </button>
+          <label className="field">
+            <span className="field__label">Height</span>
+            <select
+              className="field__input"
+              value={plan.floors[active]?.height ?? ''}
+              onChange={(event) => setHeight(active, event.target.value)}
+            >
+              <option value="">Building ({plan.storeyHeight})</option>
+              {HEIGHTS.map((h) => (
+                <option key={h} value={h}>
+                  {h} blocks — {h - 1} clear
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="floors__actions">
+          <button type="button" onClick={addAbove} disabled={plan.floors.length >= 12} title="Insert a blank storey directly above the active one">
+            Add above
+          </button>
+          <button type="button" onClick={duplicate} disabled={plan.floors.length >= 12} title="Copy this storey and all its rooms above">
+            Duplicate
+          </button>
+          <button type="button" className="floors__delete-btn" onClick={remove} disabled={plan.floors.length <= 1} title="Remove this storey from the building">
+            Delete
+          </button>
+        </div>
       </div>
 
-      <label className="field field--toggle">
+      <label className="field field--toggle floors__ghost-toggle" title="Renders an outline of the storey below so walls and stairs line up between storeys">
         <input type="checkbox" checked={showBelow} onChange={(event) => onShowBelow(event.target.checked)} />
-        <span className="field__label">Show the storey below</span>
+        <span className="field__label">Show storey below as reference</span>
       </label>
     </div>
   );

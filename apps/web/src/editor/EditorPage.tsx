@@ -31,6 +31,7 @@ import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { notifyLibraryRow } from '../studio/libraryEvents.js';
 import {
   AIR_BLOCK,
+  colorOf,
   displayName,
   expand,
   labelParts,
@@ -81,7 +82,11 @@ import { ShortcutHelp } from './ShortcutHelp.js';
 import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
 import { BuildMenu, type BuildOption } from './BuildMenu.js';
 import { ToolPalette, type RegionAction } from './ToolPalette.js';
+import { ToolIcon } from './ToolIcons.js';
 import { TOOLS, toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
+import { ViewportStatus } from './ViewportStatus.js';
+import { InspectorLayers } from './InspectorLayers.js';
+import { LayersHud, VIEWS } from './LayersHud.js';
 import { previewFor, type Preview } from './preview.js';
 import { useAssembly } from './useAssembly.js';
 import { useEditSession } from './useEditSession.js';
@@ -148,13 +153,6 @@ const BUILD_LABELS: Record<string, string> = {
   pavilion: 'Pavilion',
   field: 'Stress test',
 };
-
-const VIEWS: readonly { kind: ViewKind; label: string }[] = [
-  { kind: 'iso', label: 'Iso' },
-  { kind: 'top', label: 'Top' },
-  { kind: 'front', label: 'Front' },
-  { kind: 'side', label: 'Side' },
-];
 
 /** A navigation that would re-expand the program, held back until the user confirms. */
 type PendingNav =
@@ -1463,6 +1461,18 @@ export function EditorPage() {
           enhanced={enhanced}
           ortho={ortho}
         />
+        {/* Viewport status HUD: Immediate, decluttered visual feedback for active tool,
+            active material swatch preview, brush/symmetry state, and active layer. */}
+        <ViewportStatus
+          tool={tool}
+          block={block}
+          brushRadius={brushRadius}
+          brushShape={brushShape}
+          symmetry={symmetry}
+          layer={layer}
+          isolate={isolate}
+          topLayer={topLayer}
+        />
       </div>
 
       <section className="hud hud--top">
@@ -1717,6 +1727,12 @@ export function EditorPage() {
             {clip ? `${clip.size.x}×${clip.size.y}×${clip.size.z}` : 'empty'}
           </dd>
         </dl>
+        <InspectorLayers
+          layer={layer}
+          isolate={isolate}
+          topLayer={topLayer}
+          onUpdate={update}
+        />
         </Section>
         </section>
 
@@ -1840,64 +1856,19 @@ export function EditorPage() {
         )}
       </aside>
 
-      <section className="hud hud--layers">
-        <span className="layers__label">Layer</span>
-        <input
-          className="layers__slider"
-          type="range"
-          min={0}
-          max={topLayer}
-          value={layer ?? topLayer}
-          onChange={(event) => update({ layer: Number(event.target.value) })}
-          aria-label="Highest visible layer"
-        />
-        <span className="layers__value">
-          {layer === null ? `y 0–${topLayer}` : isolate ? `y ${layer}` : `y 0–${layer}`}
-        </span>
-        <button
-          type="button"
-          aria-pressed={isolate}
-          disabled={layer === null}
-          title="Show only the cut layer  (I)"
-          onClick={() => update({ toggleIsolate: true })}
-        >
-          Isolate
-        </button>
-        <button type="button" onClick={() => update({ layer: null })} disabled={layer === null}>
-          Show all
-        </button>
-        <span className="layers__views">
-          {VIEWS.map((entry) => (
-            <button
-              key={entry.kind}
-              type="button"
-              title={`Look from ${entry.label.toLowerCase()}${entry.kind === 'iso' ? '  (F)' : ''}`}
-              onClick={() => setViewKind(entry.kind)}
-            >
-              {entry.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            aria-pressed={ortho}
-            title="Orthographic projection — no perspective, true proportions"
-            onClick={() => setOrtho((prev) => !prev)}
-          >
-            Ortho
-          </button>
-          <button
-            type="button"
-            aria-pressed={enhanced}
-            title="Lit, grained rendering with sky and fog. Classic is the flat look."
-            onClick={toggleEnhanced}
-          >
-            ✨
-          </button>
-          <button type="button" title="Save the current view as a PNG" onClick={takeScreenshot}>
-            📷
-          </button>
-        </span>
-      </section>
+      <LayersHud
+        layer={layer}
+        topLayer={topLayer}
+        isolate={isolate}
+        ortho={ortho}
+        enhanced={enhanced}
+        views={VIEWS}
+        onUpdate={update}
+        onSetView={setViewKind}
+        onToggleOrtho={() => setOrtho((prev) => !prev)}
+        onToggleEnhanced={toggleEnhanced}
+        onTakeScreenshot={takeScreenshot}
+      />
 
       {help && (
         <ShortcutHelp
@@ -1970,3 +1941,8 @@ function blockAt(grid: { size: { x: number; y: number; z: number }; palette: str
   const index = grid.voxels[voxelIndex(grid.size, at.x, at.y, at.z)] ?? 0;
   return displayName(grid.palette[index] ?? AIR_BLOCK);
 }
+
+export { ViewportStatus } from './ViewportStatus.js';
+export { InspectorLayers } from './InspectorLayers.js';
+export { LayersHud, VIEWS } from './LayersHud.js';
+

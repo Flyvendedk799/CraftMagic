@@ -144,3 +144,29 @@ export function placementFootprint(placement: WorldPlacement): { x: number; z: n
     d: turned ? placement.w : placement.d,
   };
 }
+
+/**
+ * The front edge coordinates of a placement footprint given its quarter turns.
+ *
+ * Provides a clear visual orientation indicator for structures and placement ghosts:
+ * - turns 0: front facing south (+z)
+ * - turns 1: front facing west (-x)
+ * - turns 2: front facing north (-z)
+ * - turns 3: front facing east (+x)
+ */
+export function placementFacing(
+  box: { x: number; z: number; w: number; d: number },
+  turns: number,
+): { x1: number; y1: number; x2: number; y2: number } {
+  const norm = (((turns % 4) + 4) % 4) as 0 | 1 | 2 | 3;
+  switch (norm) {
+    case 0:
+      return { x1: box.x, y1: box.z + box.d, x2: box.x + box.w, y2: box.z + box.d };
+    case 1:
+      return { x1: box.x, y1: box.z, x2: box.x, y2: box.z + box.d };
+    case 2:
+      return { x1: box.x, y1: box.z, x2: box.x + box.w, y2: box.z };
+    case 3:
+      return { x1: box.x + box.w, y1: box.z, x2: box.x + box.w, y2: box.z + box.d };
+  }
+}

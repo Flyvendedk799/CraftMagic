@@ -140,6 +140,7 @@ export function sectionDock(
   if (
     [
       'tools',
+      'terrain',
       'layouter-tools',
       'world-tools',
       'world-brush',
@@ -148,14 +149,26 @@ export function sectionDock(
     ].includes(id)
   )
     return { side: 'left', tab: 'tools' };
-  if (['shape', 'layouter-floors', 'layouter-site'].includes(id))
+  if (['shape', 'storeys', 'layouter-floors', 'layouter-site'].includes(id))
     return { side: 'left', tab: 'shape' };
-  if (['assets', 'layouter-components', 'world-shelf'].includes(id))
+  if (
+    [
+      'assets',
+      'blocks',
+      'rooms',
+      'shelf',
+      'layouter-components',
+      'world-shelf',
+    ].includes(id)
+  )
     return { side: 'left', tab: 'assets' };
   if (
     [
+      'inspect',
       'stats',
       'outline',
+      'selection',
+      'checks',
       'layouter-inspector',
       'layouter-schedule',
       'layouter-issues',
@@ -167,10 +180,19 @@ export function sectionDock(
     return { side: 'right', tab: 'inspect' };
   if (['picture', 'layouter-ai', 'assistant'].includes(id))
     return { side: 'right', tab: 'create' };
-  if (['world-doc', 'world-extent', 'world-regions'].includes(id))
+  if (
+    [
+      'world',
+      'world-doc',
+      'world-extent',
+      'world-regions',
+      'settings',
+    ].includes(id)
+  )
     return { side: 'right', tab: 'world' };
   if (
     [
+      'deliver',
       'save-library-v2',
       'export',
       'sendtogame',

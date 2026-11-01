@@ -44,15 +44,16 @@ export function RoomSchedule({ plan, floorIndex, selectedId, onSelect }: RoomSch
 
   if (rows.length === 0) {
     return (
-      <p className="schedule__empty">
-        No rooms on this storey yet. Draw one with the Room tool and it appears here with its
-        floor area.
-      </p>
+      <div className="schedule__empty-wrap">
+        <p className="schedule__empty">
+          No rooms on this storey yet. Pick the <strong>Room</strong> tool (2) and drag a rectangle to start.
+        </p>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="schedule__wrap">
       <table className="schedule">
         <thead>
           <tr>
@@ -62,41 +63,47 @@ export function RoomSchedule({ plan, floorIndex, selectedId, onSelect }: RoomSch
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ room, area, inner }) => (
-            <tr key={room.id} data-selected={room.id === selectedId ? '1' : '0'}>
-              <th scope="row">
-                {/* The whole name is the target. A schedule is a way of getting to a room you
-                    can see the number of but not, at a glance, the position of. */}
-                <button type="button" onClick={() => onSelect(room.id)}>
-                  {room.label.trim() || 'Unnamed'}
-                </button>
-              </th>
-              <td>{inner ? `${inner.w}×${inner.d}` : '—'}</td>
-              <td>{area > 0 ? area.toLocaleString() : '—'}</td>
-            </tr>
-          ))}
+          {rows.map(({ room, area, inner }) => {
+            const isSelected = room.id === selectedId;
+            return (
+              <tr key={room.id} data-selected={isSelected ? '1' : '0'}>
+                <th scope="row">
+                  {/* The whole name is the target. A schedule is a way of getting to a room you
+                      can see the number of but not, at a glance, the position of. */}
+                  <button
+                    type="button"
+                    onClick={() => onSelect(room.id)}
+                    title={`Select "${room.label.trim() || 'Room'}" on the plan`}
+                  >
+                    {room.label.trim() || 'Unnamed'}
+                  </button>
+                </th>
+                <td>{inner ? `${inner.w}×${inner.d}` : '—'}</td>
+                <td>{area > 0 ? `${area.toLocaleString()} b` : '—'}</td>
+              </tr>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr>
             <th scope="row">This storey</th>
-            <td>{rows.length} rooms</td>
-            <td>{floorArea.toLocaleString()}</td>
+            <td>{rows.length} {rows.length === 1 ? 'room' : 'rooms'}</td>
+            <td>{floorArea.toLocaleString()} b</td>
           </tr>
           {plan.floors.length > 1 && (
             <tr>
               <th scope="row">Whole building</th>
               <td>{plan.floors.length} storeys</td>
-              <td>{total.toLocaleString()}</td>
+              <td>{total.toLocaleString()} b</td>
             </tr>
           )}
         </tfoot>
       </table>
 
       <p className="site-panel__hint">
-        Area is the floor inside the walls, in blocks. A room with no area has walls thick
-        enough to meet in the middle.
+        Area is walkable interior floor inside the walls (in blocks).
       </p>
-    </>
+    </div>
   );
 }
 

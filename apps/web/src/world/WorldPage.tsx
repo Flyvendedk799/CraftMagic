@@ -73,7 +73,7 @@ import { runOf, sendRegion, waitForJob } from './send.js';
 import { WorldMap } from './WorldMap.js';
 import { WorldPreview } from './WorldPreview.js';
 import { TerrainPanel } from './TerrainPanel.js';
-import { PlacementsPanel } from './PlacementsPanel.js';
+import { PlacementsPanel, StructureShelf } from './PlacementsPanel.js';
 import { WorldPanel } from './WorldPanel.js';
 import { useRegionGrid } from './useRegionGrid.js';
 import { useWorldSession } from './useWorldSession.js';
@@ -84,6 +84,7 @@ import { isTextEntry } from '../studio/undoKeys.js';
 import { useZoomUndo } from '../studio/useZoomUndo.js';
 import { WORLD_SHORTCUTS } from './shortcuts.js';
 import { ShortcutHelp } from '../editor/ShortcutHelp.js';
+import { ActionIcon } from './WorldToolIcons.js';
 import { WORLD_TOOLS, dropCorner, placementFootprint, turnedAboutCentre, type WorldTool } from './toolset.js';
 import './world.css';
 
@@ -949,18 +950,23 @@ export function WorldPage() {
             <p className="ui-dock__sub">Sculpt the ground, then place what you have built</p>
           </header>
           <div className="world__dock-body">
-          <TerrainPanel
-            settings={doc.settings}
-            tool={tool}
-            onTool={setTool}
-            brush={brush}
-            onBrush={setBrush}
-            stratum={stratum}
-            onStratum={setStratum}
-            targetY={targetY}
-            onTargetY={setTargetY}
-            onShowHelp={() => setHelp(true)}
-          />
+            <TerrainPanel
+              settings={doc.settings}
+              tool={tool}
+              onTool={setTool}
+              brush={brush}
+              onBrush={setBrush}
+              stratum={stratum}
+              onStratum={setStratum}
+              targetY={targetY}
+              onTargetY={setTargetY}
+              onShowHelp={() => setHelp(true)}
+            />
+            <StructureShelf
+              library={library}
+              onAdd={armComponent}
+              armed={tool === 'place' ? armed?.id ?? null : null}
+            />
           </div>
         </aside>
 
@@ -972,6 +978,27 @@ export function WorldPage() {
               goes and a row that reflows every time something is saved is unusable. */}
           <div className="world__stage-bar">
             <div className="ui-bar">
+              <button
+                type="button"
+                className="ui-btn world__iconbtn"
+                title="Undo  (Ctrl+Z)"
+                aria-label="Undo"
+                disabled={!session.canUndo}
+                onClick={session.undo}
+              >
+                <ActionIcon glyph="undo" />
+              </button>
+              <button
+                type="button"
+                className="ui-btn world__iconbtn"
+                title="Redo  (Ctrl+Y)"
+                aria-label="Redo"
+                disabled={!session.canRedo}
+                onClick={session.redo}
+              >
+                <ActionIcon glyph="redo" />
+              </button>
+              <span className="ui-bar__sep" aria-hidden="true" />
               <label className="ui-check" title="Draw the region grid the map ships in">
                 <input type="checkbox" checked={showRegions} onChange={(e) => setShowRegions(e.target.checked)} />
                 Regions

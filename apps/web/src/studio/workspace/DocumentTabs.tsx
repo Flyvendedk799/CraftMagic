@@ -39,7 +39,7 @@ export function DocumentTabs({
               aria-pressed={tab.key === active}
               aria-controls="workspace-stage"
               tabIndex={tab.key === active ? 0 : -1}
-              title={`${tab.title} · ${tab.mode}${tab.pinned ? ' · pinned' : ''}`}
+              title={`${tab.title} · ${tab.mode === 'arch' ? 'Floorplan' : tab.mode === 'world' ? 'World' : 'Build'}${tab.pinned ? ' · pinned' : ''}${tab.key === active && dirty ? ' · unsaved' : ''}`}
               onClick={() => onOpen(tab.href)}
               onKeyDown={(event) => {
                 if (

@@ -20,22 +20,45 @@ const ORDER: Record<PlanIssue['level'], number> = { error: 0, warning: 1, info: 
 
 export function IssuesPanel({ issues, onGo }: IssuesPanelProps) {
   if (issues.length === 0) {
-    return <p className="issues__clear">Every room can be walked to, and every storey is served by a stair.</p>;
+    return (
+      <div className="issues__clear-card">
+        <p className="issues__clear">Every room can be walked to, and every storey is served by a stair.</p>
+      </div>
+    );
   }
 
   const sorted = [...issues].sort((a, b) => ORDER[a.level] - ORDER[b.level]);
+  const errorCount = issues.filter((i) => i.level === 'error').length;
+  const warningCount = issues.filter((i) => i.level === 'warning').length;
 
   return (
-    <ul className="issues">
-      {sorted.map((issue, index) => (
-        <li key={`${issue.code}-${issue.itemId ?? index}`} className={`issues__row issues__row--${issue.level}`}>
-          <button type="button" onClick={() => onGo(issue)}>
-            <span className="issues__level" aria-hidden="true" />
-            {issue.message}
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="issues__wrap">
+      <div className="issues__header">
+        <span className="issues__badge">
+          {errorCount > 0 ? `${errorCount} error${errorCount === 1 ? '' : 's'}` : ''}
+          {errorCount > 0 && warningCount > 0 ? ' · ' : ''}
+          {warningCount > 0 ? `${warningCount} warning${warningCount === 1 ? '' : 's'}` : ''}
+        </span>
+        <span className="issues__tip">Click to jump to item</span>
+      </div>
+
+      <ul className="issues">
+        {sorted.map((issue, index) => (
+          <li key={`${issue.code}-${issue.itemId ?? index}`} className={`issues__row issues__row--${issue.level}`}>
+            <button type="button" onClick={() => onGo(issue)} title="Jump to this item on the plan">
+              <span className="issues__level" aria-hidden="true" />
+              <span className="issues__content">
+                <span className="issues__message">{issue.message}</span>
+                {issue.floorIndex !== undefined && (
+                  <span className="issues__floor-tag">Storey {issue.floorIndex}</span>
+                )}
+              </span>
+              <span className="issues__arrow" aria-hidden="true">→</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

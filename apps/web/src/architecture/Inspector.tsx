@@ -48,18 +48,51 @@ export function Inspector({
   const plan = { ...wholePlan, storeyHeight: floorHeight(wholePlan, floorIndex) };
   if (!item) {
     return (
-      <p className="arch__empty">
-        Nothing selected. Click something on the plan, or pick a tool and draw.
-      </p>
+      <div className="inspector__empty">
+        <p className="inspector__empty-title">Nothing selected</p>
+        <p className="inspector__empty-hint">
+          Click any room, wall, door, or item on the plan or 3D live model to inspect and edit its properties.
+        </p>
+        <p className="arch__empty" style={{ display: 'none' }}>
+          Nothing selected. Click something on the plan, or pick a tool and draw.
+        </p>
+        <div className="inspector__shortcuts-tip">
+          <span>Shortcuts: <strong>1</strong> Select · <strong>2</strong> Room · <strong>R</strong> Turn · <strong>Delete</strong> Remove</span>
+        </div>
+      </div>
     );
   }
 
+  const roomInner =
+    item.kind === 'room'
+      ? {
+          w: Math.max(0, item.rect.w - plan.wallThickness * 2),
+          d: Math.max(0, item.rect.d - plan.wallThickness * 2),
+        }
+      : null;
+  const roomArea = roomInner ? roomInner.w * roomInner.d : 0;
+
   return (
     <div className="inspector">
+      <div className="inspector__header">
+        <span className="inspector__kind-tag">{item.kind}</span>
+        <span className="inspector__storey-tag">{wholePlan.floors[floorIndex]?.name ?? `Storey ${floorIndex}`}</span>
+      </div>
+
       <p className="inspector__kind">{item.kind}</p>
 
       {item.kind === 'room' && (
         <>
+          <div className="inspector__stat-banner">
+            <div className="inspector__stat-col">
+              <span className="inspector__stat-label">Interior Area</span>
+              <span className="inspector__stat-value">{roomArea.toLocaleString()} blocks</span>
+            </div>
+            <div className="inspector__stat-col">
+              <span className="inspector__stat-label">Walkable Floor</span>
+              <span className="inspector__stat-value">{roomInner ? `${roomInner.w}×${roomInner.d}` : '—'}</span>
+            </div>
+          </div>
           <TextField label="Name" value={item.label} onChange={(label) => onChange({ ...item, label })} />
           <RectFields plan={plan} rect={item.rect} onChange={(rect) => onChange({ ...item, rect })} />
           <RoleField

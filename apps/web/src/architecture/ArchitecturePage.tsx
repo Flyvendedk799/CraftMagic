@@ -924,15 +924,17 @@ export function ArchitecturePage() {
         <DockItem id="assets"><div className="workspace-panel-group"><p className="ui-eyebrow">Start from</p>
         <div className="arch__templates">
           {TEMPLATES.map((template) => (
-            <button
-              key={template.id}
-              type="button"
-              className="ui-btn"
-              title={template.description}
-              onClick={() => loadFromUser(template.build())}
-            >
-              {template.name}
-            </button>
+            <div key={template.id} className="arch__template-item">
+              <button
+                type="button"
+                className="ui-btn"
+                title={template.description}
+                onClick={() => loadFromUser(template.build())}
+              >
+                {template.name}
+              </button>
+              <span className="arch__template-desc">{template.description}</span>
+            </div>
           ))}
         </div>
 
@@ -962,6 +964,12 @@ export function ArchitecturePage() {
               </button>
             ))}
           </div>
+
+          <div className="tool-rail__active-bar">
+            <span className="tool-rail__active-badge">Active: {LAYOUT_TOOL_BY_ID[tool].label}</span>
+            <span className="tool-rail__active-key" title={`Shortcut key: ${LAYOUT_TOOL_BY_ID[tool].key}`}>[{LAYOUT_TOOL_BY_ID[tool].key}]</span>
+          </div>
+
           {/* The hint and the way to the rest of the keys, on one line. A sheet reachable
               only by pressing `?` is a sheet nobody opens, and `?` is exactly the kind of key
               you have to already know about to try. */}

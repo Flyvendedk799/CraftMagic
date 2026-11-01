@@ -513,8 +513,12 @@
    without obscuring the 3D model geometry. */
 .arch__model-bar {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  /* Centred with auto margins rather than left: 50% + translateX(-50%): a Studio override that
+     sets left/right on this bar would otherwise slide it half its width off the panel. */
+  left: 0;
+  right: 0;
+  width: fit-content;
+  margin: 0 auto;
   bottom: 0.5rem;
   z-index: 5;
   display: flex;
@@ -755,12 +759,18 @@
 
 .floors__field-grid {
   display: grid;
-  grid-template-columns: 1.3fr 1fr;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   gap: 0.4rem;
 }
 
 .floors__field-grid .field {
   margin-top: 0;
+  min-width: 0;
+}
+
+.floors__field-grid .field__input {
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .floors__delete-btn {
@@ -929,14 +939,6 @@
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text);
-}
-
-.inspector__kind {
-  margin: 0;
-  font-size: 0.65rem;
-  letter-spacing: var(--track-eyebrow, 0.14em);
-  text-transform: uppercase;
-  color: var(--muted);
 }
 
 .inspector__actions {

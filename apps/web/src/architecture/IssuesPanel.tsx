@@ -38,6 +38,7 @@ export function IssuesPanel({ issues, onGo }: IssuesPanelProps) {
           {errorCount > 0 ? `${errorCount} error${errorCount === 1 ? '' : 's'}` : ''}
           {errorCount > 0 && warningCount > 0 ? ' · ' : ''}
           {warningCount > 0 ? `${warningCount} warning${warningCount === 1 ? '' : 's'}` : ''}
+          {errorCount === 0 && warningCount === 0 ? `${issues.length} note${issues.length === 1 ? '' : 's'}` : ''}
         </span>
         <span className="issues__tip">Click to jump to item</span>
       </div>

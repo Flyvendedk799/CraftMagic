@@ -8,7 +8,7 @@ import { IssuesPanel } from './IssuesPanel.js';
 import { TEMPLATES } from './templates.js';
 import type { LayoutPlan, RoomItem } from './plan.js';
 import { createPlan } from './plan.js';
-import type { PlanIssue } from './validate.js';
+import { interiorRect, type PlanIssue } from './validate.js';
 
 afterEach(() => {
   cleanup();
@@ -240,13 +240,61 @@ describe('Inspector UI/UX', () => {
       />
     );
 
-    expect(screen.getAllByText('room').length).toBeGreaterThan(0);
+    expect(screen.getByText('room')).toBeTruthy();
     expect(screen.getByText('Ground')).toBeTruthy();
     expect(screen.getByText('Interior Area')).toBeTruthy();
     expect(screen.getByText('Walkable Floor')).toBeTruthy();
     // 12x8 -> interior is 10x6 = 60 blocks
     expect(screen.getByText('60 blocks')).toBeTruthy();
     expect(screen.getByText('10×6')).toBeTruthy();
+  });
+
+  describe('interior size agrees with the validator and the room schedule', () => {
+    function inspect(room: RoomItem, wallThickness: number) {
+      const plan: LayoutPlan = {
+        ...createPlan(),
+        wallThickness,
+        floors: [{ id: 'f0', name: 'Ground', items: [room] }],
+      };
+      render(
+        <Inspector
+          plan={plan}
+          floorIndex={0}
+          item={room}
+          onChange={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onSendToFloor={vi.fn()}
+        />,
+      );
+      return plan;
+    }
+
+    it('clamps thick walls to what the room can hold (3x3, wallThickness 2 -> 1x1)', () => {
+      const room: RoomItem = { kind: 'room', id: 'tiny', label: 'Closet', rect: { x: 0, z: 0, w: 3, d: 3 }, slab: true };
+      const plan = inspect(room, 2);
+
+      expect(interiorRect(room, 2)).toEqual({ x: 1, z: 1, w: 1, d: 1 });
+      expect(screen.getByText('1 blocks')).toBeTruthy();
+      expect(screen.getByText('1×1')).toBeTruthy();
+
+      // The schedule shows the very same numbers for the same plan.
+      cleanup();
+      render(<RoomSchedule plan={plan} floorIndex={0} selectedId={null} onSelect={vi.fn()} />);
+      expect(screen.getByText('1×1')).toBeTruthy();
+      expect(screen.getAllByText('1 b').length).toBeGreaterThan(0);
+    });
+
+    it('shows a dash for a room with no inside', () => {
+      // A 1-wide strip has no walkable floor whatever the wall thickness.
+      const room: RoomItem = { kind: 'room', id: 'strip', label: 'Strip', rect: { x: 0, z: 0, w: 1, d: 6 }, slab: true };
+      inspect(room, 1);
+
+      expect(interiorRect(room, 1)).toBeNull();
+      expect(screen.queryByText('0 blocks')).toBeNull();
+      expect(screen.queryByText('0×0')).toBeNull();
+      expect(screen.getAllByText('—')).toHaveLength(2);
+    });
   });
 });
 
@@ -255,6 +303,14 @@ describe('IssuesPanel UI/UX', () => {
     render(<IssuesPanel issues={[]} onGo={vi.fn()} />);
 
     expect(screen.getByText(/Every room can be walked to/)).toBeTruthy();
+  });
+
+  it('counts notes when every issue is informational', () => {
+    const issues: PlanIssue[] = [
+      { level: 'info', code: 'empty_floor', message: 'Ground is empty.', floorIndex: 0 },
+    ];
+    render(<IssuesPanel issues={issues} onGo={vi.fn()} />);
+    expect(screen.getByText('1 note')).toBeTruthy();
   });
 
   it('renders issue count badge, storey tag, jump affordance and triggers onGo', () => {

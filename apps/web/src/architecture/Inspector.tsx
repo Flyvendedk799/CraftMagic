@@ -15,6 +15,7 @@ import type { Face } from '@craftmagic/core';
 import { OVERRIDE_ROLES } from './kits.js';
 import { FURNISHINGS } from './furniture.js';
 import { floorHeight, type LayoutPlan, type PlanItem, type PlanAxis } from './plan.js';
+import { interiorRect } from './validate.js';
 
 const FACES: Face[] = ['north', 'east', 'south', 'west'];
 
@@ -53,9 +54,6 @@ export function Inspector({
         <p className="inspector__empty-hint">
           Click any room, wall, door, or item on the plan or 3D live model to inspect and edit its properties.
         </p>
-        <p className="arch__empty" style={{ display: 'none' }}>
-          Nothing selected. Click something on the plan, or pick a tool and draw.
-        </p>
         <div className="inspector__shortcuts-tip">
           <span>Shortcuts: <strong>1</strong> Select · <strong>2</strong> Room · <strong>R</strong> Turn · <strong>Delete</strong> Remove</span>
         </div>
@@ -63,13 +61,10 @@ export function Inspector({
     );
   }
 
-  const roomInner =
-    item.kind === 'room'
-      ? {
-          w: Math.max(0, item.rect.w - plan.wallThickness * 2),
-          d: Math.max(0, item.rect.d - plan.wallThickness * 2),
-        }
-      : null;
+  // The same walkable inside the validator and the room schedule use, so all three panels agree:
+  // wall thickness is clamped to what the room can hold, and a room whose walls meet in the
+  // middle has no inside at all (null).
+  const roomInner = item.kind === 'room' ? interiorRect(item, wholePlan.wallThickness) : null;
   const roomArea = roomInner ? roomInner.w * roomInner.d : 0;
 
   return (
@@ -79,14 +74,14 @@ export function Inspector({
         <span className="inspector__storey-tag">{wholePlan.floors[floorIndex]?.name ?? `Storey ${floorIndex}`}</span>
       </div>
 
-      <p className="inspector__kind">{item.kind}</p>
-
       {item.kind === 'room' && (
         <>
           <div className="inspector__stat-banner">
             <div className="inspector__stat-col">
               <span className="inspector__stat-label">Interior Area</span>
-              <span className="inspector__stat-value">{roomArea.toLocaleString()} blocks</span>
+              <span className="inspector__stat-value">
+                {roomInner ? `${roomArea.toLocaleString()} blocks` : '—'}
+              </span>
             </div>
             <div className="inspector__stat-col">
               <span className="inspector__stat-label">Walkable Floor</span>

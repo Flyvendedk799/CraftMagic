@@ -31,6 +31,7 @@ import { useJournalFlags, useZoomUndo } from '../studio/useZoomUndo.js';
 import { notifyLibraryRow } from '../studio/libraryEvents.js';
 import {
   AIR_BLOCK,
+  colorOf,
   displayName,
   expand,
   labelParts,
@@ -81,6 +82,7 @@ import { ShortcutHelp } from './ShortcutHelp.js';
 import { EDITOR_SHORTCUTS, EDITOR_SHORTCUT_FOOT } from './shortcuts.js';
 import { BuildMenu, type BuildOption } from './BuildMenu.js';
 import { ToolPalette, type RegionAction } from './ToolPalette.js';
+import { ToolIcon } from './ToolIcons.js';
 import { TOOLS, toolForKey, TOOL_BY_ID, type ToolId } from './toolset.js';
 import { previewFor, type Preview } from './preview.js';
 import { useAssembly } from './useAssembly.js';
@@ -1717,6 +1719,44 @@ export function EditorPage() {
             {clip ? `${clip.size.x}×${clip.size.y}×${clip.size.z}` : 'empty'}
           </dd>
         </dl>
+        <div className="inspector__layers">
+          <div className="inspector__layers-head">
+            <span className="inspector__layers-title">Layer Slice</span>
+            <span className="inspector__layers-value">
+              {layer === null ? `All (0–${topLayer})` : isolate ? `y ${layer} (isolated)` : `y 0–${layer}`}
+            </span>
+          </div>
+          <div className="inspector__layers-row">
+            <input
+              className="inspector__layers-slider"
+              type="range"
+              min={0}
+              max={topLayer}
+              value={layer ?? topLayer}
+              onChange={(event) => update({ layer: Number(event.target.value) })}
+              aria-label="Inspector layer slider"
+            />
+          </div>
+          <div className="inspector__layers-actions">
+            <button
+              type="button"
+              className="inspector__layers-btn"
+              aria-pressed={isolate}
+              disabled={layer === null}
+              onClick={() => update({ toggleIsolate: true })}
+            >
+              Isolate
+            </button>
+            <button
+              type="button"
+              className="inspector__layers-btn"
+              disabled={layer === null}
+              onClick={() => update({ layer: null })}
+            >
+              Show all
+            </button>
+          </div>
+        </div>
         </Section>
         </section>
 
@@ -1810,6 +1850,63 @@ export function EditorPage() {
         </section>
       </div>
 
+      {/* Viewport status HUD: Immediate, decluttered visual feedback for active tool,
+          active material swatch preview, brush/symmetry state, and active layer. */}
+      <div className="hud hud--viewport-status" role="status" aria-label="Active tool and layer feedback">
+        <div
+          className="viewport-status__item viewport-status__item--tool"
+          title={`Active tool: ${TOOL_BY_ID[tool]?.label ?? tool} (${TOOL_BY_ID[tool]?.key})`}
+        >
+          <ToolIcon tool={tool} />
+          <span className="viewport-status__label">{TOOL_BY_ID[tool]?.label ?? tool}</span>
+          <kbd className="viewport-status__key">{TOOL_BY_ID[tool]?.key}</kbd>
+        </div>
+
+        {TOOL_BY_ID[tool]?.needsBlock && (
+          <div
+            className="viewport-status__item viewport-status__item--block"
+            title={`Active block: ${displayName(block)} (${block})`}
+          >
+            <span
+              className="viewport-status__swatch"
+              style={{ backgroundColor: `rgb(${colorOf(block).join(' ')})` }}
+              aria-hidden="true"
+            />
+            <span className="viewport-status__block-name">{displayName(block)}</span>
+          </div>
+        )}
+
+        {TOOL_BY_ID[tool]?.usesBrush && (
+          <div
+            className="viewport-status__item viewport-status__item--brush"
+            title={`Brush size: ${brushRadius * 2 + 1}×${brushRadius * 2 + 1}, shape: ${brushShape}`}
+          >
+            <span className="viewport-status__badge">
+              {brushRadius * 2 + 1}×{brushRadius * 2 + 1} {brushShape === 'ball' ? '●' : '■'}
+            </span>
+          </div>
+        )}
+
+        {symmetry && (
+          <div
+            className="viewport-status__item viewport-status__item--symmetry"
+            title="Midplane symmetry is enabled"
+          >
+            <span className="viewport-status__badge">⇋ Symmetry</span>
+          </div>
+        )}
+
+        <div className="viewport-status__item viewport-status__item--layer" title="Current layer visibility">
+          <span className="viewport-status__layer-pill" data-isolated={isolate}>
+            {layer === null
+              ? `All layers (y 0–${topLayer})`
+              : isolate
+                ? `Layer y ${layer} (isolated)`
+                : `Layers y 0–${layer}`}
+          </span>
+        </div>
+      </div>
+
       {/* The one line that is always on screen, so it carries what the pointer is over and
           what the next click would do — the two things a HUD panel is too far away to say. */}
       <aside className="hover-readout">
@@ -1840,33 +1937,36 @@ export function EditorPage() {
         )}
       </aside>
 
-      <section className="hud hud--layers">
-        <span className="layers__label">Layer</span>
-        <input
-          className="layers__slider"
-          type="range"
-          min={0}
-          max={topLayer}
-          value={layer ?? topLayer}
-          onChange={(event) => update({ layer: Number(event.target.value) })}
-          aria-label="Highest visible layer"
-        />
-        <span className="layers__value">
-          {layer === null ? `y 0–${topLayer}` : isolate ? `y ${layer}` : `y 0–${layer}`}
-        </span>
-        <button
-          type="button"
-          aria-pressed={isolate}
-          disabled={layer === null}
-          title="Show only the cut layer  (I)"
-          onClick={() => update({ toggleIsolate: true })}
-        >
-          Isolate
-        </button>
-        <button type="button" onClick={() => update({ layer: null })} disabled={layer === null}>
-          Show all
-        </button>
-        <span className="layers__views">
+      <section className="hud hud--layers" aria-label="Layer slicing and camera framing">
+        <div className="layers__slice-controls" role="group" aria-label="Layer slicing controls">
+          <span className="layers__label">Layer</span>
+          <input
+            className="layers__slider"
+            type="range"
+            min={0}
+            max={topLayer}
+            value={layer ?? topLayer}
+            onChange={(event) => update({ layer: Number(event.target.value) })}
+            aria-label="Highest visible layer"
+          />
+          <span className="layers__value" data-isolated={isolate}>
+            {layer === null ? `y 0–${topLayer}` : isolate ? `y ${layer}` : `y 0–${layer}`}
+          </span>
+          <button
+            type="button"
+            aria-pressed={isolate}
+            disabled={layer === null}
+            title="Show only the cut layer  (I)"
+            onClick={() => update({ toggleIsolate: true })}
+          >
+            Isolate
+          </button>
+          <button type="button" onClick={() => update({ layer: null })} disabled={layer === null}>
+            Show all
+          </button>
+        </div>
+
+        <div className="layers__views" role="group" aria-label="Camera framing controls">
           {VIEWS.map((entry) => (
             <button
               key={entry.kind}
@@ -1896,7 +1996,7 @@ export function EditorPage() {
           <button type="button" title="Save the current view as a PNG" onClick={takeScreenshot}>
             📷
           </button>
-        </span>
+        </div>
       </section>
 
       {help && (

@@ -85,7 +85,105 @@
   bottom: 1rem;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 1rem;
+}
+
+.layers__slice-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- viewport status HUD ----------------------------------------------
+   Clean, unobtrusive status badge for active tool, active block swatch,
+   and current layer level feedback directly in the 3D canvas viewport. */
+
+.hud--viewport-status {
+  position: absolute;
+  top: calc(var(--chrome, 3.5rem) + 0.75rem);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.65rem;
+  font-size: var(--text-xs);
+  z-index: 15;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+
+.viewport-status__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  pointer-events: auto;
+}
+
+.viewport-status__item + .viewport-status__item {
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--border);
+}
+
+.viewport-status__item--tool {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.viewport-status__item--tool svg {
+  display: block;
+}
+
+.viewport-status__key {
+  padding: 0.1rem 0.3rem;
+  font-size: 0.625rem;
+  font-family: var(--font-mono);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+}
+
+.viewport-status__swatch {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.25);
+  flex-shrink: 0;
+}
+
+.viewport-status__block-name {
+  font-size: var(--text-xs);
+  color: var(--text);
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewport-status__badge {
+  padding: 0.15rem 0.35rem;
+  font-size: 0.625rem;
+  font-family: var(--font-mono);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+.viewport-status__layer-pill {
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.viewport-status__layer-pill[data-isolated='true'] {
+  color: var(--pending);
+  font-weight: 600;
 }
 
 .hud__title {
@@ -116,6 +214,70 @@
   margin: 0;
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   text-align: right;
+}
+
+/* --- inspector layer controls -------------------------------------------- */
+
+.inspector__layers {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+
+.inspector__layers-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.35rem;
+}
+
+.inspector__layers-title {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.inspector__layers-value {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text);
+}
+
+.inspector__layers-slider {
+  width: 100%;
+  margin: 0.2rem 0;
+}
+
+.inspector__layers-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.inspector__layers-btn {
+  flex: 1;
+  font-size: 0.6875rem;
+  padding: 0.25rem 0.45rem;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.inspector__layers-btn[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.inspector__layers-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .hud__actions {
@@ -616,6 +778,48 @@
   margin-top: 0.875rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
+}
+
+.tools__section {
+  margin-top: 0.75rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--border);
+}
+
+.tools__section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.tools__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.tools__section-title {
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tools__help-trigger {
+  font-size: 0.6875rem;
+}
+
+.tools__meta-note {
+  margin: 0.35rem 0 0;
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.tools__row--modifiers {
+  margin-top: 0.4rem;
 }
 
 .tools__row {
@@ -1892,6 +2096,18 @@
     margin-left: 0;
     padding-left: 0;
     border-left: 0;
+  }
+
+  .hud--viewport-status {
+    position: static;
+    transform: none;
+    margin: 0.5rem 0.75rem 0;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .layers__slice-controls {
+    flex-wrap: wrap;
   }
 
   /* It follows the pointer, and a touch screen has none. */

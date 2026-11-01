@@ -15,6 +15,7 @@ import type { Face } from '@craftmagic/core';
 import { OVERRIDE_ROLES } from './kits.js';
 import { FURNISHINGS } from './furniture.js';
 import { floorHeight, type LayoutPlan, type PlanItem, type PlanAxis } from './plan.js';
+import { interiorRect } from './validate.js';
 
 const FACES: Face[] = ['north', 'east', 'south', 'west'];
 
@@ -48,18 +49,45 @@ export function Inspector({
   const plan = { ...wholePlan, storeyHeight: floorHeight(wholePlan, floorIndex) };
   if (!item) {
     return (
-      <p className="arch__empty">
-        Nothing selected. Click something on the plan, or pick a tool and draw.
-      </p>
+      <div className="inspector__empty">
+        <p className="inspector__empty-title">Nothing selected</p>
+        <p className="inspector__empty-hint">
+          Click any room, wall, door, or item on the plan or 3D live model to inspect and edit its properties.
+        </p>
+        <div className="inspector__shortcuts-tip">
+          <span>Shortcuts: <strong>1</strong> Select · <strong>2</strong> Room · <strong>R</strong> Turn · <strong>Delete</strong> Remove</span>
+        </div>
+      </div>
     );
   }
 
+  // The same walkable inside the validator and the room schedule use, so all three panels agree:
+  // wall thickness is clamped to what the room can hold, and a room whose walls meet in the
+  // middle has no inside at all (null).
+  const roomInner = item.kind === 'room' ? interiorRect(item, wholePlan.wallThickness) : null;
+  const roomArea = roomInner ? roomInner.w * roomInner.d : 0;
+
   return (
     <div className="inspector">
-      <p className="inspector__kind">{item.kind}</p>
+      <div className="inspector__header">
+        <span className="inspector__kind-tag">{item.kind}</span>
+        <span className="inspector__storey-tag">{wholePlan.floors[floorIndex]?.name ?? `Storey ${floorIndex}`}</span>
+      </div>
 
       {item.kind === 'room' && (
         <>
+          <div className="inspector__stat-banner">
+            <div className="inspector__stat-col">
+              <span className="inspector__stat-label">Interior Area</span>
+              <span className="inspector__stat-value">
+                {roomInner ? `${roomArea.toLocaleString()} blocks` : '—'}
+              </span>
+            </div>
+            <div className="inspector__stat-col">
+              <span className="inspector__stat-label">Walkable Floor</span>
+              <span className="inspector__stat-value">{roomInner ? `${roomInner.w}×${roomInner.d}` : '—'}</span>
+            </div>
+          </div>
           <TextField label="Name" value={item.label} onChange={(label) => onChange({ ...item, label })} />
           <RectFields plan={plan} rect={item.rect} onChange={(rect) => onChange({ ...item, rect })} />
           <RoleField

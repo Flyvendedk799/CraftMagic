@@ -134,9 +134,9 @@ export function WorkspaceDock({
               onClick={() => onTab(tab.id)}
               onKeyDown={(event) => {
                 let target: number | null = null;
-                if (event.key === 'ArrowRight')
+                if (event.key === 'ArrowRight' || event.key === 'ArrowDown')
                   target = (index + 1) % specs.length;
-                if (event.key === 'ArrowLeft')
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
                   target = (index - 1 + specs.length) % specs.length;
                 if (event.key === 'Home') target = 0;
                 if (event.key === 'End') target = specs.length - 1;
@@ -155,8 +155,9 @@ export function WorkspaceDock({
         </div>
         <button
           className="workspace-dock__collapse"
-          title={`Hide ${side} panel`}
+          title={`Hide ${side} panel · ${side === 'left' ? 'Ctrl \\' : 'Ctrl Shift \\'}`}
           aria-label={`Hide ${side} panel`}
+          aria-expanded="true"
           onClick={onClose}
         >
           <StudioIcon name={side === 'left' ? 'panelLeft' : 'panelRight'} />

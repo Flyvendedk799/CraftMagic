@@ -254,15 +254,20 @@ export function WorkspaceFrame(props: Props) {
             <small>CRAFTMAGIC</small>
           </Link>
           <div className="workspace-header__file">
-            <button onClick={props.onFiles}>
+            <button className="studio__file-action" onClick={props.onFiles}>
               <StudioIcon name="folder" />
               Open
             </button>
-            <button onClick={() => setDialog('new')} disabled={!workbench}>
+            <button
+              className="studio__file-action"
+              onClick={() => setDialog('new')}
+              disabled={!workbench}
+            >
               <StudioIcon name="plus" />
               New
             </button>
             <button
+              className="studio__file-action"
               onClick={() => setDialog('recent')}
               title="Recent documents"
             >
@@ -318,19 +323,55 @@ export function WorkspaceFrame(props: Props) {
           onNew={() => setDialog('new')}
         />
         <div className="workspace-context">
-          <nav className="workspace-modes" aria-label="Studio workspaces">
-            {(['world', 'arch', 'build'] as StudioMode[]).map((id) => (
+          <nav
+            className="workspace-modes studio__switch"
+            aria-label="Studio workspaces"
+          >
+            {(['build', 'arch', 'world'] as StudioMode[]).map((id) => (
               <button
                 key={id}
                 data-mode={id}
                 aria-pressed={mode === id}
+                aria-label={id === 'arch' ? 'Plan' : undefined}
                 onClick={() => props.onMode(id)}
+                onKeyDown={(event) => {
+                  const modes: StudioMode[] = ['build', 'arch', 'world'];
+                  const currentIndex = modes.indexOf(id);
+                  let targetIndex: number | null = null;
+                  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                    targetIndex = (currentIndex + 1) % modes.length;
+                  } else if (
+                    event.key === 'ArrowLeft' ||
+                    event.key === 'ArrowUp'
+                  ) {
+                    targetIndex = (currentIndex - 1 + modes.length) % modes.length;
+                  } else if (event.key === 'Home') {
+                    targetIndex = 0;
+                  } else if (event.key === 'End') {
+                    targetIndex = modes.length - 1;
+                  }
+                  if (targetIndex !== null) {
+                    event.preventDefault();
+                    const nextMode = modes[targetIndex]!;
+                    props.onMode(nextMode);
+                    const nav = (
+                      event.currentTarget as HTMLElement
+                    ).closest('.workspace-modes');
+                    requestAnimationFrame(() =>
+                      nav
+                        ?.querySelector<HTMLButtonElement>(
+                          `button[data-mode="${nextMode}"]`,
+                        )
+                        ?.focus(),
+                    );
+                  }
+                }}
                 title={
                   id === 'world'
-                    ? 'Compose terrain and place structures'
+                    ? 'World · Compose terrain and place structures'
                     : id === 'arch'
-                      ? 'Draw the floorplan for this structure'
-                      : 'Edit blocks and materials'
+                      ? 'Plan · Draw the floorplan for this structure'
+                      : 'Build · Edit blocks and materials'
                 }
               >
                 <StudioIcon
@@ -338,19 +379,29 @@ export function WorkspaceFrame(props: Props) {
                     id === 'world' ? 'world' : id === 'arch' ? 'plan' : 'cube'
                   }
                 />
-                {id === 'world' ? 'World' : id === 'arch' ? 'Plan' : 'Build'}
+                <strong>
+                  {id === 'world' ? 'World' : id === 'arch' ? 'Architecture' : 'Build'}
+                </strong>
               </button>
             ))}
           </nav>
           <span className="workspace-context__divider" />
-          <div className="workspace-breadcrumb" title={title}>
-            <span>
+          <div className="workspace-breadcrumb studio__document" title={title}>
+            <span className="workspace-breadcrumb__project">
               {mode === 'world'
                 ? 'Project'
                 : (presence?.project ?? 'Workspace')}
             </span>
             <StudioIcon name="chevron" />
-            <strong>{title}</strong>
+            <strong className="workspace-breadcrumb__title">{title}</strong>
+            <span
+              className="studio__document-state"
+              data-dirty={dirty}
+              aria-label={dirty ? 'Unsaved changes' : 'Ready to work'}
+            >
+              <i aria-hidden="true" />
+              {dirty ? 'Unsaved' : 'Ready to work'}
+            </span>
           </div>
           <div className="workspace-view-actions">
             <button
@@ -372,7 +423,7 @@ export function WorkspaceFrame(props: Props) {
             <button
               onClick={() => setDialog('history')}
               aria-label="Project history"
-              title="Project history"
+              title="Project history · Version timeline"
             >
               <StudioIcon name="history" />
             </button>
@@ -399,7 +450,7 @@ export function WorkspaceFrame(props: Props) {
               onClick={() => toggle('left')}
               aria-pressed={layout.leftVisible && !layout.focus}
               aria-label="Toggle tools panel"
-              title="Tools · Ctrl \"
+              title={`Tools panel · Ctrl \\ · ${layout.leftVisible && !layout.focus ? 'Visible' : 'Hidden'}`}
             >
               <StudioIcon name="panelLeft" />
             </button>
@@ -407,7 +458,7 @@ export function WorkspaceFrame(props: Props) {
               onClick={() => toggle('right')}
               aria-pressed={layout.rightVisible && !layout.focus}
               aria-label="Toggle inspector panel"
-              title="Inspector · Ctrl Shift \"
+              title={`Inspector panel · Ctrl Shift \\ · ${layout.rightVisible && !layout.focus ? 'Visible' : 'Hidden'}`}
             >
               <StudioIcon name="panelRight" />
             </button>
@@ -417,7 +468,7 @@ export function WorkspaceFrame(props: Props) {
               }
               aria-pressed={layout.focus}
               aria-label="Focus mode"
-              title="Focus mode · F8"
+              title={`Focus mode · F8 · ${layout.focus ? 'Active' : 'Inactive'}`}
             >
               <StudioIcon name="focus" />
             </button>
@@ -479,7 +530,7 @@ export function WorkspaceFrame(props: Props) {
             {workbench?.saving
               ? 'Saving…'
               : (workbench?.activity ??
-                (dirty ? 'Unsaved changes' : 'No pending edits'))}
+                (dirty ? 'Unsaved changes' : 'Ready to work'))}
           </span>
           <span>
             {props.signedIn
@@ -494,7 +545,10 @@ export function WorkspaceFrame(props: Props) {
             Keyboard & commands <kbd>Ctrl K</kbd>
           </button>
         </footer>
-        <nav className="workspace-mobile-nav" aria-label="Workspace view">
+        <nav
+          className="workspace-mobile-nav studio__pane-switch"
+          aria-label="Workspace view"
+        >
           {(['left', 'canvas', 'right'] as const).map((pane) => (
             <button
               key={pane}

@@ -171,26 +171,31 @@ export function TerrainPanel(props: TerrainPanelProps) {
         </Section>
       )}
 
-      {spec.stratum && (
-        <Section id="world-ground" title="Ground" summary={settings.strata[stratum]?.label ?? '—'}>
-          <div className="world__strata" role="group" aria-label="Ground material">
-            {settings.strata.map((profile, index) => (
-              <button
-                key={profile.id}
-                type="button"
-                className="world__stratum"
-                aria-pressed={index === stratum}
-                title={describe(profile)}
-                onClick={() => props.onStratum(index)}
-              >
-                <span className="world__swatch" style={{ background: cssColor(profile) }} aria-hidden="true" />
-                {profile.label}
-              </button>
-            ))}
-          </div>
-          <p className="world__hint">{describe(settings.strata[stratum] ?? settings.strata[0]!)}</p>
-        </Section>
-      )}
+      <Section id="world-ground" title="Ground" summary={settings.strata[stratum]?.label ?? '—'}>
+        <div className="world__strata" role="group" aria-label="Ground material">
+          {settings.strata.map((profile, index) => (
+            <button
+              key={profile.id}
+              type="button"
+              className="world__stratum"
+              aria-pressed={index === stratum}
+              title={describe(profile)}
+              onClick={() => {
+                props.onStratum(index);
+                if (tool !== 'paint') props.onTool('paint');
+              }}
+            >
+              <span className="world__swatch" style={{ background: cssColor(profile) }} aria-hidden="true" />
+              {profile.label}
+            </button>
+          ))}
+        </div>
+        <p className="world__hint">
+          {tool === 'paint'
+            ? describe(settings.strata[stratum] ?? settings.strata[0]!)
+            : 'Click any material to switch to Paint tool and brush it on the ground.'}
+        </p>
+      </Section>
 
     </>
   );

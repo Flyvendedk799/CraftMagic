@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorldPlacement } from '@craftmagic/core';
-import { WORLD_TOOLS, dropCorner, placementFootprint, turnedAboutCentre } from './toolset.js';
+import { WORLD_TOOLS, dropCorner, placementFacing, placementFootprint, turnedAboutCentre } from './toolset.js';
 
 const long: WorldPlacement = {
   id: 'p1', buildId: 'b', x: 100, z: 100, y: 62, anchor: 'surface', turns: 0,
@@ -52,6 +52,26 @@ describe('dropCorner', () => {
   it('clamps to the map', () => {
     expect(dropCorner(0, 0, { w: 10, d: 10 }, { x: 512, z: 512 })).toEqual({ x: 0, z: 0 });
     expect(dropCorner(600, 600, { w: 10, d: 10 }, { x: 512, z: 512 })).toEqual({ x: 511, z: 511 });
+  });
+});
+
+describe('placementFacing', () => {
+  const box = { x: 10, z: 20, w: 30, d: 40 };
+
+  it('calculates the front edge for each quarter turn', () => {
+    // 0 turns: south (+z edge, y = 20 + 40 = 60)
+    expect(placementFacing(box, 0)).toEqual({ x1: 10, y1: 60, x2: 40, y2: 60 });
+    // 1 turn: west (-x edge, x = 10)
+    expect(placementFacing(box, 1)).toEqual({ x1: 10, y1: 20, x2: 10, y2: 60 });
+    // 2 turns: north (-z edge, y = 20)
+    expect(placementFacing(box, 2)).toEqual({ x1: 10, y1: 20, x2: 40, y2: 20 });
+    // 3 turns: east (+x edge, x = 10 + 30 = 40)
+    expect(placementFacing(box, 3)).toEqual({ x1: 40, y1: 20, x2: 40, y2: 60 });
+  });
+
+  it('handles negative and wrapping turns', () => {
+    expect(placementFacing(box, -1)).toEqual(placementFacing(box, 3));
+    expect(placementFacing(box, 4)).toEqual(placementFacing(box, 0));
   });
 });
 

@@ -27,6 +27,7 @@ export function ResizeHandle({
       aria-valuemax={480}
       aria-valuenow={width}
       tabIndex={0}
+      title={`Resize ${side} panel · Drag or use arrow keys · Double-click to reset`}
       onDoubleClick={() => onChange(side === 'left' ? 272 : 300)}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
@@ -55,6 +56,8 @@ export function ResizeHandle({
         if (event.key === 'ArrowLeft') next += side === 'left' ? -step : step;
         else if (event.key === 'ArrowRight')
           next += side === 'left' ? step : -step;
+        else if (event.key === 'PageUp') next += side === 'left' ? 40 : -40;
+        else if (event.key === 'PageDown') next += side === 'left' ? -40 : 40;
         else if (event.key === 'Home') next = 224;
         else if (event.key === 'End') next = 480;
         else return;

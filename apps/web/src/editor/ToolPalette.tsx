@@ -85,7 +85,7 @@ export function ToolPalette(props: ToolPaletteProps) {
     props.tool === 'select' ||
     Boolean(props.region) ||
     props.tool === 'stamp' ||
-    props.tool === 'line' ||
+    (props.tool === 'line' && Boolean(props.anchor)) ||
     props.tool === 'swap';
 
   return (
@@ -140,7 +140,7 @@ export function ToolPalette(props: ToolPaletteProps) {
           <span className="tools__section-title">Brush & Modifiers</span>
         </div>
 
-        {spec.usesBrush ? (
+        {spec.usesBrush && (
           <div className="tools__row tools__row--brush">
             <span className="tools__label">Brush</span>
             <button
@@ -178,10 +178,6 @@ export function ToolPalette(props: ToolPaletteProps) {
               {props.brushShape === 'ball' ? '● Round' : '■ Square'}
             </button>
           </div>
-        ) : (
-          <p className="tools__meta-note">
-            Active tool ({spec.label}) operates directly on single voxels.
-          </p>
         )}
 
         <div className="tools__row tools__row--modifiers">

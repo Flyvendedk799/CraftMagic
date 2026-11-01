@@ -95,6 +95,9 @@
   gap: 0.65rem;
   flex: 1;
   min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 /* --- viewport status HUD ----------------------------------------------
@@ -103,18 +106,34 @@
 
 .hud--viewport-status {
   position: absolute;
-  top: calc(var(--chrome, 3.5rem) + 0.75rem);
+  top: 0.75rem;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  max-width: calc(100% - 1.5rem);
+  box-sizing: border-box;
   padding: 0.35rem 0.65rem;
   font-size: var(--text-xs);
   z-index: 15;
   pointer-events: none;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* Fallback when placed directly under .editor rather than inside .editor__canvas */
+.editor > .hud--viewport-status {
+  top: calc(var(--chrome, 3.5rem) + 0.75rem);
+  max-width: min(calc(100% - 1.5rem), calc(100vw - 42rem));
+}
+
+@media (max-width: 62rem) {
+  .editor > .hud--viewport-status {
+    max-width: calc(100% - 1.5rem);
+  }
 }
 
 .viewport-status__item {
@@ -2099,15 +2118,22 @@
   }
 
   .hud--viewport-status {
-    position: static;
-    transform: none;
-    margin: 0.5rem 0.75rem 0;
-    justify-content: center;
-    flex-wrap: wrap;
+    position: absolute;
+    top: 0.75rem;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: calc(100% - 1.5rem);
+    z-index: 15;
+    margin: 0;
+    white-space: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .layers__slice-controls {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   /* It follows the pointer, and a touch screen has none. */

@@ -37,7 +37,7 @@ import {
 } from '@craftmagic/core';
 import { isTextEntry } from '../studio/undoKeys.js';
 import { interpolate, type TerrainStroke } from './stroke.js';
-import { dropCorner, isBrushTool, placementFootprint, type WorldTool } from './toolset.js';
+import { dropCorner, isBrushTool, placementFacing, placementFootprint, type WorldTool } from './toolset.js';
 import { ActionIcon } from './WorldToolIcons.js';
 
 export interface WorldMapProps {
@@ -596,7 +596,7 @@ export function WorldMap(props: WorldMapProps) {
     const turned = props.armed.turns === 1 || props.armed.turns === 3;
     const footprint = turned ? { w: props.armed.d, d: props.armed.w } : { w: props.armed.w, d: props.armed.d };
     const corner = dropCorner(cursor.x, cursor.z, footprint, settings.size);
-    return { ...corner, ...footprint, name: props.armed.name };
+    return { ...corner, ...footprint, name: props.armed.name, turns: props.armed.turns };
   }, [tool, props.armed, cursor, settings.size]);
 
   const hoverIndex = cursor ? columnIndex(settings, cursor.x, cursor.z) : -1;
@@ -692,6 +692,7 @@ export function WorldMap(props: WorldMapProps) {
 
           {placements.map((placement) => {
             const box = placementFootprint(placement);
+            const facing = placementFacing(box, placement.turns);
             return (
               <g
                 key={placement.id}
@@ -703,6 +704,12 @@ export function WorldMap(props: WorldMapProps) {
                   x={box.x} y={box.z} width={box.w} height={box.d}
                   vectorEffect="non-scaling-stroke"
                 />
+                <line
+                  className="worldmap__facing"
+                  x1={facing.x1} y1={facing.y1}
+                  x2={facing.x2} y2={facing.y2}
+                  vectorEffect="non-scaling-stroke"
+                />
                 {scale >= 0.5 && (
                   <text x={box.x + box.w / 2} y={box.z + box.d / 2} fontSize={Math.min(box.d / 2, 12 / scale)} vectorEffect="non-scaling-stroke">
                     {placement.name}
@@ -712,16 +719,25 @@ export function WorldMap(props: WorldMapProps) {
             );
           })}
 
-          {ghost && (
-            <g className="worldmap__ghost">
-              <rect x={ghost.x} y={ghost.z} width={ghost.w} height={ghost.d} vectorEffect="non-scaling-stroke" />
-              {scale >= 0.5 && (
-                <text x={ghost.x + ghost.w / 2} y={ghost.z + ghost.d / 2} fontSize={Math.min(ghost.d / 2, 12 / scale)} vectorEffect="non-scaling-stroke">
-                  {ghost.name}
-                </text>
-              )}
-            </g>
-          )}
+          {ghost && (() => {
+            const ghostFacing = placementFacing(ghost, ghost.turns);
+            return (
+              <g className="worldmap__ghost">
+                <rect x={ghost.x} y={ghost.z} width={ghost.w} height={ghost.d} vectorEffect="non-scaling-stroke" />
+                <line
+                  className="worldmap__ghost-facing"
+                  x1={ghostFacing.x1} y1={ghostFacing.y1}
+                  x2={ghostFacing.x2} y2={ghostFacing.y2}
+                  vectorEffect="non-scaling-stroke"
+                />
+                {scale >= 0.5 && (
+                  <text x={ghost.x + ghost.w / 2} y={ghost.z + ghost.d / 2} fontSize={Math.min(ghost.d / 2, 12 / scale)} vectorEffect="non-scaling-stroke">
+                    {ghost.name}
+                  </text>
+                )}
+              </g>
+            );
+          })()}
         </g>
 
         {cursor && isBrushTool(tool) && !panning && (
@@ -800,7 +816,7 @@ export function WorldMap(props: WorldMapProps) {
           ) : (
             <span className="worldmap__readout-idle">
               {tool === 'place' && !props.armed
-                ? 'Pick a component on the right to place it'
+                ? 'Pick a component in the left dock to place it'
                 : 'Scroll to zoom · Space-drag to pan · F to fit'}
             </span>
           )}

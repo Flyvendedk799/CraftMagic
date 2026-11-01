@@ -41,12 +41,22 @@ export interface PlacementsPanelProps {
   onOpenBuild?: (placement: WorldPlacement) => void;
   onDrawPlan?: (placement: WorldPlacement) => void;
   onPathToRoad?: (placement: WorldPlacement) => void;
+  /** Whether to also render the structure placement shelf in this panel (default false) */
+  includeShelf?: boolean;
 }
 
-export function PlacementsPanel(props: PlacementsPanelProps) {
-  const { doc, library, selected } = props;
-  // One choice, not two switches that both start on. Turning "Interiors" off while
-  // Structures stayed on changed nothing you could see, which read as a dead control.
+export interface StructureShelfProps {
+  library: ComponentLibrary;
+  onAdd: (entry: ShelfEntry) => void;
+  armed?: string | null;
+}
+
+/**
+ * The structure placement shelf: components available to drop on the terrain.
+ * Grouped in the left dock alongside terrain sculpt brushes and stratum materials.
+ */
+export function StructureShelf(props: StructureShelfProps) {
+  const { library, onAdd, armed } = props;
   const [kind, setKind] = useState<'all' | BuildKind>('all');
   const [filter, setFilter] = useState('');
 
@@ -58,96 +68,99 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
     );
   }, [library.shelf, kind, filter]);
 
+  return (
+    <Section id="world-shelf" title="Components" summary={`${shelf.length}`}>
+      <div className="shelf__kinds" role="group" aria-label="Component kind">
+        {(['all', 'structure', 'interior'] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            className="shelf__kind"
+            aria-pressed={kind === id}
+            onClick={() => setKind(id)}
+          >
+            {id === 'all' ? 'All' : id === 'structure' ? 'Structures' : 'Interiors'}
+          </button>
+        ))}
+      </div>
+
+      <input
+        type="search"
+        className="ui-input world__search"
+        placeholder="Filter by name"
+        value={filter}
+        onChange={(event) => setFilter(event.target.value)}
+      />
+
+      {library.status === 'signedOut' && (
+        <p className="world__hint">
+          The terrain tools work without an account. Placing a building needs one — components
+          are your saved builds. <Link to="/dashboard">Sign in</Link>, then save something from
+          Build or Architecture and it appears here.
+        </p>
+      )}
+      {library.status === 'loading' && <p className="world__hint">Loading your library…</p>}
+      {library.status === 'error' && <p className="world__hint">The library could not be reached.</p>}
+      {armed && (
+        <p className="world__armed" role="status">
+          Click the map to drop it — it stays armed for the next one.
+        </p>
+      )}
+
+      {library.status === 'ready' && shelf.length === 0 && (
+        <p className="world__hint">
+          {kind === 'interior'
+            ? 'No interiors yet. Draw a floorplan in Architecture and save it — interiors are plans, structures are voxel builds.'
+            : kind === 'structure'
+              ? 'No structures yet. Save a build from the voxel editor and it shows up here.'
+              : 'Nothing saved yet. Make something in Build or draw one in Architecture, press “Save to library”, and it becomes a component you can place here.'}
+        </p>
+      )}
+
+      {shelf.length > 0 && (
+        <ul className="shelf__list">
+          {shelf.map((entry) => (
+            <li key={entry.id}>
+              <button
+                type="button"
+                className="shelf__item shelf__item--world"
+                aria-pressed={armed === entry.id}
+                title={`Arm “${entry.name}” — then click the map to drop it`}
+                onClick={() => onAdd(entry)}
+              >
+                <span className="shelf__name">{entry.name}</span>
+                <span className="shelf__meta">
+                  {entry.w}×{entry.h}×{entry.d}
+                </span>
+                <span className="shelf__badge" data-kind={entry.kind}>
+                  {entry.kind === 'interior' ? 'Interior' : 'Structure'}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
+export function PlacementsPanel(props: PlacementsPanelProps) {
+  const { doc, library, selected, includeShelf = false } = props;
   const placement = doc.placements.find((entry) => entry.id === selected) ?? null;
 
   return (
     <>
-      <Section id="world-shelf" title="Components" summary={`${shelf.length}`}>
-        {/* The two filters. They carried no class at all, so they fell through to the global
-            `button` rule and rendered as two full-strength mint call-to-actions — the loudest
-            thing on a page whose actual verbs are "sculpt" and "place". */}
-        <div className="shelf__kinds" role="group" aria-label="Component kind">
-          {(['all', 'structure', 'interior'] as const).map((id) => (
-            <button
-              key={id}
-              type="button"
-              className="shelf__kind"
-              aria-pressed={kind === id}
-              onClick={() => setKind(id)}
-            >
-              {id === 'all' ? 'All' : id === 'structure' ? 'Structures' : 'Interiors'}
-            </button>
-          ))}
-        </div>
-
-        <input
-          type="search"
-          className="ui-input world__search"
-          placeholder="Filter by name"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
+      {includeShelf && (
+        <StructureShelf
+          library={library}
+          onAdd={props.onAdd}
+          armed={props.armed}
         />
-
-        {/* Sculpting works signed out; placing does not, because a component is a saved build
-            and the library needs an account. Both halves of that are said here, with the door,
-            rather than leaving an empty shelf to explain itself. */}
-        {library.status === 'signedOut' && (
-          <p className="world__hint">
-            The terrain tools work without an account. Placing a building needs one — components
-            are your saved builds. <Link to="/dashboard">Sign in</Link>, then save something from
-            Build or Architecture and it appears here.
-          </p>
-        )}
-        {library.status === 'loading' && <p className="world__hint">Loading your library…</p>}
-        {library.status === 'error' && <p className="world__hint">The library could not be reached.</p>}
-        {props.armed && (
-          <p className="world__armed" role="status">
-            Click the map to drop it — it stays armed for the next one.
-          </p>
-        )}
-
-        {library.status === 'ready' && shelf.length === 0 && (
-          <p className="world__hint">
-            {kind === 'interior'
-              ? 'No interiors yet. Draw a floorplan in Architecture and save it — interiors are plans, structures are voxel builds.'
-              : kind === 'structure'
-                ? 'No structures yet. Save a build from the voxel editor and it shows up here.'
-                : 'Nothing saved yet. Make something in Build or draw one in Architecture, press “Save to library”, and it becomes a component you can place here.'}
-          </p>
-        )}
-
-        {/* `shelf__list` and `shelf__item` are Architecture's, so the same saved build looks
-            the same in both modes. The badge is `shelf__badge`, not `shelf__kind`: that name
-            already belongs to the filter buttons above, and while the two shared it every
-            badge in the list was being drawn as a pressed filter. */}
-        {shelf.length > 0 && (
-          <ul className="shelf__list">
-            {shelf.map((entry) => (
-              <li key={entry.id}>
-                <button
-                  type="button"
-                  className="shelf__item shelf__item--world"
-                  aria-pressed={props.armed === entry.id}
-                  title={`Arm “${entry.name}” — then click the map to drop it`}
-                  onClick={() => props.onAdd(entry)}
-                >
-                  <span className="shelf__name">{entry.name}</span>
-                  <span className="shelf__meta">
-                    {entry.w}×{entry.h}×{entry.d}
-                  </span>
-                  <span className="shelf__badge" data-kind={entry.kind}>
-                    {entry.kind === 'interior' ? 'Interior' : 'Structure'}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+      )}
 
       <Section id="world-placed" title="Placed" summary={`${doc.placements.length}`}>
         {doc.placements.length === 0 ? (
-          <p className="world__hint">Pick a component above to drop it on the map.</p>
+          <p className="world__hint">Pick a component from the shelf to drop it on the map.</p>
         ) : (
           <ul className="world__placed">
             {doc.placements.map((entry) => (
@@ -172,11 +185,15 @@ export function PlacementsPanel(props: PlacementsPanelProps) {
         )}
       </Section>
 
-      {placement && (
-        <Section id="world-inspector" title="Placement" summary={placement.name}>
+      <Section id="world-inspector" title="Placement" summary={placement ? placement.name : 'None selected'}>
+        {placement ? (
           <PlacementInspector {...props} placement={placement} />
-        </Section>
-      )}
+        ) : (
+          <p className="world__hint">
+            Select a structure on the map or in the placed list to inspect its coordinates, anchor height, and rotation.
+          </p>
+        )}
+      </Section>
     </>
   );
 }
@@ -192,6 +209,7 @@ function PlacementInspector({
   onDrawPlan,
   onPathToRoad,
   onRotate,
+  onFrame,
 }: PlacementsPanelProps & { placement: WorldPlacement }) {
   const box = placementFootprint(placement);
   const spacing = spacingToNearest(doc, placement);
@@ -265,12 +283,11 @@ function PlacementInspector({
 
       <dl className="world__facts">
         <div><dt>Footprint</dt><dd>{box.w}×{box.d}</dd></div>
-        <div><dt>Height</dt><dd>{placement.h}</dd></div>
-        <div><dt>Blocks</dt><dd>{loaded ? 'loaded' : 'not fetched yet'}</dd></div>
-        <div>
-          <dt>Spacing</dt>
-          <dd>{spacing ? `${spacing.blocks} to ${spacing.name}` : 'nothing else placed'}</dd>
-        </div>
+        <div><dt>Height</dt><dd>{placement.h} blocks</dd></div>
+        <div><dt>Elevation</dt><dd>y {resolvedY} (ground: {ground})</dd></div>
+        <div><dt>Orientation</dt><dd>{placement.turns * 90}°</dd></div>
+        <div><dt>Spacing</dt><dd>{spacing ? `${spacing.blocks} blocks to ${spacing.name}` : 'Nothing nearby'}</dd></div>
+        <div><dt>Blocks</dt><dd>{loaded ? 'Loaded' : 'Not fetched yet'}</dd></div>
       </dl>
 
       {/* The way back: a placement is a reference to a library row, and that row is what Build
@@ -296,6 +313,9 @@ function PlacementInspector({
       )}
 
       <div className="world__row world__row--actions">
+        <button type="button" className="ui-btn" title="Center map and 3D preview on this structure" onClick={() => onFrame(placement)}>
+          Find on map
+        </button>
         {onDrawPlan && (
           <button type="button" className="ui-btn" onClick={() => onDrawPlan(placement)}>
             Draw a plan here

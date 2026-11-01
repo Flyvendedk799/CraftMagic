@@ -75,3 +75,9 @@ describe('placementFacing', () => {
   });
 });
 
+describe('WORLD_TOOLS', () => {
+  it('gives every tool its own key', () => {
+    const keys = WORLD_TOOLS.map((tool) => tool.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});

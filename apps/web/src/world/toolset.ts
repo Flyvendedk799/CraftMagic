@@ -170,4 +170,3 @@ export function placementFacing(
       return { x1: box.x + box.w, y1: box.z, x2: box.x + box.w, y2: box.z + box.d };
   }
 }
-

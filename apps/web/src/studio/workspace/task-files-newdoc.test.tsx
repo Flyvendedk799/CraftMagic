@@ -319,6 +319,34 @@ describe('StudioFiles Manager', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('does not open the file on double-click inside the Rename button or inline rename input, but does on the row', () => {
+    const { onOpen } = renderFiles();
+
+    const renameBtn = screen.getByRole('button', { name: 'Rename Medieval Castle' });
+    fireEvent.doubleClick(renameBtn);
+    expect(onOpen).not.toHaveBeenCalled();
+
+    fireEvent.click(renameBtn);
+    const input = screen.getByLabelText('Enter new name for Medieval Castle');
+    fireEvent.doubleClick(input);
+    expect(onOpen).not.toHaveBeenCalled();
+
+    const row = screen.getByText('Desert Oasis').closest('[role="listitem"]')!;
+    fireEvent.doubleClick(row);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the delete confirmation on Escape without deleting', () => {
+    const { onDelete } = renderFiles();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Desert Oasis' }));
+    expect(screen.getByRole('alertdialog')).not.toBeNull();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
   it('does not throw when open flips from true to false (hooks stay balanced)', () => {
     const props: StudioFilesProps = {
       builds: sampleBuilds,

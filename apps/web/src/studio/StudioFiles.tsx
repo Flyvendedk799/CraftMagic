@@ -276,6 +276,16 @@ export function StudioFiles(props: StudioFilesProps) {
     }
   };
 
+  // The confirmation is its own aria-modal dialog, so useModalFocus no longer sees Escape.
+  useEffect(() => {
+    if (!deletingFile || pending) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDeletingFile(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [deletingFile, pending]);
+
   const close = () => {
     if (pending) return;
     props.onClose();
@@ -447,7 +457,10 @@ export function StudioFiles(props: StudioFilesProps) {
                       data-storage={file.storage}
                       tabIndex={0}
                       onClick={() => select(file)}
-                      onDoubleClick={() => !pending && props.onOpen(file.href)}
+                      onDoubleClick={(e) => {
+                        if ((e.target as HTMLElement).closest('button, input, form')) return;
+                        if (!pending) props.onOpen(file.href);
+                      }}
                       onKeyDown={(e) => {
                         if (e.target !== e.currentTarget) return;
                         if (e.key === 'Enter' && !isRenaming) {

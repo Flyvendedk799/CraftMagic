@@ -15,7 +15,17 @@ import {
   type WorkspaceLayout,
 } from './layout.js';
 import type { StudioMode } from '../mode.js';
-import { StudioIcon } from './Icon.js';
+import { StudioIcon, type IconName } from './Icon.js';
+
+const DOCK_TAB_ICONS: Record<DockTab, IconName> = {
+  tools: 'cube',
+  shape: 'plan',
+  assets: 'folder',
+  inspect: 'search',
+  create: 'spark',
+  deliver: 'export',
+  world: 'world',
+};
 
 type Slots = Partial<Record<`${DockSide}:${DockTab}`, HTMLElement>>;
 interface DockContextValue {
@@ -151,7 +161,8 @@ export function WorkspaceDock({
                 }
               }}
             >
-              {tab.label}
+              <StudioIcon name={DOCK_TAB_ICONS[tab.id] ?? 'cube'} />
+              <span>{tab.label}</span>
             </button>
           ))}
         </div>

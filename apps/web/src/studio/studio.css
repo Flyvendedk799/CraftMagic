@@ -1,5 +1,3 @@
-@import './workspace/files-newdoc.css';
-
 /* Route-level notices only. The workspace owns its own layout and design tokens. */
 .studio { color: #e6edf3; font-family: ui-sans-serif, system-ui, sans-serif; }
 .studio__eyebrow { color: #8ee8b2; font-size: 9px; font-weight: 600; letter-spacing: 1.3px; text-transform: uppercase; }

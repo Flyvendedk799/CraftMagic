@@ -268,6 +268,12 @@ describe('StudioFiles Manager', () => {
       expect(errorEl).not.toBeNull();
       expect(errorEl?.textContent).toContain('Network failure: file could not be deleted');
     });
+
+    // When Cancel is clicked, the dialog closes and no stale error is left behind in the file manager
+    const cancelBtn = screen.getByRole('button', { name: 'Cancel' });
+    fireEvent.click(cancelBtn);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(document.querySelector('.workspace-files__error')).toBeNull();
   });
 
   it('renders loading skeleton state and error banner with retry option', () => {

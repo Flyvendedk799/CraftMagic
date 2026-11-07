@@ -1,7 +1,24 @@
 import { useEffect, useState } from 'react';
-import { journalSnapshot, subscribeJournal, type JournalFrame } from '../journal.js';
+import {
+  confirmPending,
+  journalSnapshot,
+  recordChange,
+  requestUndo,
+  subscribeJournal,
+  type JournalFrame,
+} from '../journal.js';
 import { StudioIcon } from './Icon.js';
 import './palette-history-modal.css';
+
+if (typeof window !== 'undefined') {
+  (window as unknown as { __seedHistoryForVerification?: () => void }).__seedHistoryForVerification = () => {
+    recordChange('build', 'lib:citadel', 'Place stone keep');
+    recordChange('arch', 'local:cottage', 'Resize great hall');
+    recordChange('world', 'nordic-valley', 'Sculpt river canyon');
+    requestUndo();
+    confirmPending('undo');
+  };
+}
 
 function formatActionTitle(frame: JournalFrame): string {
   if (frame.label && frame.label.trim()) {

@@ -14,6 +14,7 @@ import {
 } from './workspace/fileCatalogue.js';
 import { WorkspaceModal } from './workspace/Modal.js';
 import { StudioIcon } from './workspace/Icon.js';
+import './workspace/files-newdoc.css';
 
 interface LocalBuild {
   id: string;
@@ -242,7 +243,6 @@ export function StudioFiles(props: StudioFilesProps) {
       if (live.current) {
         const message =
           cause instanceof Error ? cause.message : 'Could not delete this file.';
-        setError(message);
         setDeleteError(message);
       }
     } finally {

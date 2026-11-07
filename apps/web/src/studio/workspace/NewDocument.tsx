@@ -10,6 +10,7 @@ import { validateFileName } from './fileCatalogue.js';
 import { WorkspaceModal } from './Modal.js';
 import { StudioIcon } from './Icon.js';
 import { PlanThumbnail } from './PlanThumbnail.js';
+import './files-newdoc.css';
 
 export interface NewDocumentProps {
   initial: StudioMode;

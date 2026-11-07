@@ -71,8 +71,6 @@ function formatTimestamp(iso: string | null | undefined): string {
 }
 
 export function StudioFiles(props: StudioFilesProps) {
-  if (props.open === false) return null;
-
   const [query, setQuery] = useState('');
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [storageFilter, setStorageFilter] = useState<StorageFilter>('all');
@@ -288,6 +286,8 @@ export function StudioFiles(props: StudioFilesProps) {
     window.dispatchEvent(new CustomEvent('studio:new-document'));
   };
 
+  if (props.open === false) return null;
+
   return (
     <WorkspaceModal
       title="Your work"
@@ -449,6 +449,7 @@ export function StudioFiles(props: StudioFilesProps) {
                       onClick={() => select(file)}
                       onDoubleClick={() => !pending && props.onOpen(file.href)}
                       onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
                         if (e.key === 'Enter' && !isRenaming) {
                           props.onOpen(file.href);
                         }

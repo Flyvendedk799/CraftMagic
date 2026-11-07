@@ -255,16 +255,17 @@
 }
 
 /* File Manager Body & Main Area */
-.workspace-files__body {
+.workspace-files .workspace-files__body {
   display: flex;
   flex-direction: column;
+  grid-template-columns: none;
   min-height: 280px;
   height: min(440px, 50vh);
   overflow: hidden;
   background: var(--bg, #111419);
 }
 
-.workspace-files__main {
+.workspace-files .workspace-files__main {
   flex: 1;
   overflow-y: auto;
   padding: 16px 18px;
@@ -273,15 +274,16 @@
 }
 
 /* Results: Grid & List Layouts */
-.workspace-files__results--grid {
+.workspace-files .workspace-files__results--grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
   gap: 14px;
 }
 
-.workspace-files__results--list {
+.workspace-files .workspace-files__results--list {
   display: flex;
   flex-direction: column;
+  grid-template-columns: none;
   gap: 8px;
 }
 
@@ -365,7 +367,7 @@
 }
 
 /* Copy Area */
-.workspace-file__copy {
+.workspace-files .workspace-file__copy {
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -545,7 +547,7 @@
   display: none;
 }
 
-.workspace-files__results--list .workspace-file__copy {
+.workspace-files .workspace-files__results--list .workspace-file__copy {
   flex: 1;
   flex-direction: row;
   align-items: center;

@@ -304,6 +304,38 @@ describe('StudioFiles Manager', () => {
     expect(newDocListener).toHaveBeenCalledTimes(1);
     window.removeEventListener('studio:new-document', newDocListener);
   });
+
+  it('does not open the file when Enter is pressed on a Rename or Delete button, but does on the row itself', () => {
+    const { onOpen } = renderFiles();
+
+    const renameBtn = screen.getByRole('button', { name: 'Rename Medieval Castle' });
+    fireEvent.keyDown(renameBtn, { key: 'Enter' });
+    const deleteBtn = screen.getByRole('button', { name: 'Delete Medieval Castle' });
+    fireEvent.keyDown(deleteBtn, { key: 'Enter' });
+    expect(onOpen).not.toHaveBeenCalled();
+
+    const row = screen.getByText('Medieval Castle').closest('[role="listitem"]')!;
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not throw when open flips from true to false (hooks stay balanced)', () => {
+    const props: StudioFilesProps = {
+      builds: sampleBuilds,
+      maps: sampleMaps,
+      loading: false,
+      onOpen: vi.fn(),
+      onClose: vi.fn(),
+      onRename: vi.fn(),
+      onDelete: vi.fn(),
+    };
+    const { rerender } = render(<StudioFiles {...props} open />);
+    expect(screen.getByText('Medieval Castle')).not.toBeNull();
+    rerender(<StudioFiles {...props} open={false} />);
+    expect(screen.queryByText('Medieval Castle')).toBeNull();
+    rerender(<StudioFiles {...props} open />);
+    expect(screen.getByText('Medieval Castle')).not.toBeNull();
+  });
 });
 
 describe('NewDocument Creation Flow', () => {

@@ -113,6 +113,44 @@ describe('CommandPalette category resolution and grouping', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
+  it('runs the top-ranked match on Enter even when it sits in a later category than a weaker match', () => {
+    const runNav = vi.fn();
+    const runTool = vi.fn();
+    const commands: Command[] = [
+      {
+        id: 'mode-arch',
+        label: 'Switch to Architecture mode',
+        category: 'Navigation',
+        hint: 'Use the brush tool to layout rooms',
+        run: runNav,
+      },
+      {
+        id: 'tool-brush',
+        label: 'Tool: Brush',
+        category: 'Tools',
+        hint: 'Paint voxel blocks',
+        run: runTool,
+      },
+    ];
+
+    render(<CommandPalette commands={commands} onClose={vi.fn()} />);
+    const input = screen.getByRole('combobox', { name: 'Search commands' });
+
+    // Filter by 'brush'. 'Tool: Brush' has label match (higher rank) than 'Switch to Architecture mode' (hint match).
+    fireEvent.change(input, { target: { value: 'brush' } });
+
+    // First group shown should be Tools because top-ranked match is Tool: Brush
+    const sectionTitles = Array.from(
+      document.querySelectorAll('.command-search__section-title'),
+    ).map((el) => el.textContent?.trim());
+    expect(sectionTitles[0]).toBe('Tools');
+
+    // Press Enter -> should execute runTool, not runNav
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(runTool).toHaveBeenCalledTimes(1);
+    expect(runNav).not.toHaveBeenCalled();
+  });
+
   it('displays informative empty state when search finds no matching command with quick reset', () => {
     const commands: Command[] = [
       { id: 'tool-brush', label: 'Tool: Brush', category: 'Tools', run: vi.fn() },
@@ -299,12 +337,22 @@ describe('WorkspaceModal accessibility, focus management, and layout', () => {
     trigger.remove();
   });
 
-  it('traps Tab key navigation within modal focusable elements', () => {
+  it('traps Tab key navigation within modal focusable elements and skips hidden elements', () => {
+    // Stub getClientRects so that elements with non-empty client rects are recognized as visible
+    vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(function (this: HTMLElement) {
+      if (this.id === 'hidden-by-css') {
+        return [] as unknown as DOMRectList;
+      }
+      return [{ width: 100, height: 20 }] as unknown as DOMRectList;
+    });
+
     const onClose = vi.fn();
     render(
       <WorkspaceModal title="Focus Trap Modal" onClose={onClose}>
         <div>
           <button id="first-btn">First</button>
+          <button id="hidden-by-css">Hidden via CSS rule (0 rects)</button>
+          <button id="hidden-by-attr" hidden>Hidden via hidden attribute</button>
           <button id="second-btn">Second</button>
         </div>
       </WorkspaceModal>,
@@ -318,7 +366,7 @@ describe('WorkspaceModal accessibility, focus management, and layout', () => {
     fireEvent.keyDown(window, { key: 'Tab', shiftKey: false });
     expect(document.activeElement).toBe(closeBtn);
 
-    // Focus on closeBtn (first element) and press Shift+Tab -> should wrap to secondBtn (last element)
+    // Focus on closeBtn (first element) and press Shift+Tab -> should wrap to secondBtn (last visible element)
     closeBtn.focus();
     fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
     expect(document.activeElement).toBe(secondBtn);

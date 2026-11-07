@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { StudioIcon } from './Icon.js';
+import './palette-history-modal.css';
 
 const FOCUSABLE =
   'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]';
@@ -51,11 +52,7 @@ export function useModalFocus(open: boolean, onClose: () => void) {
       const isVisible = (el: HTMLElement) => {
         if (el.closest('[hidden]')) return false;
         if (el.getAttribute('aria-hidden') === 'true') return false;
-        if (typeof el.getClientRects === 'function') {
-          const rects = el.getClientRects();
-          if (rects.length > 0) return true;
-        }
-        return el.style.display !== 'none' && el.style.visibility !== 'hidden';
+        return el.getClientRects().length > 0;
       };
 
       const items = Array.from(
@@ -120,91 +117,6 @@ export function WorkspaceModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <style>{`
-        .workspace-modal {
-          position: fixed;
-          inset: 0;
-          z-index: 500;
-          display: flex;
-          justify-content: center;
-          align-items: center;
-          padding: 24px;
-          background: rgba(4, 8, 14, 0.78);
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
-        }
-        .workspace-modal__panel {
-          width: min(600px, calc(100vw - 32px));
-          max-height: min(760px, calc(100dvh - 48px));
-          display: flex;
-          flex-direction: column;
-          background: var(--panel, #191e25);
-          border: 1px solid var(--border, #303943);
-          border-radius: var(--radius-lg, 10px);
-          overflow: hidden;
-          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
-          color: var(--text, #e6edf3);
-        }
-        .workspace-modal__panel--wide {
-          width: min(960px, calc(100vw - 32px));
-        }
-        .workspace-modal__panel > header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 16px 20px;
-          background: rgba(0, 0, 0, 0.18);
-          border-bottom: 1px solid var(--border, #303943);
-          flex: none;
-          gap: 12px;
-        }
-        .workspace-modal__title-group {
-          display: flex;
-          flex-direction: column;
-          gap: 3px;
-          min-width: 0;
-        }
-        .workspace-modal__eyebrow {
-          font-size: 9px;
-          font-weight: 700;
-          letter-spacing: 1.5px;
-          text-transform: uppercase;
-          color: var(--accent, #8ee8b2);
-          display: inline-block;
-        }
-        .workspace-modal__title {
-          font-size: 18px;
-          margin: 0;
-          font-weight: 600;
-          letter-spacing: -0.3px;
-          color: var(--text, #e6edf3);
-          line-height: 1.25;
-        }
-        .workspace-modal__close {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 32px;
-          height: 32px;
-          padding: 0;
-          border: 1px solid transparent;
-          border-radius: var(--radius-md, 6px);
-          background: transparent;
-          color: var(--muted, #9caab7);
-          cursor: pointer;
-          flex: none;
-          transition: all 0.15s ease;
-        }
-        .workspace-modal__close:hover {
-          background: rgba(255, 255, 255, 0.08);
-          color: var(--text, #e6edf3);
-          border-color: rgba(255, 255, 255, 0.08);
-        }
-        .workspace-modal__close:focus-visible {
-          outline: 2px solid var(--accent, #8ee8b2);
-          outline-offset: 1px;
-        }
-      `}</style>
       <div
         ref={ref}
         className={`workspace-modal__panel${wide ? ' workspace-modal__panel--wide' : ''}`}

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { rankCommands, nextCursor } from './workspace/commands.js';
 import { useModalFocus } from './workspace/Modal.js';
 import { StudioIcon } from './workspace/Icon.js';
+import './workspace/palette-history-modal.css';
 
 export interface Command {
   id: string;
@@ -99,8 +100,11 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
   );
 
   const { flatItems, sections } = useMemo(() => {
+    const hasQuery = query.trim().length > 0;
     const groups = new Map<string, Command[]>();
-    for (const cat of CATEGORY_ORDER) groups.set(cat, []);
+    if (!hasQuery) {
+      for (const cat of CATEGORY_ORDER) groups.set(cat, []);
+    }
 
     for (const cmd of shown) {
       const cat = resolveCategory(cmd);
@@ -128,7 +132,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
     }
 
     return { flatItems: flat, sections: secList };
-  }, [shown]);
+  }, [shown, query]);
 
   const active = Math.min(cursor, Math.max(0, flatItems.length - 1));
 
@@ -165,160 +169,6 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <style>{`
-        .command-search__input {
-          display: flex;
-          align-items: center;
-          padding: 13px 18px;
-          gap: 10px;
-          border-bottom: 1px solid #344252;
-          background: #171f28;
-        }
-        .command-search__input-lead {
-          display: flex;
-          align-items: center;
-          color: var(--accent, #8ee8b2);
-          flex: none;
-        }
-        .command-search__input input {
-          flex: 1;
-          min-width: 0;
-          background: transparent;
-          border: 0;
-          outline: 0;
-          color: var(--text, #e6edf3);
-          font: 15px ui-sans-serif, system-ui, sans-serif;
-        }
-        .command-search__clear {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 26px;
-          height: 26px;
-          padding: 0;
-          border: 0;
-          border-radius: var(--radius-sm, 4px);
-          background: rgba(255, 255, 255, 0.05);
-          color: var(--muted, #9caab7);
-          cursor: pointer;
-          flex: none;
-          transition: background 0.15s ease, color 0.15s ease;
-        }
-        .command-search__clear:hover {
-          background: rgba(255, 255, 255, 0.12);
-          color: var(--text, #e6edf3);
-        }
-        .command-search__count {
-          font-size: 11px;
-          padding: 2px 8px;
-          border-radius: 10px;
-          background: rgba(255, 255, 255, 0.06);
-          color: var(--muted, #9caab7);
-          white-space: nowrap;
-          flex: none;
-          border: 1px solid rgba(255, 255, 255, 0.04);
-        }
-        .command-search__esc {
-          background: transparent;
-          border: 0;
-          padding: 0;
-          cursor: pointer;
-          flex: none;
-        }
-        .command-search__section-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 10px 14px 5px;
-          margin-top: 6px;
-          font-size: 10px;
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          color: var(--accent, #8ee8b2);
-          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-          list-style: none;
-          user-select: none;
-        }
-        .command-search__section-header:first-child {
-          margin-top: 0;
-        }
-        .command-search__section-count {
-          font-size: 10px;
-          color: var(--muted, #9caab7);
-          font-weight: 400;
-          letter-spacing: 0;
-        }
-        .command-search__item {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 10px 12px;
-          border-radius: var(--radius-md, 6px);
-          cursor: pointer;
-          border: 1px solid transparent;
-          transition: background 0.12s ease, border-color 0.12s ease;
-        }
-        .command-search__item[aria-selected='true'],
-        .command-search__item--active {
-          background: #23342c !important;
-          border-color: #436952 !important;
-          box-shadow: inset 0 0 0 1px rgba(142, 232, 178, 0.15);
-        }
-        .command-search__item[aria-selected='true'] .command-search__glyph {
-          color: var(--accent, #8ee8b2);
-        }
-        .command-search__item[aria-selected='true'] strong {
-          color: #ffffff;
-        }
-        .command-search__shortcut {
-          margin-left: auto;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-          font-size: 10px !important;
-          padding: 2px 6px !important;
-          background: var(--sunken, #12161c) !important;
-          border: 1px solid #3c4958 !important;
-          border-radius: var(--radius-sm, 4px) !important;
-          color: var(--muted, #9caab7) !important;
-          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-          flex: none;
-          white-space: nowrap;
-        }
-        .command-search__item[aria-selected='true'] .command-search__shortcut {
-          border-color: rgba(142, 232, 178, 0.5) !important;
-          color: var(--text, #e6edf3) !important;
-          background: #141f1a !important;
-        }
-        .command-search__empty-title {
-          font-size: 15px;
-          font-weight: 600;
-          margin: 12px 0 6px;
-          color: var(--text, #e6edf3);
-        }
-        .command-search__empty-text {
-          font-size: 12px;
-          color: var(--muted, #9caab7);
-          max-width: 400px;
-          margin: 0 auto 16px;
-          line-height: 1.5;
-        }
-        .command-search__empty-btn {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 14px;
-          background: var(--raised, #252d36);
-          border: 1px solid var(--border, #303943);
-          border-radius: var(--radius-sm, 4px);
-          color: var(--text, #e6edf3);
-          cursor: pointer;
-          font-size: 12px;
-          transition: background 0.15s ease;
-        }
-        .command-search__empty-btn:hover {
-          background: #303c47;
-        }
-      `}</style>
       <div
         ref={host}
         role="dialog"
@@ -403,9 +253,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
         <div className="command-search__caption">
           {query
             ? `${flatItems.length} matching ${flatItems.length === 1 ? 'action' : 'actions'} for "${query}"`
-            : recent.length
-              ? `${flatItems.length} available actions · Recent actions prioritized`
-              : `${flatItems.length} available commands across Navigation, Tools, Actions, and Files`}
+            : `${flatItems.length} available actions across Navigation, Tools, Actions, and Files`}
         </div>
         <ul
           id="studio-command-results"

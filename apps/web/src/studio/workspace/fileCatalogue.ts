@@ -82,6 +82,7 @@ export function filterFiles(
   query: string,
   filter: FileFilter,
   sort: FileSort,
+  storage: 'all' | 'device' | 'account' = 'all',
 ): StudioFile[] {
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   return files
@@ -95,7 +96,8 @@ export function filterFiles(
             (file.kind === 'library' || file.kind === 'browserBuild')) ||
           (filter === 'plans' && file.kind === 'plan') ||
           (filter === 'maps' && file.kind === 'map') ||
-          filter === file.storage),
+          filter === file.storage) &&
+        (storage === 'all' || file.storage === storage),
     )
     .sort((a, b) => {
       if (sort === 'recent')

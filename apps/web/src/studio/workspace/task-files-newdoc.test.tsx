@@ -245,6 +245,31 @@ describe('StudioFiles Manager', () => {
     });
   });
 
+  it('renders rejection error inside confirm dialog when onDelete rejects', async () => {
+    const onDelete = vi.fn().mockRejectedValueOnce(new Error('Network failure: file could not be deleted'));
+    renderFiles({ onDelete });
+
+    const deleteBtn = screen.getByRole('button', { name: 'Delete Desert Oasis' });
+    fireEvent.click(deleteBtn);
+
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).not.toBeNull();
+
+    const confirmBtn = screen.getByRole('button', { name: 'Delete file' });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(onDelete).toHaveBeenCalledWith('map', 'm2');
+    });
+
+    // The dialog should still be visible and the error message rendered inside it
+    await waitFor(() => {
+      const errorEl = dialog.querySelector('.workspace-files__confirm-error');
+      expect(errorEl).not.toBeNull();
+      expect(errorEl?.textContent).toContain('Network failure: file could not be deleted');
+    });
+  });
+
   it('renders loading skeleton state and error banner with retry option', () => {
     const { rerender } = render(
       <StudioFiles
@@ -460,5 +485,54 @@ describe('NewDocument Creation Flow', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves selection and focus sequentially when arrow keys are pressed twice with roving tabindex', () => {
+    render(
+      <NewDocument
+        initial="build"
+        signedIn={false}
+        onClose={vi.fn()}
+        onBeforeCreate={() => true}
+        onCreated={vi.fn()}
+      />,
+    );
+
+    const cards = screen.getAllByRole('button').filter((b) =>
+      b.classList.contains('new-document__type-card'),
+    );
+    expect(cards).toHaveLength(3);
+
+    const [buildCard, archCard, worldCard] = cards;
+
+    // Initially "build" is selected
+    expect(buildCard!.getAttribute('aria-pressed')).toBe('true');
+    expect(buildCard!.getAttribute('tabIndex')).toBe('0');
+    expect(archCard!.getAttribute('aria-pressed')).toBe('false');
+    expect(archCard!.getAttribute('tabIndex')).toBe('-1');
+    expect(worldCard!.getAttribute('aria-pressed')).toBe('false');
+    expect(worldCard!.getAttribute('tabIndex')).toBe('-1');
+
+    // Focus initial card and press ArrowRight first time
+    buildCard!.focus();
+    expect(document.activeElement).toBe(buildCard);
+    fireEvent.keyDown(buildCard!, { key: 'ArrowRight' });
+
+    // Focus and selection move to Architecture card
+    expect(document.activeElement).toBe(archCard);
+    expect(archCard!.getAttribute('aria-pressed')).toBe('true');
+    expect(archCard!.getAttribute('tabIndex')).toBe('0');
+    expect(buildCard!.getAttribute('aria-pressed')).toBe('false');
+    expect(buildCard!.getAttribute('tabIndex')).toBe('-1');
+
+    // Press ArrowRight second time from the newly focused Architecture card
+    fireEvent.keyDown(archCard!, { key: 'ArrowRight' });
+
+    // Focus and selection move to World Map card
+    expect(document.activeElement).toBe(worldCard);
+    expect(worldCard!.getAttribute('aria-pressed')).toBe('true');
+    expect(worldCard!.getAttribute('tabIndex')).toBe('0');
+    expect(archCard!.getAttribute('aria-pressed')).toBe('false');
+    expect(archCard!.getAttribute('tabIndex')).toBe('-1');
   });
 });

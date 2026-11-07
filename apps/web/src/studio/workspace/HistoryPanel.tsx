@@ -24,7 +24,7 @@ function formatScopeDetails(frame: JournalFrame): { scopeLabel: string; docLabel
     frame.scope === 'arch' ? 'Plan' : frame.scope === 'world' ? 'World' : 'Build';
   let docLabel = frame.docId;
   if (docLabel.startsWith('lib:')) {
-    docLabel = `Library · ${docLabel.slice(4)}`;
+    docLabel = 'Library document';
   } else if (docLabel.startsWith('local:')) {
     docLabel = `Local · ${docLabel.slice(6)}`;
   } else if (docLabel.includes('?')) {
@@ -34,7 +34,15 @@ function formatScopeDetails(frame: JournalFrame): { scopeLabel: string; docLabel
         url.searchParams.get('plan') ??
         url.searchParams.get('build') ??
         url.searchParams.get('world');
-      if (plan) docLabel = plan.startsWith('local:') ? plan.slice(6) : plan;
+      if (plan) {
+        if (plan.startsWith('lib:')) {
+          docLabel = 'Library document';
+        } else if (plan.startsWith('local:')) {
+          docLabel = `Local · ${plan.slice(6)}`;
+        } else {
+          docLabel = plan;
+        }
+      }
     } catch {}
   }
   return { scopeLabel, docLabel };
@@ -65,7 +73,16 @@ export function HistoryPanel({
   onRedo: () => void;
 }) {
   const [snapshot, setSnapshot] = useState(journalSnapshot);
+  const [, setTick] = useState(0);
+
   useEffect(() => subscribeJournal(() => setSnapshot(journalSnapshot())), []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTick((t) => t + 1);
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <div className="workspace-history">

@@ -678,6 +678,13 @@
   color: #d1b4ad;
 }
 
+.workspace-files__confirm-error {
+  margin: 6px 0 0 0 !important;
+  color: #ff9d94 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+
 .workspace-files__confirm-buttons {
   display: flex;
   justify-content: flex-end;
@@ -962,18 +969,6 @@
   border-left: none;
   border-right: none;
   border-top: none;
-}
-
-.new-document__type-group-compat {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 .new-document__type-card {

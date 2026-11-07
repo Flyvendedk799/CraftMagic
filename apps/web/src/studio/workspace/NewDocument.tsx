@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { createWorld } from '@craftmagic/core';
 import { registerBlankBuild } from '../../editor/builds.js';
 import { TEMPLATES } from '../../architecture/templates.js';
@@ -112,18 +112,7 @@ export function NewDocument({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
-
-  // Smooth keyboard navigation (Escape to cancel)
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !pending) {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [pending, onClose]);
+  const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const activeTemplate = useMemo(
     () => TEMPLATES.find((t) => t.id === template) ?? TEMPLATES[0]!,
@@ -220,19 +209,26 @@ export function NewDocument({
               <button
                 type="button"
                 key={entry.id}
-                role="button"
+                ref={(el) => {
+                  cardRefs.current[index] = el;
+                }}
+                tabIndex={isSelected ? 0 : -1}
                 aria-pressed={isSelected}
                 data-active={isSelected}
                 className="new-document__type-card"
                 disabled={pending}
                 onClick={() => setKind(entry.id)}
                 onKeyDown={(e) => {
+                  let targetIndex: number | null = null;
                   if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    setKind(MODES[(index + 1) % MODES.length]!.id);
+                    targetIndex = (index + 1) % MODES.length;
                   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                    targetIndex = (index - 1 + MODES.length) % MODES.length;
+                  }
+                  if (targetIndex !== null) {
                     e.preventDefault();
-                    setKind(MODES[(index - 1 + MODES.length) % MODES.length]!.id);
+                    setKind(MODES[targetIndex]!.id);
+                    cardRefs.current[targetIndex]?.focus();
                   }
                 }}
               >

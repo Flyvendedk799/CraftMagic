@@ -4,9 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LibraryBuild } from '../library/library.js';
 import type { SavedWorld } from '../world/api.js';
 import type { SavedPlan } from '../architecture/storage.js';
-import type { StudioMode } from './mode.js';
 import {
   catalogue,
+  filterFiles,
   validateFileName,
   type FileKind,
   type FileSort,
@@ -27,7 +27,6 @@ export type StorageFilter = 'all' | 'device' | 'account';
 
 export interface StudioFilesProps {
   open?: boolean;
-  mode?: StudioMode;
   builds: LibraryBuild[];
   maps: SavedWorld[];
   plans?: SavedPlan[];
@@ -88,6 +87,7 @@ export function StudioFiles(props: StudioFilesProps) {
 
   // Delete confirmation dialog state
   const [deletingFile, setDeletingFile] = useState<StudioFile | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -142,35 +142,10 @@ export function StudioFiles(props: StudioFilesProps) {
     };
   }, [files]);
 
-  const visible = useMemo(() => {
-    const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-    return files
-      .filter((file) => {
-        if (words.length > 0) {
-          const haystack = `${file.title} ${file.detail} ${file.kind} ${file.storage}`.toLowerCase();
-          if (!words.every((word) => haystack.includes(word))) return false;
-        }
-        if (kindFilter === 'builds' && file.kind !== 'library' && file.kind !== 'browserBuild')
-          return false;
-        if (kindFilter === 'plans' && file.kind !== 'plan') return false;
-        if (kindFilter === 'maps' && file.kind !== 'map') return false;
-        if (storageFilter !== 'all' && file.storage !== storageFilter) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        if (sort === 'recent') {
-          return (
-            (Date.parse(b.updatedAt ?? '') || 0) -
-              (Date.parse(a.updatedAt ?? '') || 0) ||
-            a.title.localeCompare(b.title)
-          );
-        }
-        if (sort === 'kind') {
-          return a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title);
-        }
-        return a.title.localeCompare(b.title);
-      });
-  }, [files, query, kindFilter, storageFilter, sort]);
+  const visible = useMemo(
+    () => filterFiles(files, query, kindFilter, sort, storageFilter),
+    [files, query, kindFilter, sort, storageFilter],
+  );
 
   const current = files.find((file) => file.key === selected) ?? null;
 
@@ -256,6 +231,7 @@ export function StudioFiles(props: StudioFilesProps) {
     busy.current = true;
     setPending(true);
     setError(null);
+    setDeleteError(null);
     try {
       await props.onDelete(file.kind, file.id);
       if (live.current) {
@@ -264,11 +240,10 @@ export function StudioFiles(props: StudioFilesProps) {
       }
     } catch (cause) {
       if (live.current) {
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'Could not delete this file.',
-        );
+        const message =
+          cause instanceof Error ? cause.message : 'Could not delete this file.';
+        setError(message);
+        setDeleteError(message);
       }
     } finally {
       busy.current = false;
@@ -280,7 +255,10 @@ export function StudioFiles(props: StudioFilesProps) {
   useEffect(() => {
     if (!deletingFile || pending) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDeletingFile(null);
+      if (e.key === 'Escape') {
+        setDeletingFile(null);
+        setDeleteError(null);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -633,6 +611,7 @@ export function StudioFiles(props: StudioFilesProps) {
                           aria-label={`Delete ${file.title}`}
                           onClick={(e) => {
                             e.stopPropagation();
+                            setDeleteError(null);
                             setDeletingFile(file);
                           }}
                         >
@@ -693,10 +672,15 @@ export function StudioFiles(props: StudioFilesProps) {
             aria-modal="true"
             aria-labelledby="confirm-delete-title"
             aria-describedby="confirm-delete-desc"
-            onClick={() => !pending && setDeletingFile(null)}
+            onClick={() => {
+              if (!pending) {
+                setDeletingFile(null);
+                setDeleteError(null);
+              }
+            }}
           >
             <div
-              className="workspace-files__confirm-modal"
+              className="workspace-files__confirm-modal workspace-files__confirm-dialog"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="workspace-files__confirm-icon">
@@ -711,18 +695,26 @@ export function StudioFiles(props: StudioFilesProps) {
                     : ' This will permanently remove it from this device.'}
                   {' '}This action cannot be undone.
                 </p>
+                {deleteError && (
+                  <p className="workspace-files__confirm-error" role="alert">
+                    {deleteError}
+                  </p>
+                )}
               </div>
-              <div className="workspace-files__confirm-buttons">
+              <div className="workspace-files__confirm-buttons workspace-files__confirm-actions">
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={() => setDeletingFile(null)}
+                  onClick={() => {
+                    setDeletingFile(null);
+                    setDeleteError(null);
+                  }}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  className="workspace-files__btn-danger"
+                  className="workspace-files__btn-danger workspace-danger"
                   disabled={pending}
                   onClick={() => void confirmDeleteFile(deletingFile)}
                 >

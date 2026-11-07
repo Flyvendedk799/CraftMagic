@@ -25,6 +25,47 @@ describe('CommandPalette category resolution and grouping', () => {
     expect(resolveCategory(fileCmd)).toBe('Files');
   });
 
+  it('maps real studio command IDs accurately into Navigation, Tools, Actions, or Files', () => {
+    const realCommands: { id: string; label: string; expected: string }[] = [
+      // Navigation
+      { id: 'mode-arch', label: 'Switch to Architecture mode', expected: 'Navigation' },
+      { id: 'mode-build', label: 'Switch to Build mode', expected: 'Navigation' },
+      { id: 'mode-world', label: 'Switch to World Map mode', expected: 'Navigation' },
+      { id: 'open-structure-plan', label: 'Open this build’s plan', expected: 'Navigation' },
+      { id: 'go-library', label: 'Go to the library', expected: 'Navigation' },
+      { id: 'go-dashboard', label: 'Go to the dashboard', expected: 'Navigation' },
+      { id: 'go-mod', label: 'Go to the Minecraft mod page', expected: 'Navigation' },
+
+      // Tools
+      { id: 'tool-brush', label: 'Tool: Brush', expected: 'Tools' },
+      { id: 'tool-select', label: 'Tool: Select', expected: 'Tools' },
+      { id: 'tool-erase', label: 'Tool: Erase', expected: 'Tools' },
+      { id: 'view-orbit', label: 'View: Orbit', expected: 'Tools' },
+
+      // Files
+      { id: 'file-open', label: 'Open Studio work', expected: 'Files' },
+      { id: 'file-new', label: 'New document', expected: 'Files' },
+      { id: 'build-cottage', label: 'Open build: Cottage', expected: 'Files' },
+      { id: 'lib-open-abc', label: 'Open build: Castle', expected: 'Files' },
+      { id: 'lib-place-abc', label: 'Place on map: Castle', expected: 'Files' },
+      { id: 'lib-guide-abc', label: 'Open the build guide: Castle', expected: 'Files' },
+      { id: 'world-draft', label: 'Open the map draft', expected: 'Files' },
+      { id: 'map-m1', label: 'Open map: Valley', expected: 'Files' },
+
+      // Actions
+      { id: 'file-save', label: 'Save build', expected: 'Actions' },
+      { id: 'file-export', label: 'Export current view', expected: 'Actions' },
+      { id: 'style-rustic', label: 'Restyle: Rustic Oak', expected: 'Actions' },
+      { id: 'style-off', label: 'Restyle: original materials', expected: 'Actions' },
+      { id: 'guide', label: 'Open the build guide', expected: 'Actions' },
+    ];
+
+    for (const cmd of realCommands) {
+      const resolved = resolveCategory({ id: cmd.id, label: cmd.label, run: vi.fn() });
+      expect(resolved).toBe(cmd.expected);
+    }
+  });
+
   it('renders commands grouped by clean categories with subtle section headers and counts', () => {
     const commands: Command[] = [
       { id: 'mode-build', label: 'Switch to Build mode', run: vi.fn() },
@@ -213,6 +254,7 @@ describe('Project HistoryPanel timeline', () => {
     expect(screen.getByText('Paint terrain')).not.toBeNull();
     expect(screen.getByText('#1')).not.toBeNull();
     expect(screen.getByText('#2')).not.toBeNull();
+    expect(screen.getByText(/Build · Library document/)).not.toBeNull();
 
     // Latest active item is Current
     const items = document.querySelectorAll('.workspace-history li');

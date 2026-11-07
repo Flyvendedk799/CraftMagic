@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createWorld } from '@craftmagic/core';
 import { registerBlankBuild } from '../../editor/builds.js';
 import { TEMPLATES } from '../../architecture/templates.js';
@@ -9,6 +9,8 @@ import type { StudioMode } from '../mode.js';
 import { validateFileName } from './fileCatalogue.js';
 import { WorkspaceModal } from './Modal.js';
 import { StudioIcon } from './Icon.js';
+import { PlanThumbnail } from './PlanThumbnail.js';
+
 export interface NewDocumentProps {
   initial: StudioMode;
   signedIn: boolean;
@@ -16,6 +18,85 @@ export interface NewDocumentProps {
   onBeforeCreate: () => boolean;
   onCreated: (href: string) => void;
 }
+
+const MODES = [
+  {
+    id: 'build' as const,
+    label: 'Structure · Voxel Build',
+    tag: '3D BLOCKS',
+    description: 'Shape blocks directly. Detail a building or make a reusable component.',
+    icon: 'cube' as const,
+  },
+  {
+    id: 'arch' as const,
+    label: 'Floorplan',
+    tag: 'ARCHITECTURE',
+    description: 'Design rooms and storeys, with a live model that follows the drawing.',
+    icon: 'plan' as const,
+  },
+  {
+    id: 'world' as const,
+    label: 'World Map',
+    tag: 'TERRAIN',
+    description: 'Sculpt a site and compose your structures into one Minecraft scene.',
+    icon: 'world' as const,
+  },
+] as const;
+
+const BUILD_SIZES = [
+  {
+    value: 16,
+    label: 'Small · 16³',
+    dims: '16 × 16 × 16',
+    desc: 'Furniture, decorative props, and small items.',
+  },
+  {
+    value: 32,
+    label: 'Standard · 32³',
+    dims: '32 × 32 × 32',
+    desc: 'Cottages, watchtowers, and single-family houses.',
+  },
+  {
+    value: 64,
+    label: 'Large · 64³',
+    dims: '64 × 64 × 64',
+    desc: 'Cathedrals, keeps, castles, and multi-storey builds.',
+  },
+  {
+    value: 128,
+    label: 'District · 128 × 64 × 128',
+    dims: '128 × 64 × 128',
+    desc: 'Sprawling settlements, grand palaces, and complex scenes.',
+  },
+];
+
+const WORLD_SIZES = [
+  {
+    value: 128,
+    label: 'Single site · 128 × 128',
+    dims: '128 × 128 blocks',
+    desc: 'Compact plot for focused scenes or quick placement testing.',
+  },
+  {
+    value: 256,
+    label: 'Neighbourhood · 256 × 256',
+    dims: '256 × 256 blocks',
+    desc: 'Standard terrain world with room for multiple building plots.',
+  },
+  {
+    value: 512,
+    label: 'Town · 512 × 512',
+    dims: '512 × 512 blocks',
+    desc: 'Broad landscape for rivers, hills, and village settlements.',
+  },
+  {
+    value: 1024,
+    label: 'Region · 1024 × 1024',
+    dims: '1024 × 1024 blocks',
+    desc: 'Expansive map for large-scale worldbuilding and exploration.',
+  },
+];
+
 export function NewDocument({
   initial,
   signedIn,
@@ -23,14 +104,40 @@ export function NewDocument({
   onBeforeCreate,
   onCreated,
 }: NewDocumentProps) {
-  const [kind, setKind] = useState(initial),
-    [name, setName] = useState(''),
-    [size, setSize] = useState(32),
-    [worldSize, setWorldSize] = useState(256),
-    [template, setTemplate] = useState('blank');
-  const [pending, setPending] = useState(false),
-    [error, setError] = useState<string | null>(null);
+  const [kind, setKind] = useState<StudioMode>(initial);
+  const [name, setName] = useState('');
+  const [size, setSize] = useState(32);
+  const [worldSize, setWorldSize] = useState(256);
+  const [template, setTemplate] = useState('blank');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
+
+  // Smooth keyboard navigation (Escape to cancel)
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !pending) {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [pending, onClose]);
+
+  const activeTemplate = useMemo(
+    () => TEMPLATES.find((t) => t.id === template) ?? TEMPLATES[0]!,
+    [template],
+  );
+
+  const previewPlan = useMemo(() => {
+    try {
+      return activeTemplate.build();
+    } catch {
+      return null;
+    }
+  }, [activeTemplate]);
+
   const create = async () => {
     if (lock.current) return;
     const title =
@@ -82,6 +189,10 @@ export function NewDocument({
       setPending(false);
     }
   };
+
+  const selectedSizeInfo = BUILD_SIZES.find((s) => s.value === size) ?? BUILD_SIZES[1]!;
+  const selectedWorldInfo = WORLD_SIZES.find((w) => w.value === worldSize) ?? WORLD_SIZES[1]!;
+
   return (
     <WorkspaceModal
       title="Create something new"
@@ -98,61 +209,62 @@ export function NewDocument({
           void create();
         }}
       >
-        <div
+        {/* Mode cards group */}
+        <fieldset
           className="new-document__types"
-          role="group"
           aria-label="Document type"
         >
-          {(
-            [
-              {
-                id: 'build',
-                label: 'Structure',
-                description:
-                  'Shape blocks directly. Detail a building or make a reusable component.',
-                icon: 'cube',
-              },
-              {
-                id: 'arch',
-                label: 'Floorplan',
-                description:
-                  'Design rooms and storeys, with a live model that follows the drawing.',
-                icon: 'plan',
-              },
-              {
-                id: 'world',
-                label: 'World',
-                description:
-                  'Sculpt a site and compose your structures into one Minecraft scene.',
-                icon: 'world',
-              },
-            ] as const
-          ).map((entry) => (
-            <button
-              type="button"
-              key={entry.id}
-              aria-pressed={kind === entry.id}
-              disabled={pending}
-              onClick={() => setKind(entry.id)}
-            >
-              <StudioIcon name={entry.icon} />
-              <strong>{entry.label}</strong>
-              <span>{entry.description}</span>
-            </button>
-          ))}
-        </div>
+          {MODES.map((entry, index) => {
+            const isSelected = kind === entry.id;
+            return (
+              <button
+                type="button"
+                key={entry.id}
+                role="button"
+                aria-pressed={isSelected}
+                data-active={isSelected}
+                className="new-document__type-card"
+                disabled={pending}
+                onClick={() => setKind(entry.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setKind(MODES[(index + 1) % MODES.length]!.id);
+                  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setKind(MODES[(index - 1 + MODES.length) % MODES.length]!.id);
+                  }
+                }}
+              >
+                <div className="new-document__type-header">
+                  <div className="new-document__type-icon">
+                    <StudioIcon name={entry.icon} />
+                  </div>
+                  <span className="new-document__type-tag">{entry.tag}</span>
+                </div>
+                <strong>{entry.label}</strong>
+                <span>{entry.description}</span>
+                <div className="new-document__type-indicator" aria-hidden="true">
+                  <StudioIcon name={isSelected ? 'check' : 'plus'} />
+                </div>
+              </button>
+            );
+          })}
+        </fieldset>
+
+        {/* Form fields: Name and Mode-specific options */}
         <div className="new-document__fields">
-          <label>
-            Name
+          <label className="new-document__field-name">
+            <span>Document name</span>
             <input
               autoFocus
               aria-label="New document name"
               placeholder={
                 kind === 'world'
-                  ? 'My world'
+                  ? 'e.g. Whispering Pines or Nordic Fjord'
                   : kind === 'arch'
-                    ? 'My floorplan'
-                    : 'My structure'
+                    ? 'e.g. Modern Villa or Lake Cottage'
+                    : 'e.g. Stone Watchtower or Oak Cottage'
               }
               value={name}
               maxLength={120}
@@ -160,81 +272,138 @@ export function NewDocument({
               onChange={(event) => setName(event.target.value)}
             />
           </label>
+
           {kind === 'build' && (
-            <label>
-              Working volume
-              <select
-                aria-label="Build volume"
-                disabled={pending}
-                value={size}
-                onChange={(event) => setSize(Number(event.target.value))}
-              >
-                <option value={16}>Small · 16 × 16 × 16</option>
-                <option value={32}>Standard · 32 × 32 × 32</option>
-                <option value={64}>Large · 64 × 64 × 64</option>
-                <option value={128}>District · 128 × 64 × 128</option>
-              </select>
-            </label>
+            <div className="new-document__options">
+              <label>
+                <span>Working volume</span>
+                <select
+                  aria-label="Build volume"
+                  disabled={pending}
+                  value={size}
+                  onChange={(event) => setSize(Number(event.target.value))}
+                >
+                  {BUILD_SIZES.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="new-document__preview-card">
+                <div className="new-document__preview-icon">
+                  <StudioIcon name="cube" />
+                </div>
+                <div className="new-document__preview-copy">
+                  <strong>{selectedSizeInfo.dims}</strong>
+                  <p>{selectedSizeInfo.desc}</p>
+                </div>
+              </div>
+            </div>
           )}
+
           {kind === 'arch' && (
-            <label>
-              Starting layout
-              <select
-                aria-label="Starting floorplan"
-                disabled={pending}
-                value={template}
-                onChange={(event) => setTemplate(event.target.value)}
-              >
-                {TEMPLATES.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="new-document__options">
+              <label>
+                <span>Starting layout template</span>
+                <select
+                  aria-label="Starting floorplan"
+                  disabled={pending}
+                  value={template}
+                  onChange={(event) => setTemplate(event.target.value)}
+                >
+                  {TEMPLATES.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="new-document__preview-card new-document__preview-card--arch">
+                {previewPlan ? (
+                  <div className="new-document__plan-thumb-wrap">
+                    <PlanThumbnail plan={previewPlan} />
+                  </div>
+                ) : (
+                  <div className="new-document__preview-icon">
+                    <StudioIcon name="plan" />
+                  </div>
+                )}
+                <div className="new-document__preview-copy">
+                  <strong>{activeTemplate.name}</strong>
+                  <p>{activeTemplate.description}</p>
+                </div>
+              </div>
+            </div>
           )}
+
           {kind === 'world' && (
-            <label>
-              World extent
-              <select
-                aria-label="World extent"
-                disabled={pending}
-                value={worldSize}
-                onChange={(event) => setWorldSize(Number(event.target.value))}
-              >
-                <option value={128}>Single site · 128 × 128</option>
-                <option value={256}>Neighbourhood · 256 × 256</option>
-                <option value={512}>Town · 512 × 512</option>
-                <option value={1024}>Region · 1024 × 1024</option>
-              </select>
-            </label>
+            <div className="new-document__options">
+              <label>
+                <span>World extent</span>
+                <select
+                  aria-label="World extent"
+                  disabled={pending}
+                  value={worldSize}
+                  onChange={(event) => setWorldSize(Number(event.target.value))}
+                >
+                  {WORLD_SIZES.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="new-document__preview-card">
+                <div className="new-document__preview-icon">
+                  <StudioIcon name="world" />
+                </div>
+                <div className="new-document__preview-copy">
+                  <strong>{selectedWorldInfo.dims}</strong>
+                  <p>{selectedWorldInfo.desc}</p>
+                </div>
+              </div>
+            </div>
           )}
         </div>
+
+        {/* Storage location info */}
         <div className="new-document__storage">
-          <StudioIcon name="folder" />
+          <StudioIcon name={kind === 'world' && signedIn ? 'spark' : 'folder'} />
           <p>
             {kind === 'world' && signedIn
-              ? 'This new world will be saved to your account.'
-              : 'This document starts on this device. Save to your account or export a file to keep a portable copy.'}{' '}
-            No AI call is made when creating a blank document.
+              ? 'This new world will be saved directly to your cloud account.'
+              : 'This document starts on this device. Save to your account or export a file anytime.'}{' '}
+            No AI credits or network calls are needed for blank documents.
           </p>
         </div>
+
         {error && (
           <p className="workspace-files__error" role="alert">
             {error}
           </p>
         )}
+
         <footer>
           <button type="button" disabled={pending} onClick={onClose}>
             Cancel
           </button>
           <button
-            className="workspace-primary"
+            className="workspace-primary new-document__submit-btn"
             type="submit"
             disabled={pending}
           >
-            {pending ? 'Creating…' : 'Create & open'}
-            <StudioIcon name="arrow" />
+            {pending ? (
+              <span>Creating…</span>
+            ) : (
+              <>
+                <span>Create & open</span>
+                <StudioIcon name="arrow" />
+              </>
+            )}
           </button>
         </footer>
       </form>

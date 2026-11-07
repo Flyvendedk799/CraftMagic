@@ -275,13 +275,18 @@ export function WorkspaceFrame(props: Props) {
               <span className="workspace-wide-only">Recent</span>
             </button>
           </div>
-          <button className="workspace-search" onClick={props.onCommands}>
+          <button
+            className="workspace-search"
+            onClick={props.onCommands}
+            aria-label="Search commands, tools, files (Ctrl K)"
+          >
             <StudioIcon name="search" />
             <span>Search commands, tools, files…</span>
             <kbd>Ctrl K</kbd>
           </button>
           <div className="workspace-header__actions">
             <button
+              className="workspace-header__settings"
               onClick={() => setDialog('settings')}
               aria-label="Workspace settings"
               title="Workspace settings"
@@ -304,7 +309,11 @@ export function WorkspaceFrame(props: Props) {
                   : (workbench?.saveLabel ?? 'Save')}
               </span>
             </button>
-            <button className="workspace-primary" onClick={delivery}>
+            <button
+              className="workspace-primary"
+              onClick={delivery}
+              title="Deliver · Export & build in Minecraft"
+            >
               <StudioIcon name="export" />
               Deliver
             </button>
@@ -526,25 +535,46 @@ export function WorkspaceFrame(props: Props) {
             onClose={() => toggle('right')}
           />
         </div>
-        <footer className="workspace-status">
-          <span className={dirty ? 'is-dirty' : ''}>
-            <i />
-            {workbench?.saving
-              ? 'Saving…'
-              : (workbench?.activity ??
-                (dirty ? 'Unsaved changes' : 'Ready to work'))}
+        <footer className="workspace-status" role="contentinfo" aria-label="Studio status">
+          <span className={`workspace-status__doc ${dirty ? 'is-dirty' : ''}`}>
+            <i aria-hidden="true" />
+            <span>
+              {workbench?.saving
+                ? 'Saving…'
+                : (workbench?.activity ??
+                  (dirty ? 'Unsaved changes' : 'Ready to work'))}
+            </span>
           </span>
-          <span>
-            {props.signedIn
-              ? 'Account connected'
-              : 'Local workspace · sign in for cloud saves'}
+          <span className="workspace-status__sep" aria-hidden="true" />
+          <span className="workspace-status__connection">
+            <span
+              className="workspace-status__indicator"
+              data-connected={props.signedIn ? 'true' : 'false'}
+              aria-hidden="true"
+            />
+            <span>
+              {props.signedIn
+                ? 'Account connected'
+                : 'Local workspace · sign in for cloud saves'}
+            </span>
           </span>
-          <button onClick={() => setDialog('history')}>
+          <span className="workspace-status__sep" aria-hidden="true" />
+          <button
+            className="workspace-status__history-btn"
+            onClick={() => setDialog('history')}
+            title="Session undo/redo history"
+          >
             {props.canUndo ? 'History available' : 'No edits this session'}
           </button>
           <span className="workspace-status__hint">1 block = 1 metre</span>
-          <button onClick={props.onCommands}>
-            Keyboard & commands <kbd>Ctrl K</kbd>
+          <span className="workspace-status__sep" aria-hidden="true" />
+          <button
+            className="workspace-status__commands-btn"
+            onClick={props.onCommands}
+            title="Search commands and shortcuts (Ctrl K)"
+          >
+            <span>Keyboard & commands</span>
+            <kbd>Ctrl K</kbd>
           </button>
         </footer>
         <nav

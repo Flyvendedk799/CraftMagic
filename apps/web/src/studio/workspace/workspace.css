@@ -1171,52 +1171,7 @@
   color: var(--muted);
   font-size: 10px;
 }
-.workspace-history {
-  min-height: 0;
-  overflow: auto;
-}
-.workspace-history__actions {
-  padding: 14px 20px;
-  display: flex;
-  gap: 8px;
-}
-.workspace-history ol {
-  list-style: none;
-  padding: 0 20px;
-  margin: 0 0 15px;
-}
-.workspace-history li {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-}
-.workspace-history li > span:not(.workspace-history__number) {
-  display: grid;
-  gap: 3px;
-  flex: 1;
-  min-width: 0;
-}
-.workspace-history small {
-  color: var(--muted);
-  font-size: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.workspace-history em {
-  color: var(--accent);
-  font-size: 10px;
-  font-style: normal;
-}
-.workspace-history__number {
-  color: var(--muted);
-  font-size: 10px;
-  width: 20px;
-}
-.workspace-history li[data-undone='true'] {
-  opacity: 0.5;
-}
+/* The history timeline is styled in palette-history-modal.css. */
 .workspace-empty {
   text-align: center;
   padding: 40px 25px;
@@ -1529,7 +1484,8 @@
   padding: 4px 8px 10px;
   margin: 0;
 }
-.command-search__results li {
+/* Option rows only: the section headers between them are styled in palette-history-modal.css. */
+.command-search__results li[role='option'] {
   display: flex;
   align-items: center;
   gap: 12px;

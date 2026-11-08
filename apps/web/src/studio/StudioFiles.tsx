@@ -489,6 +489,7 @@ export function StudioFiles(props: StudioFilesProps) {
                         {isRenaming ? (
                           <form
                             className="workspace-file__inline-rename"
+                            data-own-escape=""
                             onSubmit={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
@@ -704,6 +705,7 @@ export function StudioFiles(props: StudioFilesProps) {
               <div className="workspace-files__confirm-buttons workspace-files__confirm-actions">
                 <button
                   type="button"
+                  autoFocus
                   disabled={pending}
                   onClick={() => {
                     setDeletingFile(null);

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { MAX_TABS, type WorkspaceDocument } from './documents.js';
 import { StudioIcon } from './Icon.js';
 export function DocumentTabs({
@@ -21,18 +21,42 @@ export function DocumentTabs({
   onNew: () => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const activeEl = listRef.current?.querySelector<HTMLElement>(
+      '.workspace-tab[data-active="true"]',
+    );
+    if (activeEl && typeof activeEl.scrollIntoView === 'function') {
+      activeEl.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'nearest',
+      });
+    }
+  }, [active, tabs.length]);
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY !== 0 && event.deltaX === 0 && listRef.current) {
+      listRef.current.scrollLeft += event.deltaY;
+    }
+  };
+
   return (
     <div className="workspace-tabs" ref={host}>
       <div
         className="workspace-tabs__list"
         role="toolbar"
         aria-label="Open documents"
+        ref={listRef}
+        onWheel={handleWheel}
       >
         {tabs.map((tab, index) => (
           <div
             className="workspace-tab"
             key={tab.key}
             data-active={tab.key === active}
+            data-pinned={tab.pinned ? 'true' : undefined}
           >
             <button
               data-document-tab="true"
@@ -82,9 +106,9 @@ export function DocumentTabs({
                       : 'world'
                 }
               />
-              <span>{tab.title}</span>
+              <span className="workspace-tab__title">{tab.title}</span>
               {tab.key === active && dirty && (
-                <i aria-label="Unsaved changes" />
+                <i aria-label="Unsaved changes" className="workspace-tab__dirty" />
               )}
             </button>
             <button
@@ -108,6 +132,7 @@ export function DocumentTabs({
               <button
                 className="workspace-tab__close"
                 onClick={() => onClose(tab.key)}
+                title={`Close ${tab.title}`}
                 aria-label={`Close ${tab.title}`}
               >
                 <StudioIcon name="close" />

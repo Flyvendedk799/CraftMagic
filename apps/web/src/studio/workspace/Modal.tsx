@@ -1,12 +1,16 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { StudioIcon } from './Icon.js';
+import './palette-history-modal.css';
+
 const FOCUSABLE =
   'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]';
+
 /** Capture Escape before editor shortcuts, trap Tab, restore the opener, and keep pointer dismissal intentional. */
 export function useModalFocus(open: boolean, onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null),
     close = useRef(onClose);
   close.current = onClose;
+
   useEffect(() => {
     if (!open) return;
     const before =
@@ -14,6 +18,7 @@ export function useModalFocus(open: boolean, onClose: () => void) {
         ? document.activeElement
         : null;
     const host = ref.current;
+
     const focus = () => {
       const target =
         host?.querySelector<HTMLElement>('[data-autofocus]') ??
@@ -23,11 +28,18 @@ export function useModalFocus(open: boolean, onClose: () => void) {
         host?.querySelector<HTMLElement>(
           'button:not([disabled]),[tabindex="0"]',
         );
-      target?.focus();
+      if (target) {
+        target.focus();
+      } else {
+        host?.focus();
+      }
     };
     const frame = requestAnimationFrame(focus);
+
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        // An inline editor (a card's rename field) cancels itself on Escape instead of closing the whole modal.
+        if (event.target instanceof Element && event.target.closest('[data-own-escape]')) return;
         const dialogs = Array.from(
           document.querySelectorAll('[aria-modal="true"]'),
         );
@@ -38,11 +50,17 @@ export function useModalFocus(open: boolean, onClose: () => void) {
         return;
       }
       if (event.key !== 'Tab') return;
+
+      const isVisible = (el: HTMLElement) => {
+        if (el.closest('[hidden]')) return false;
+        if (el.getAttribute('aria-hidden') === 'true') return false;
+        return el.getClientRects().length > 0;
+      };
+
       const items = Array.from(
         host?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [],
-      ).filter(
-        (el) => el.getClientRects().length > 0 && !el.closest('[hidden]'),
-      );
+      ).filter(isVisible);
+
       if (!items.length) {
         event.preventDefault();
         host?.focus();
@@ -66,6 +84,7 @@ export function useModalFocus(open: boolean, onClose: () => void) {
         first.focus();
       }
     };
+
     window.addEventListener('keydown', key, true);
     return () => {
       cancelAnimationFrame(frame);
@@ -73,8 +92,10 @@ export function useModalFocus(open: boolean, onClose: () => void) {
       if (before?.isConnected) before.focus();
     };
   }, [open]);
+
   return ref;
 }
+
 export function WorkspaceModal({
   title,
   eyebrow,
@@ -89,6 +110,8 @@ export function WorkspaceModal({
   wide?: boolean;
 }) {
   const ref = useModalFocus(true, onClose);
+  const titleId = `workspace-modal-title-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+
   return (
     <div
       className="workspace-modal"
@@ -102,14 +125,21 @@ export function WorkspaceModal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        aria-labelledby={titleId}
         tabIndex={-1}
       >
         <header>
-          <div>
-            {eyebrow && <small>{eyebrow}</small>}
-            <h2>{title}</h2>
+          <div className="workspace-modal__title-group">
+            {eyebrow && <small className="workspace-modal__eyebrow">{eyebrow}</small>}
+            <h2 id={titleId} className="workspace-modal__title">{title}</h2>
           </div>
-          <button onClick={onClose} aria-label={`Close ${title}`}>
+          <button
+            type="button"
+            className="workspace-modal__close"
+            onClick={onClose}
+            aria-label={`Close ${title}`}
+            title="Close (Esc)"
+          >
             <StudioIcon name="close" />
           </button>
         </header>

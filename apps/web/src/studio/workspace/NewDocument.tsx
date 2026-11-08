@@ -374,7 +374,7 @@ export function NewDocument({
             {kind === 'world' && signedIn
               ? 'This new world will be saved directly to your cloud account.'
               : 'This document starts on this device. Save to your account or export a file anytime.'}{' '}
-            No AI credits or network calls are needed for blank documents.
+            No AI credits are needed for blank documents.
           </p>
         </div>
 

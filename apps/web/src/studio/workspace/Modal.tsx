@@ -38,6 +38,8 @@ export function useModalFocus(open: boolean, onClose: () => void) {
 
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        // An inline editor (a card's rename field) cancels itself on Escape instead of closing the whole modal.
+        if (event.target instanceof Element && event.target.closest('[data-own-escape]')) return;
         const dialogs = Array.from(
           document.querySelectorAll('[aria-modal="true"]'),
         );

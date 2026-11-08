@@ -54,6 +54,15 @@ describe('CommandPalette empty state and keyboard behavior', () => {
     ).not.toBeNull();
   });
 
+  it('displays neutral empty state when commands list is empty and query is empty', () => {
+    const onClose = vi.fn();
+    render(<CommandPalette commands={[]} onClose={onClose} />);
+
+    expect(screen.getByText('No commands available')).not.toBeNull();
+    expect(screen.getByText('Press Esc to close.')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull();
+  });
+
   it('Arrow keys and Enter do nothing while empty state is displayed, and Esc closes the palette', () => {
     const onClose = vi.fn();
     const runA = vi.fn();

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { rankCommands, nextCursor } from './workspace/commands.js';
 import { useModalFocus } from './workspace/Modal.js';
 import { StudioIcon } from './workspace/Icon.js';
-import './workspace/workspace.css';
+
 export interface Command {
   id: string;
   label: string;
@@ -192,10 +192,14 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
               No matching action
             </span>
             <h3 className="command-search__empty-title">
-              No commands match &quot;{query}&quot;
+              {query
+                ? `No commands match "${query}"`
+                : 'No commands available'}
             </h3>
             <p className="command-search__empty-hint">
-              Try a different word, or press Esc to close.
+              {query
+                ? 'Try a different word, or press Esc to close.'
+                : 'Press Esc to close.'}
             </p>
             {query && (
               <button

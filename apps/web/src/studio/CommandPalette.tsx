@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { rankCommands, nextCursor } from './workspace/commands.js';
 import { useModalFocus } from './workspace/Modal.js';
 import { StudioIcon } from './workspace/Icon.js';
+import './workspace/workspace.css';
 export interface Command {
   id: string;
   label: string;
@@ -45,7 +46,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
   useEffect(() => {
     host.current
       ?.querySelector('[aria-selected="true"]')
-      ?.scrollIntoView({ block: 'nearest' });
+      ?.scrollIntoView?.({ block: 'nearest' });
   }, [active, query, host]);
   const run = (command: Command | undefined) => {
     if (!command || command.disabled) return;
@@ -97,6 +98,18 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
               setCursor(0);
             }}
             onKeyDown={(event) => {
+              if (!shown.length) {
+                if (
+                  event.key === 'ArrowDown' ||
+                  event.key === 'ArrowUp' ||
+                  event.key === 'Home' ||
+                  event.key === 'End' ||
+                  event.key === 'Enter'
+                ) {
+                  event.preventDefault();
+                  return;
+                }
+              }
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 setCursor(
@@ -175,16 +188,27 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
         {!shown.length && (
           <div className="command-search__empty">
             <StudioIcon name="search" />
-            <h3>No matching action</h3>
-            <p>Try a tool, document name, “export” or “world”.</p>
-            <button
-              onClick={() => {
-                setQuery('');
-                input.current?.focus();
-              }}
-            >
-              Clear search
-            </button>
+            <span className="command-search__empty-eyebrow">
+              No matching action
+            </span>
+            <h3 className="command-search__empty-title">
+              No commands match &quot;{query}&quot;
+            </h3>
+            <p className="command-search__empty-hint">
+              Try a different word, or press Esc to close.
+            </p>
+            {query && (
+              <button
+                type="button"
+                className="command-search__clear"
+                onClick={() => {
+                  setQuery('');
+                  input.current?.focus();
+                }}
+              >
+                Clear search
+              </button>
+            )}
           </div>
         )}
         <footer>

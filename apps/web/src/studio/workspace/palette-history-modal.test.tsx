@@ -201,13 +201,13 @@ describe('CommandPalette category resolution and grouping', () => {
     const input = screen.getByRole('combobox', { name: 'Search commands' });
 
     fireEvent.change(input, { target: { value: 'nonexistentquery' } });
-    expect(screen.getByText(/No matching actions for "nonexistentquery"/i)).not.toBeNull();
+    expect(screen.getByText('No commands match "nonexistentquery"')).not.toBeNull();
 
-    const clearBtns = screen.getAllByRole('button', { name: /Clear search query/i });
-    expect(clearBtns.length).toBe(2);
+    // The input row's clear icon and the empty state's own reset button.
+    expect(screen.getByRole('button', { name: 'Clear search query' })).not.toBeNull();
+    const emptyBtn = screen.getByRole('button', { name: 'Clear search' });
 
     // Clicking the empty state reset button clears query
-    const emptyBtn = clearBtns[1]!;
     fireEvent.click(emptyBtn);
     expect(screen.getByText('Tool: Brush')).not.toBeNull();
   });

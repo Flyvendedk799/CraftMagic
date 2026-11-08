@@ -198,6 +198,18 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
               setCursor(0);
             }}
             onKeyDown={(event) => {
+              if (!shown.length) {
+                if (
+                  event.key === 'ArrowDown' ||
+                  event.key === 'ArrowUp' ||
+                  event.key === 'Home' ||
+                  event.key === 'End' ||
+                  event.key === 'Enter'
+                ) {
+                  event.preventDefault();
+                  return;
+                }
+              }
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 setCursor(
@@ -320,11 +332,20 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
         {!flatItems.length && (
           <div className="command-search__empty">
             <StudioIcon name="search" />
+            {query && (
+              <span className="command-search__empty-eyebrow">
+                No matching action
+              </span>
+            )}
             <h3 className="command-search__empty-title">
-              {query ? `No matching actions for "${query}"` : 'No actions available'}
+              {query
+                ? `No commands match "${query}"`
+                : 'No commands available'}
             </h3>
-            <p className="command-search__empty-text">
-              Try searching for tools (brush, erase), document modes (build, world, plan), or actions (save, export).
+            <p className="command-search__empty-hint">
+              {query
+                ? 'Try a different word, or press Esc to close.'
+                : 'Press Esc to close.'}
             </p>
             {query && (
               <button
@@ -336,8 +357,7 @@ export function CommandPalette({ commands, onClose }: CommandPaletteProps) {
                   input.current?.focus();
                 }}
               >
-                <StudioIcon name="close" />
-                Clear search query
+                Clear search
               </button>
             )}
           </div>

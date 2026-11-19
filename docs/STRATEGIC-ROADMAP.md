@@ -14,7 +14,7 @@
 CraftMagic has successfully transitioned from three isolated proof-of-concept demos into a unified, reliable, canvas-first workspace. The execution of **1PLAN.md** milestones (P0–P5) established honest persistence boundaries, seamless mode handoffs, observable Minecraft agent pairing, and resilient multi-region world delivery. Immediately following this foundation, **PR #50** delivered an industry-leading LEGO-style instruction booklet and interactive digital builder mode featuring cardinal axonometric views, same-layer line-of-sight occlusion checks, dynamic parts callout trays, and overhang safety warnings.
 
 With the core authoring loop (**Make → Save → Compose → Build / Export**) proven and stable, CraftMagic stands at an inflection point. The underlying technology (parametric IR, deterministic expansion, voxel overlays, Sponge schematic generation, Fastify streaming Claude pipeline, and Fabric agent runtime) is remarkably robust. However, user acquisition, viral distribution, and daily active engagement are currently constrained by three strategic bottlenecks:
-1. **The Survival Gap:** While CraftMagic exports WorldEdit `.schem` files, the overwhelming majority of survival Minecraft players (SMPs, Hermitcraft-style technical servers) lack server-side operator permissions or WorldEdit. They rely exclusively on client-side **Litematica (`.litematic`)** projections and manual survival gathering.
+1. **The Survival Gap:** While CraftMagic exports WorldEdit `.schem` files, many survival Minecraft players (SMPs, Hermitcraft-style technical servers) lack server-side operator permissions or WorldEdit (assumption, not measured; validate before relying on it). They rely on client-side **Litematica (`.litematic`)** projections and manual survival gathering.
 2. **The "Punch in the Dark" Anxiety:** In-game construction currently relies on a wand right-click that renders only a wireframe particle bounding box (`END_ROD` particles). Players cannot preview structural facades, wall alignments, or door orientations before executing the irreversible build punch.
 3. **Single-Player Isolation & Generative Lottery:** Generations currently present a single take-it-or-leave-it output. Once created, builds remain locked inside private user accounts with zero community discovery, social forking, or embeddable showcase capabilities.
 
@@ -26,7 +26,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 
 | Subsystem / Package | Code Location | Architectural State | Current Strengths | Bottlenecks & Strategic Gaps |
 | :--- | :--- | :--- | :--- | :--- |
-| **Core Engine & Expander** | `packages/core/src/expand/`, `ir/`, `voxels/` | **Excellent** (482 tests green) | Deterministic 13-component IR expander; 50× smaller than raw voxels; machine-repairable expressions; sub-200ms expansion at 200k blocks. | Block palette frozen at 499 curated blocks (`blocks.gen.json`); lack of survival recipe decomposition tree; single-file export format (.schem). |
+| **Core Engine & Expander** | `packages/core/src/expand/`, `ir/`, `voxels/` | **Excellent** (core unit tests green) | Deterministic 13-component IR expander; 50× smaller than raw voxels; machine-repairable expressions; sub-200ms expansion at 200k blocks. | Block palette frozen at 499 curated blocks (`blocks.gen.json`); lack of survival recipe decomposition tree; single-file export format (.schem). |
 | **LEGO Guide & Cartography** | `packages/core/src/guide/`, `apps/web/src/guide/` | **State-of-the-Art** (PR #50 overhauled) | Dynamic camera occlusion calculation (`steps.ts`); 4 axonometric views (`isoRender.ts`); parts callout tray (`CalloutTray.tsx`); interactive builder mode with localStorage progress. | Lacks direct material aggregation into raw survival gathering lists (e.g. logs needed for stairs, sand for glass); cannot export to Litematica material lists. |
 | **Web Studio Workbench** | `apps/web/src/studio/`, `editor/`, `architecture/`, `world/` | **High** (`STUDIO-REBUILD.md`) | Unified workbench header, dockable panels, tabbed documents, keyboard shortcuts (Ctrl+K, F8), IndexedDB drafts, robust mode switching. | Single-user state only; no room/presence synchronization; no side-by-side generative comparator; private document silo. |
 | **Server & AI Pipeline** | `apps/server/src/generate/`, `agent/`, `db/` | **Stable & Cost-Disciplined** | Prompt caching on the default `claude-sonnet-5` model; budget guard ledger; single-round repair loop; durable agent job anchors (`009_job_regions.sql`). | Single output generation per prompt; no public sharing endpoints (`GET /api/gallery`); WebSocket gateway strictly reserved for Fabric bot agent. |
@@ -114,7 +114,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 ### Epic 1: The Survivalist's Bridge — Native Litematica (.litematic) Ecosystem & True Resource Gathering Engine
 **Strategic Priority:** P0 (Immediate Next Release)  
 **Target Personas:** Survival Minecraft Players, Technical Builders (SciCraft/Hermitcraft style), SMP Community Members  
-**Value Proposition:** Empowers millions of survival players to instantly take any CraftMagic structure into survival worlds without cheats, server mods, or WorldEdit, backed by exact raw-material harvesting checklists.
+**Value Proposition:** Lets survival players (audience size not yet estimated) instantly take any CraftMagic structure into survival worlds without cheats, server mods, or WorldEdit, backed by exact raw-material harvesting checklists.
 
 #### User Stories
 * **US-1.1 (Litematica Export):** *As a survival player on a multiplayer SMP without operator permissions, I want to download my build as a native `.litematic` file, so that I can load it directly into the Litematica client mod and project a holographic ghost in my survival world.*
@@ -155,8 +155,8 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 
 #### User Stories
 * **US-2.1 (Client-Side Hologram Projection):** *As a player holding the CraftMagic wand with a pending build, I want to see a translucent, color-accurate holographic ghost of the entire structure in my Minecraft world, so that I can see exactly how the facade, doors, and roof mesh with surrounding terrain.*
-* **US-2.2 (Interactive Placement Keybinds):** *As a player positioning a structure, I want to press `R` to cycle quarter-turn rotations, `F` to mirror, and use mouse-wheel / arrow keys to adjust elevation, with the hologram updating instantly on my screen, so that I don't have to fiddle with chat commands or sneak-click camera pitch angles.*
-* **US-2.3 (Terrain Collision & Air Cutaways):** *As a player placing a building on a hillside, I want the hologram to visually highlight blocks colliding with existing terrain in red and floating overhangs in amber, so that I can adjust the footing before committing the build.*
+* **US-2.2 (Interactive Placement Keybinds) — fallback path only:** *(On the preferred `block_display` path there is no client key mapping: rotation and height keep using the existing wand gestures in `WandHandler.java`, right-click to mark and sneak+right-click to turn or change height.)* As a player positioning a structure, I want to press `R` to cycle quarter-turn rotations, `F` to mirror, and use mouse-wheel / arrow keys to adjust elevation, with the hologram updating instantly on my screen, so that I don't have to fiddle with chat commands or sneak-click camera pitch angles.*
+* **US-2.3 (Terrain Collision & Air Cutaways) — fallback path only:** *(Red and amber highlighting needs client-side rendering; the preferred `block_display` path does not provide it.)* As a player placing a building on a hillside, I want the hologram to visually highlight blocks colliding with existing terrain in red and floating overhangs in amber, so that I can adjust the footing before committing the build.*
 
 #### Technical Architecture & Implementation Details
 1. **Fabric 26.2 Client-Safe Renderer (`mod/src/client/java/dev/craftmagic/agent/client/`):**
@@ -167,7 +167,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
    * Preferred path: text hints through the existing action bar. Fallback path: a screen overlay rendered via `HudRenderCallback` (also `fabric-rendering-v1`, same gate):
      * Build Name, Dimensions ($W \times H \times L$), Facing Direction (North/East/South/West), Y-Offset.
      * Shortcut hints: `[R] Rotate` · `[F] Mirror` · `[↑/↓] Height Offset` · `[Punch] Build` · `[Esc] Cancel`.
-3. **Network Protocol Enhancements (`dev/craftmagic/agent/net/`):**
+3. **Network Protocol Enhancements (`dev/craftmagic/agent/net/`), fallback path only:** the preferred server-spawned `block_display` path has no client renderer and needs none of these payloads; rotation and height keep using the existing wand gestures (`WandHandler.java`: right-click to mark, sneak+right-click to turn or change height).
    * Server streams compressed schematic voxels to the client upon wand right-click (`SchematicPreviewPayload`).
    * Client transmits updated anchor coordinates (`WandAnchorUpdatePayload`) during keybind adjustments.
    * Wand punch remains authoritative on the server: the server validates that the final anchor matches the player's line of sight and permission boundaries before initiating the `BuilderBot` task.
@@ -193,7 +193,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
    * Takes the emitted `BuildProgram` from the existing `POST /api/generations` flow (progress and the program arrive over `GET /api/generations/:id/events`).
    * Automatically invokes `applyStylePack(program, pack)` across 3 contextually contrasting packs (selected based on prompt keywords or curated defaults: e.g. `nordic`, `gothic`, `desert`, `blossom`).
    * Expands the programs client-side in parallel Web Workers using existing worker meshing.
-   * **Cost Impact:** Exactly 0 additional API tokens. Delivers instant multi-variation results in <300ms.
+   * **Cost Impact:** Exactly 0 additional API tokens. Target: 3 variations expand and mesh in under 400ms combined (not yet measured; this is the Phase 1 gate).
 2. **Studio 3D Comparator Dock (`apps/web/src/studio/ComparatorDock.tsx`):**
    * Renders a 3-column comparative viewport.
    * Coordinates Three.js orbit camera controllers through a shared event bus (`CameraSyncBus`): orbiting or zooming any viewport synchronizes azimuth, elevation, and target across all three panels.
@@ -300,7 +300,7 @@ PHASE 3: Generative Depth & Social Studio (Weeks 9-12)
 ---
 
 ### Phase 1: Foundation & Survival Democratization (Weeks 1–4)
-* **Objective:** Expand CraftMagic’s addressable market to survival Minecraft players while increasing prompt satisfaction by 3×.
+* **Objective:** Expand CraftMagic’s addressable market to survival Minecraft players while improving prompt satisfaction (no baseline or target measured yet; define the metric before the phase starts).
 * **Workstreams:**
   * **Core Team (Linus / Felix):** Implement `packages/core/src/schem/litematic.ts` with NBT bit-packing and complete unit tests (`litematic.test.ts`). Build survival crafting DAG resolver in `packages/core/src/registry/recipes.ts`.
   * **Frontend Team (Grace / Maya):** Build "Raw Gathering Checklist" and Shulker box visualizer in `apps/web/src/guide/` and `ExportBar.tsx`. Implement instant 3-way aesthetic branching with `applyStylePack` and the Three.js synchronized `ComparatorDock.tsx`.

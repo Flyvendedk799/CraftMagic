@@ -351,7 +351,7 @@ To maximize velocity and eliminate cross-task file conflicts, engineering assign
 | **Linus** | Backend Developer | Lead on `packages/core/src/schem/litematic.ts`, `recipes.ts`, and server gallery APIs (`012_public_gallery.sql`). |
 | **Grace** | Frontend Developer | Lead on `apps/web` Studio integration, `ComparatorDock.tsx`, `ExportBar.tsx`, and Shulker logistics UI. |
 | **Felix** | Fullstack Engineer | Lead on `/gallery` frontend, embeddable WebGL widget (`/embed/b/:slug`), and forking pipeline. |
-| **Devon** | DevOps & Systems | Lead on Fabric mod client hologram renderer (`mod/src/client/`), 26.2 JVM headless verification, and Gradle pipelines. |
+| **Devon** | DevOps & Systems | Lead on the Fabric mod hologram (preferred: server-spawned `block_display` in `mod/src/main/`; client renderer in `mod/src/client/` only on the fallback path), 26.2 JVM headless verification, and Gradle pipelines. |
 | **Maya** | Frontend Engineer | Lead on LEGO Guide survival checklist enhancements, `CalloutTray.tsx` extensions, and responsive mobile dock layouts. |
 | **Quinn** | QA & Code Reviewer | Owns automated verification scripts (`tools/verify-litematic.mjs`, `tools/verify-gallery.mjs`), test-database harnesses, and WCAG compliance. |
 | **PrimeTime** | Specialist Engineer | Implementation of complex architectural algorithms, 3D camera sync bus, and collaborative delta operational transforms. |

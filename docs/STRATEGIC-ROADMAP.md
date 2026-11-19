@@ -4,7 +4,7 @@
 **Mission:** Finish the platform entirely  
 **Target Audience:** Bob Jørgensen (CEO), Ada (Engineering Manager), Engineering Team  
 **Date:** September 2026  
-**Status:** Approved Product Strategy Deliverable  
+**Status:** Approved Product Strategy Deliverable. Repository copy corrected after review against the code at bc095f7; it now differs from artifact doc-5877c999 rev 1, which needs a matching revision.  
 
 ---
 
@@ -18,7 +18,7 @@ With the core authoring loop (**Make → Save → Compose → Build / Export**) 
 2. **The "Punch in the Dark" Anxiety:** In-game construction currently relies on a wand right-click that renders only a wireframe particle bounding box (`END_ROD` particles). Players cannot preview structural facades, wall alignments, or door orientations before executing the irreversible build punch.
 3. **Single-Player Isolation & Generative Lottery:** Generations currently present a single take-it-or-leave-it output. Once created, builds remain locked inside private user accounts with zero community discovery, social forking, or embeddable showcase capabilities.
 
-This strategic proposal outlines **five prioritized epics** designed to expand CraftMagic’s addressable market by 10×, eliminate in-game placement errors, introduce instant aesthetic exploration, establish a viral creator commons, and unlock real-time multiplayer architectural planning.
+This strategic proposal outlines **five prioritized epics** designed to widen CraftMagic’s addressable market (size not yet estimated), eliminate in-game placement errors, introduce instant aesthetic exploration, establish a viral creator commons, and unlock real-time multiplayer architectural planning.
 
 ---
 
@@ -27,9 +27,9 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
 | Subsystem / Package | Code Location | Architectural State | Current Strengths | Bottlenecks & Strategic Gaps |
 | :--- | :--- | :--- | :--- | :--- |
 | **Core Engine & Expander** | `packages/core/src/expand/`, `ir/`, `voxels/` | **Excellent** (482 tests green) | Deterministic 13-component IR expander; 50× smaller than raw voxels; machine-repairable expressions; sub-200ms expansion at 200k blocks. | Block palette frozen at 499 curated blocks (`blocks.gen.json`); lack of survival recipe decomposition tree; single-file export format (.schem). |
-| **LEGO Guide & Cartography** | `packages/core/src/guide/`, `apps/web/src/guide/` | **State-of-the-Art** (PR #50 overhauled) | Dynamic camera occlusion calculation (`steps.ts`); 4 axonometric views (`isoRender.ts`); parts callout tray (`StepTray.tsx`); interactive builder mode with localStorage progress. | Lacks direct material aggregation into raw survival gathering lists (e.g. logs needed for stairs, sand for glass); cannot export to Litematica material lists. |
+| **LEGO Guide & Cartography** | `packages/core/src/guide/`, `apps/web/src/guide/` | **State-of-the-Art** (PR #50 overhauled) | Dynamic camera occlusion calculation (`steps.ts`); 4 axonometric views (`isoRender.ts`); parts callout tray (`CalloutTray.tsx`); interactive builder mode with localStorage progress. | Lacks direct material aggregation into raw survival gathering lists (e.g. logs needed for stairs, sand for glass); cannot export to Litematica material lists. |
 | **Web Studio Workbench** | `apps/web/src/studio/`, `editor/`, `architecture/`, `world/` | **High** (`STUDIO-REBUILD.md`) | Unified workbench header, dockable panels, tabbed documents, keyboard shortcuts (Ctrl+K, F8), IndexedDB drafts, robust mode switching. | Single-user state only; no room/presence synchronization; no side-by-side generative comparator; private document silo. |
-| **Server & AI Pipeline** | `apps/server/src/generate/`, `agent/`, `db/` | **Stable & Cost-Disciplined** | Prompt caching on Claude 3.5 Sonnet; budget guard ledger; single-round repair loop; durable agent job anchors (`009_job_regions.sql`). | Single output generation per prompt; no public sharing endpoints (`GET /api/gallery`); WebSocket gateway strictly reserved for Fabric bot agent. |
+| **Server & AI Pipeline** | `apps/server/src/generate/`, `agent/`, `db/` | **Stable & Cost-Disciplined** | Prompt caching on the default `claude-sonnet-5` model; budget guard ledger; single-round repair loop; durable agent job anchors (`009_job_regions.sql`). | Single output generation per prompt; no public sharing endpoints (`GET /api/gallery`); WebSocket gateway strictly reserved for Fabric bot agent. |
 | **Fabric Mod Runtime** | `mod/src/main/` & `src/client/` (Minecraft 26.2, Java 25) | **Functional Core** | Server-side wand placement; 180-particle wireframe box; quarter-turn rotation; height stepping; clean single-jar bundled distribution. | Client mod (`CraftMagicClient.java`) is a bare stub (wand punch only); lack of in-game ghost voxel projection; HUD lacks visual block alignment preview. |
 
 ---
@@ -38,19 +38,21 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
 
 ### Vector 1: Litematica (`.litematic`) File Export & Projection Compatibility
 * **Current Mechanism:** `packages/core/src/schem/write.ts` writes Sponge v2 `.schem` using `fflate` and `NbtWriter`. Sponge v2 is widely supported by WorldEdit and Axiom, but unsupported natively by vanilla clients.
-* **Demographic Reality:** Survival Minecraft players—who represent over 80% of active builders—cannot install WorldEdit on vanilla or multi-player survival servers. Litematica (developed by Masa) is the universal standard for client-side schematic placement, block verification, and survival material gathering.
+* **Demographic Reality:** Survival Minecraft players—a large share of builders (assumption, not measured; validate before relying on it)—cannot install WorldEdit on vanilla or multi-player survival servers. Litematica (developed by Masa) is the universal standard for client-side schematic placement, block verification, and survival material gathering.
 * **Technical Analysis:** The `.litematic` format is a gzipped NBT file containing a root compound with `Metadata`, `MinecraftDataVersion`, and a `Regions` compound. Crucially, Litematica packs block states into 64-bit integer arrays (`LongArray`) where bit width is calculated as `max(2, ceil(log2(palette_size)))`. Because CraftMagic’s `VoxelGrid` already maintains indexed palettes in YZX order, bit-packing into `BigInt64Array` in isomorphic TypeScript is computationally trivial (<50ms for 500k blocks).
 * **Strategic Verdict:** **P0 Priority (Epic 1)**. Extremely high leverage with minimal engineering risk. Unlocks the entire survival community.
 
 ### Vector 2: In-Game Fabric Mod Ghost Projection Preview & HUD Keybinds
 * **Current Mechanism:** `WandHandler.java` dispatches `ParticleTypes.END_ROD` to trace 12 edges of a bounding cuboid (capped at 180 particles via `MAX_OUTLINE_PARTICLES`).
 * **The Problem:** A bounding box does not convey roof pitch, door placement, stair orientation, or terrain clipping. Players placing a 40×30 castle frequently discover after punching that the front portcullis faces into a dirt cliff.
-* **Prior Pitfall:** Early prototypes attempted to bundle `fabric-rendering-v1` and `fabric-key-mapping-api-v1`, causing runtime `IllegalAccessError` crashes on Fabric 26.2 due to model-pipeline mixin conflicts.
-* **Architectural Path:** By leveraging Minecraft 1.19.4+ / 26.2 native `block_display` entities spawned server-side, or a lightweight client-side translucent render buffer hooked directly into `WorldRenderEvents.AFTER_TRANSLUCENT` (using vanilla `MultiBufferSource` without heavy Fabric rendering pipeline mixins), the mod can project a translucent holographic ghost of the actual schematic blocks.
+* **Prior Pitfall:** The mod once bundled `fabric-rendering-v1` and `fabric-key-mapping-api-v1` for a hologram and keybinds that were never built (README.md, "One-jar install"). On 26.2, `fabric-rendering-v1`'s model-pipeline mixin died with an `IllegalAccessError` during the initial resource reload and the client crashed on startup. Both modules were removed from the bundle.
+* **Architectural Path:** A hologram needs a rendering hook, and the Fabric hooks for it (`WorldRenderEvents.AFTER_TRANSLUCENT`, `HudRenderCallback`) are part of `fabric-rendering-v1`, so a client renderer cannot avoid that module. Two options, in order of preference:
+  1. *No new Fabric module:* the server spawns `block_display` entities (vanilla, 1.19.4+) for the pending build, and the existing action bar (`ActionBar.java`) carries the text hints. This needs no rendering hook and no client-side renderer. Whether it stays smooth for large builds is an open question for the spike.
+  2. *Re-bundle `fabric-rendering-v1`:* only if option 1 proves insufficient, with the 26.2 `IllegalAccessError` as an explicit risk and a hard gate: the module must pass a clean-install client run (see Phase 2 gate) before it ships. Keybinds (`R`, `F`) would likewise need `fabric-key-mapping-api-v1` to be re-added and its `depends` block read first.
 * **Strategic Verdict:** **P1 Priority (Epic 2)**. Closes the physical Minecraft delivery loop and elevates the user experience from guesswork to precision engineering.
 
 ### Vector 3: Multi-Variation AI Generation & Stylistic Exploration
-* **Current Mechanism:** `generateBuild()` in `apps/server/src/generate/pipeline.ts` executes a single prompt-to-program flow with Claude 3.5 Sonnet, costing ~$0.03 to $0.06 per generation.
+* **Current Mechanism:** `generateBuild()` in `apps/server/src/generate/pipeline.ts` executes a single prompt-to-program flow with `DEFAULT_MODEL = 'claude-sonnet-5'` (`pipeline.ts:126`). Per-generation cost is recorded by the spend ledger (`spend.ts`); no figure is quoted here.
 * **The Insight:** Users frequently know *what* they want to build (e.g., "a 3-storey watchtower"), but struggle to articulate aesthetic nuances (Nordic Spruce vs Gothic Deepslate vs Desert Sandstone). 
 * **The Architectural Advantage:** CraftMagic already separates structure from aesthetics via semantic palettes (`packages/core/src/registry/stylePacks.ts`). Applying a `StylePack` (`applyStylePack()`) is an instantaneous, deterministic, **zero-cost** operation that swaps block roles while preserving stair, slab, and door geometries.
 * **Two-Tier Strategy:** 
@@ -136,12 +138,12 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
    * Computes recursive raw ingredient totals alongside the finished block inventory.
 3. **Web UI Integration (`apps/web/src/editor/ExportBar.tsx` & `apps/web/src/guide/`):**
    * Adds "Download .litematic" directly adjacent to "Download .schem".
-   * Extends `StepTray.tsx` and the materials summary with a toggle: **"Finished Blocks" vs "Raw Gathering Checklist"**.
+   * Extends `CalloutTray.tsx` and the materials summary with a toggle: **"Finished Blocks" vs "Raw Gathering Checklist"**.
    * Renders Shulker Box icons with capacity fractions (e.g., `2 Shulkers + 14 Stacks`).
 
 #### Architectural Impact
 * `packages/core`: Add `src/schem/litematic.ts`, `src/schem/litematic.test.ts`, `src/registry/recipes.ts`, `src/registry/recipes.test.ts`. Zero breaking changes.
-* `apps/web`: Extend `ExportBar.tsx`, `GuidePage.tsx`, `StepTray.tsx`.
+* `apps/web`: Extend `ExportBar.tsx`, `GuidePage.tsx`, `CalloutTray.tsx`.
 * `apps/server` & `mod`: Untouched.
 
 ---
@@ -158,12 +160,11 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
 
 #### Technical Architecture & Implementation Details
 1. **Fabric 26.2 Client-Safe Renderer (`mod/src/client/java/dev/craftmagic/agent/client/`):**
-   * Completely avoids problematic `fabric-rendering-v1` mixins that caused initial resource reload crashes on 26.2.
-   * Utilizes Fabric's lightweight `WorldRenderEvents.AFTER_TRANSLUCENT` event callback.
-   * Batches schematic voxels into a single client-side vertex buffer using vanilla `RenderType.translucent()` and Mojang shader pipelines.
-   * Applies frustum culling and a 64-block maximum render distance to maintain solid 60+ FPS during projection.
+   * Preferred path: server-spawned `block_display` entities show the ghost with no new Fabric module (see Vector 2). The spike must measure entity count and frame time for large builds and set a render distance and block cap from the result.
+   * Fallback path: a client renderer using `WorldRenderEvents.AFTER_TRANSLUCENT` with vanilla `RenderType.translucent()`. That event is part of `fabric-rendering-v1`, which crashed the 26.2 client with an `IllegalAccessError` when it was bundled (README.md, "One-jar install"). The fallback ships only if it passes the clean-install gate in Phase 2.
+   * Frustum culling and a render distance cap apply to either path; the 60+ FPS target is a goal to be measured, not a result.
 2. **Client Placement HUD (`mod/src/client/java/dev/craftmagic/agent/client/hud/`):**
-   * Clean, unobtrusive screen overlay rendered via `HudRenderCallback`:
+   * Preferred path: text hints through the existing action bar. Fallback path: a screen overlay rendered via `HudRenderCallback` (also `fabric-rendering-v1`, same gate):
      * Build Name, Dimensions ($W \times H \times L$), Facing Direction (North/East/South/West), Y-Offset.
      * Shortcut hints: `[R] Rotate` · `[F] Mirror` · `[↑/↓] Height Offset` · `[Punch] Build` · `[Esc] Cancel`.
 3. **Network Protocol Enhancements (`dev/craftmagic/agent/net/`):**
@@ -172,7 +173,7 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
    * Wand punch remains authoritative on the server: the server validates that the final anchor matches the player's line of sight and permission boundaries before initiating the `BuilderBot` task.
 
 #### Architectural Impact
-* `mod`: Upgrades `CraftMagicClient.java` from a stub into an active client visualizer; introduces `HologramRenderer.java`, `PlacementHud.java`, and keybind registration.
+* `mod`: Preferred path adds server-side hologram entity management in `mod/src/main/` and extends `ActionBar.java`. The fallback path upgrades `CraftMagicClient.java` from a stub into a client visualizer (`HologramRenderer.java`, `PlacementHud.java`, keybind registration) and re-adds `fabric-rendering-v1` and `fabric-key-mapping-api-v1` to the bundle.
 * `packages/core` & `apps/server`: Modest protocol payload additions in `packages/core/src/protocol/agent.ts`.
 
 ---
@@ -189,7 +190,7 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
 
 #### Technical Architecture & Implementation Details
 1. **Deterministic Aesthetic Branching Engine (`apps/web/src/studio/variation.ts`):**
-   * Takes the emitted `BuildProgram` from `/api/generate`.
+   * Takes the emitted `BuildProgram` from the existing `POST /api/generations` flow (progress and the program arrive over `GET /api/generations/:id/events`).
    * Automatically invokes `applyStylePack(program, pack)` across 3 contextually contrasting packs (selected based on prompt keywords or curated defaults: e.g. `nordic`, `gothic`, `desert`, `blossom`).
    * Expands the programs client-side in parallel Web Workers using existing worker meshing.
    * **Cost Impact:** Exactly 0 additional API tokens. Delivers instant multi-variation results in <300ms.
@@ -198,12 +199,12 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
    * Coordinates Three.js orbit camera controllers through a shared event bus (`CameraSyncBus`): orbiting or zooming any viewport synchronizes azimuth, elevation, and target across all three panels.
    * Includes structural metrics cards under each variation: Block Count, Palette Distribution, Dominant Materials, and Guide Step Count.
 3. **Advanced Generative Silhouette Branching (Server Phase):**
-   * For users requesting structural/layout variations (not just palettes), the server introduces `/api/generate/variations` supporting concurrent low-effort Claude passes (`effort: 'low'`) with distinct temperature seeds, gated by user subscription quota and spend ledger checks.
+   * For users requesting structural/layout variations (not just palettes), the server introduces a new route under `/api/generations/` (e.g. `POST /api/generations/variations`) supporting concurrent low-effort Claude passes (`effort: 'low'`) with distinct temperature seeds, gated by user subscription quota and spend ledger checks.
 
 #### Architectural Impact
 * `packages/core`: Add style pack contextual recommender in `packages/core/src/registry/stylePacks.ts`.
-* `apps/web`: Create `ComparatorDock.tsx`, update `StudioPage.tsx` and `useStudioWorkspace.ts`.
-* `apps/server`: Add variation batching routes in `apps/server/src/generate/routes.ts`.
+* `apps/web`: Create `ComparatorDock.tsx`, update `StudioPage.tsx`, `studio/workspace/WorkspaceFrame.tsx` and `studio/workspace/documents.ts`.
+* `apps/server`: Add the variation route alongside the existing `/api/generations` routes in `apps/server/src/generate/routes.ts`.
 
 ---
 
@@ -273,7 +274,7 @@ This strategic proposal outlines **five prioritized epics** designed to expand C
    * Remote user cursors rendered as SVG pointers on the 2D grid plane.
 
 #### Architectural Impact
-* `apps/server`: Add `apps/server/src/collab/` WebSocket room broker and Redis/in-memory session state.
+* `apps/server`: Add `apps/server/src/collab/` WebSocket room broker with in-memory session state (Redis only if the server is scaled out).
 * `apps/web`: Add collaborative state hooks in `apps/web/src/architecture/` and presence indicators.
 
 ---
@@ -316,14 +317,14 @@ PHASE 3: Generative Depth & Social Studio (Weeks 9-12)
 ### Phase 2: In-Game Spatial Precision & Community Discovery (Weeks 5–8)
 * **Objective:** Eliminate in-game placement anxiety and establish a viral referral loop.
 * **Workstreams:**
-  * **Mod & Runtime Team (Devon / Linus):** Implement client-side translucent ghost projection renderer in `mod/src/client/` using `WorldRenderEvents.AFTER_TRANSLUCENT`. Implement placement HUD and keybinds (`R`, `F`, arrows).
+  * **Mod & Runtime Team (Devon / Linus):** Implement the ghost projection (preferred: server-spawned `block_display` entities; fallback: a client renderer on `WorldRenderEvents.AFTER_TRANSLUCENT`, which needs `fabric-rendering-v1`). Implement placement hints and keybinds (`R`, `F`, arrows), noting that keybinds need `fabric-key-mapping-api-v1`.
   * **Fullstack & UI Team (Felix / Grace / Morgan):** Execute database migration `012_public_gallery.sql`. Build `/gallery` and `/b/:slug` pages, public publish modal, one-click forking flow, and lightweight `/embed/b/:slug` 3D viewer.
 * **Deliverables:**
   * Fabric mod with true in-game holographic block ghost preview before building.
   * Public community gallery with search, tags, and 3D preview cards.
   * Embeddable 3D iframe widget for external web distribution.
 * **Verification Gate:**
-  * Verified Fabric 26.2 client run with clean mod directory: zero `IllegalAccessError` or startup crashes.
+  * Verified Fabric 26.2 client run on a real install with nothing else in `mods/` (not the dev `runClient`, which puts all of Fabric API on the classpath): zero `IllegalAccessError` or startup crashes. Mandatory if `fabric-rendering-v1` or `fabric-key-mapping-api-v1` is re-bundled.
   * Embeddable widget loads and renders in under 500ms on external origins with zero authentication.
 
 ---
@@ -351,7 +352,7 @@ To maximize velocity and eliminate cross-task file conflicts, engineering assign
 | **Grace** | Frontend Developer | Lead on `apps/web` Studio integration, `ComparatorDock.tsx`, `ExportBar.tsx`, and Shulker logistics UI. |
 | **Felix** | Fullstack Engineer | Lead on `/gallery` frontend, embeddable WebGL widget (`/embed/b/:slug`), and forking pipeline. |
 | **Devon** | DevOps & Systems | Lead on Fabric mod client hologram renderer (`mod/src/client/`), 26.2 JVM headless verification, and Gradle pipelines. |
-| **Maya** | Frontend Engineer | Lead on LEGO Guide survival checklist enhancements, `StepTray.tsx` extensions, and responsive mobile dock layouts. |
+| **Maya** | Frontend Engineer | Lead on LEGO Guide survival checklist enhancements, `CalloutTray.tsx` extensions, and responsive mobile dock layouts. |
 | **Quinn** | QA & Code Reviewer | Owns automated verification scripts (`tools/verify-litematic.mjs`, `tools/verify-gallery.mjs`), test-database harnesses, and WCAG compliance. |
 | **PrimeTime** | Specialist Engineer | Implementation of complex architectural algorithms, 3D camera sync bus, and collaborative delta operational transforms. |
 | **Integrator** | Review & Landing | Rigorous review of all staged PRs, ensuring clean mergeability, branch integrity, and zero regressions against P0–P5 contracts. |
@@ -362,7 +363,7 @@ To maximize velocity and eliminate cross-task file conflicts, engineering assign
 
 | Risk Factor | Probability | Impact | Mitigation Strategy |
 | :--- | :---: | :---: | :--- |
-| **Fabric 26.2 Mixin & Shader Volatility** | Medium | High | Strictly avoid bundling `fabric-rendering-v1`. Use native Mojang shaders and `WorldRenderEvents.AFTER_TRANSLUCENT` without custom render pipeline mixins. Test exclusively against clean vanilla jars in CI. |
+| **Fabric 26.2 Mixin & Shader Volatility** | Medium | High | Any client rendering hook (`WorldRenderEvents.AFTER_TRANSLUCENT`, `HudRenderCallback`) lives in `fabric-rendering-v1`, whose bundling crashed the 26.2 client with an `IllegalAccessError` (README.md, "One-jar install"). Prefer server-spawned `block_display` entities, which need no rendering module. If the module is re-bundled, treat the crash as a known risk and gate release on a clean-install client run with nothing else in `mods/`. |
 | **Litematica Bit-Packing Desynchronization** | Low | High | Validate bit-packing against Masa's reference implementation. Lock implementation with round-trip unit tests reading back written `.litematic` files in `packages/core/src/schem/litematic.test.ts`. |
 | **AI Generation Token Cost Escalation** | Medium | Medium | Prioritize Epic 3's zero-cost semantic palette branching (`applyStylePack`) for default user variation flows. Gate multi-candidate LLM calls behind user quotas and strict spend ledger checks. |
 | **Collaborative State Divergence** | Medium | Medium | Limit initial collaboration scope to 2D Architecture mode (discrete SVG room/door entities), avoiding high-frequency voxel painting synchronization until Phase 3. |

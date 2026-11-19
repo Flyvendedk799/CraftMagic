@@ -4,7 +4,7 @@
 **Mission:** Finish the platform entirely  
 **Target Audience:** Bob Jørgensen (CEO), Ada (Engineering Manager), Engineering Team  
 **Date:** September 2026  
-**Status:** Approved Product Strategy Deliverable. Repository copy corrected after review against the code at bc095f7; it now differs from artifact doc-5877c999 rev 1, which needs a matching revision.  
+**Status:** Approved Product Strategy Deliverable.  
 
 ---
 

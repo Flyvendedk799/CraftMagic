@@ -10,7 +10,8 @@ The product path, which every door (landing, dashboard, studio) is meant to tell
 **Make** (Build, Architecture, or a prompt) → **Save** (the library) → optionally **Compose**
 (World mode) → **Build in Minecraft / Export**. `1PLAN.md` is the working plan that made the
 three studio modes one product rather than three demos; `docs/PATCH-2.0.md` is the record of
-the release before it.
+the release before it; `docs/STRATEGIC-ROADMAP.md` is the official forward-looking product
+roadmap following 1PLAN coherence and the PR #50 LEGO build guide overhaul.
 
 ## Rebuilt Studio workspace
 
@@ -18,7 +19,7 @@ The Studio is now a canvas-first workbench with document tabs, resizable task do
 
 Use **Ctrl+K** for tools and commands, **F8** for focus mode, and **Deliver** for account saves, schematic/program downloads, guides and Minecraft delivery. Browser drafts stay on the current device; account documents require sign-in. Undo follows the document that owns the edit during the current session.
 
-See [Studio rebuild and verification](docs/STUDIO-REBUILD.md) for architecture, persistence boundaries and reproducible browser/database checks.
+See [Studio rebuild and verification](docs/STUDIO-REBUILD.md) for architecture, persistence boundaries and reproducible browser/database checks, and [Strategic Roadmap](docs/STRATEGIC-ROADMAP.md) for prioritized epics, opportunity vector evaluations and multi-phase execution sequencing.
 
 ## How it works
 
@@ -969,5 +970,6 @@ the site. Run it after `gradlew build` in `mod/` and commit the result. The jar'
 domain is registered, both change together.
 
 See `1PLAN.md` for the product plan this branch executed (its phases, notes and progress
-log), and `docs/PATCH-2.0.md` for the release before it. The `.claude/plans/` directory that
+log), `docs/PATCH-2.0.md` for the release before it, and `docs/STRATEGIC-ROADMAP.md` for the
+official forward-looking product roadmap. The `.claude/plans/` directory that
 older notes point at is gone.

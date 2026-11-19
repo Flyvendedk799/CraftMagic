@@ -39,7 +39,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 ### Vector 1: Litematica (`.litematic`) File Export & Projection Compatibility
 * **Current Mechanism:** `packages/core/src/schem/write.ts` writes Sponge v2 `.schem` using `fflate` and `NbtWriter`. Sponge v2 is widely supported by WorldEdit and Axiom, but unsupported natively by vanilla clients.
 * **Demographic Reality:** Survival Minecraft players—a large share of builders (assumption, not measured; validate before relying on it)—cannot install WorldEdit on vanilla or multi-player survival servers. Litematica (developed by Masa) is the universal standard for client-side schematic placement, block verification, and survival material gathering.
-* **Technical Analysis:** The `.litematic` format is a gzipped NBT file containing a root compound with `Metadata`, `MinecraftDataVersion`, and a `Regions` compound. Crucially, Litematica packs block states into 64-bit integer arrays (`LongArray`) where bit width is calculated as `max(2, ceil(log2(palette_size)))`. Because CraftMagic’s `VoxelGrid` already maintains indexed palettes in YZX order, bit-packing into `BigInt64Array` in isomorphic TypeScript is computationally trivial (<50ms for 500k blocks).
+* **Technical Analysis:** The `.litematic` format is a gzipped NBT file containing a root compound with `Metadata`, `MinecraftDataVersion`, and a `Regions` compound. Crucially, Litematica packs block states into 64-bit integer arrays (`LongArray`) where bit width is calculated as `max(2, ceil(log2(palette_size)))`. Because CraftMagic’s `VoxelGrid` already maintains indexed palettes in YZX order, bit-packing into `BigInt64Array` in isomorphic TypeScript is computationally trivial (estimate: under 50ms for 500k blocks, not yet measured).
 * **Strategic Verdict:** **P0 Priority (Epic 1)**. Extremely high leverage with minimal engineering risk. Unlocks the entire survival community.
 
 ### Vector 2: In-Game Fabric Mod Ghost Projection Preview & HUD Keybinds
@@ -154,7 +154,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 **Value Proposition:** Replaces ambiguous bounding-box particles with a crystal-clear, in-game holographic block ghost, allowing players to rotate, nudge, and verify spatial alignment in real time before building.
 
 #### User Stories
-* **US-2.1 (Client-Side Hologram Projection):** *As a player holding the CraftMagic wand with a pending build, I want to see a translucent, color-accurate holographic ghost of the entire structure in my Minecraft world, so that I can see exactly how the facade, doors, and roof mesh with surrounding terrain.*
+* **US-2.1 (Hologram Projection):** *As a player holding the CraftMagic wand with a pending build, I want to see a translucent, color-accurate holographic ghost of the entire structure in my Minecraft world, so that I can see exactly how the facade, doors, and roof mesh with surrounding terrain.*
 * **US-2.2 (Interactive Placement Keybinds) — fallback path only:** *(On the preferred `block_display` path there is no client key mapping: rotation and height keep using the existing wand gestures in `WandHandler.java`, right-click to mark and sneak+right-click to turn or change height.)* As a player positioning a structure, I want to press `R` to cycle quarter-turn rotations, `F` to mirror, and use mouse-wheel / arrow keys to adjust elevation, with the hologram updating instantly on my screen, so that I don't have to fiddle with chat commands or sneak-click camera pitch angles.*
 * **US-2.3 (Terrain Collision & Air Cutaways) — fallback path only:** *(Red and amber highlighting needs client-side rendering; the preferred `block_display` path does not provide it.)* As a player placing a building on a hillside, I want the hologram to visually highlight blocks colliding with existing terrain in red and floating overhangs in amber, so that I can adjust the footing before committing the build.*
 
@@ -164,9 +164,9 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
    * Fallback path: a client renderer using `WorldRenderEvents.AFTER_TRANSLUCENT` with vanilla `RenderType.translucent()`. That event is part of `fabric-rendering-v1`, which crashed the 26.2 client with an `IllegalAccessError` when it was bundled (README.md, "One-jar install"). The fallback ships only if it passes the clean-install gate in Phase 2.
    * Frustum culling and a render distance cap apply to either path; the 60+ FPS target is a goal to be measured, not a result.
 2. **Client Placement HUD (`mod/src/client/java/dev/craftmagic/agent/client/hud/`):**
-   * Preferred path: text hints through the existing action bar. Fallback path: a screen overlay rendered via `HudRenderCallback` (also `fabric-rendering-v1`, same gate):
+   * Preferred path: text hints through the existing action bar; keeps the existing wand gestures from `WandHandler.java` (right-click to mark, sneak+right-click to turn or change height). Fallback path: a screen overlay rendered via `HudRenderCallback` (also `fabric-rendering-v1`, same gate):
      * Build Name, Dimensions ($W \times H \times L$), Facing Direction (North/East/South/West), Y-Offset.
-     * Shortcut hints: `[R] Rotate` · `[F] Mirror` · `[↑/↓] Height Offset` · `[Punch] Build` · `[Esc] Cancel`.
+     * Shortcut hints (fallback path only): `[R] Rotate` · `[F] Mirror` · `[↑/↓] Height Offset` · `[Punch] Build` · `[Esc] Cancel`.
 3. **Network Protocol Enhancements (`dev/craftmagic/agent/net/`), fallback path only:** the preferred server-spawned `block_display` path has no client renderer and needs none of these payloads; rotation and height keep using the existing wand gestures (`WandHandler.java`: right-click to mark, sneak+right-click to turn or change height).
    * Server streams compressed schematic voxels to the client upon wand right-click (`SchematicPreviewPayload`).
    * Client transmits updated anchor coordinates (`WandAnchorUpdatePayload`) during keybind adjustments.
@@ -317,7 +317,7 @@ PHASE 3: Generative Depth & Social Studio (Weeks 9-12)
 ### Phase 2: In-Game Spatial Precision & Community Discovery (Weeks 5–8)
 * **Objective:** Eliminate in-game placement anxiety and establish a viral referral loop.
 * **Workstreams:**
-  * **Mod & Runtime Team (Devon / Linus):** Implement the ghost projection (preferred: server-spawned `block_display` entities; fallback: a client renderer on `WorldRenderEvents.AFTER_TRANSLUCENT`, which needs `fabric-rendering-v1`). Implement placement hints and keybinds (`R`, `F`, arrows), noting that keybinds need `fabric-key-mapping-api-v1`.
+  * **Mod & Runtime Team (Devon / Linus):** Implement the ghost projection (preferred: server-spawned `block_display` entities; fallback: a client renderer on `WorldRenderEvents.AFTER_TRANSLUCENT`, which needs `fabric-rendering-v1`). The preferred path keeps the existing wand gestures from `WandHandler.java` and the action-bar hints; placement hints and keybinds (`R`, `F`, arrows) are fallback path only, noting that keybinds need `fabric-key-mapping-api-v1`.
   * **Fullstack & UI Team (Felix / Grace / Morgan):** Execute database migration `012_public_gallery.sql`. Build `/gallery` and `/b/:slug` pages, public publish modal, one-click forking flow, and lightweight `/embed/b/:slug` 3D viewer.
 * **Deliverables:**
   * Fabric mod with true in-game holographic block ghost preview before building.

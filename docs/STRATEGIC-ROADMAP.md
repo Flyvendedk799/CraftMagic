@@ -42,7 +42,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 * **Technical Analysis:** The `.litematic` format is a gzipped NBT file containing a root compound with `Metadata`, `MinecraftDataVersion`, and a `Regions` compound. Crucially, Litematica packs block states into 64-bit integer arrays (`LongArray`) where bit width is calculated as `max(2, ceil(log2(palette_size)))`. Because CraftMagic’s `VoxelGrid` already maintains indexed palettes in YZX order, bit-packing into `BigInt64Array` in isomorphic TypeScript is computationally trivial (estimate: under 50ms for 500k blocks, not yet measured).
 * **Strategic Verdict:** **P0 Priority (Epic 1)**. Extremely high leverage with minimal engineering risk. Unlocks the entire survival community.
 
-### Vector 2: In-Game Fabric Mod Ghost Projection Preview & HUD Keybinds
+### Vector 2: In-Game Fabric Mod Ghost Projection Preview & Action-Bar Placement Hints
 * **Current Mechanism:** `WandHandler.java` dispatches `ParticleTypes.END_ROD` to trace 12 edges of a bounding cuboid (capped at 180 particles via `MAX_OUTLINE_PARTICLES`).
 * **The Problem:** A bounding box does not convey roof pitch, door placement, stair orientation, or terrain clipping. Players placing a 40×30 castle frequently discover after punching that the front portcullis faces into a dirt cliff.
 * **Prior Pitfall:** The mod once bundled `fabric-rendering-v1` and `fabric-key-mapping-api-v1` for a hologram and keybinds that were never built (README.md, "One-jar install"). On 26.2, `fabric-rendering-v1`'s model-pipeline mixin died with an `IllegalAccessError` during the initial resource reload and the client crashed on startup. Both modules were removed from the bundle.
@@ -92,7 +92,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 |                                                                                   |
 |  EPIC 2: IN-GAME SPATIAL PRESENCE                                  [Priority: P1]  |
 |  * Fabric 26.2 Hologram Ghost Projection Preview                                  |
-|  * Interactive In-Game Placement HUD & Keybinds                                   |
+|  * Action-Bar Placement Hints                                                     |
 |                                                                                   |
 |  EPIC 3: CREATIVE VELOCITY                                         [Priority: P0]  |
 |  * Multi-Style Generative Exploration (Instant 3-Way Aesthetic Branching)          |
@@ -148,7 +148,7 @@ This strategic proposal outlines **five prioritized epics** designed to widen Cr
 
 ---
 
-### Epic 2: In-Game Spatial Presence — Fabric Mod Hologram Preview & Interactive Placement HUD
+### Epic 2: In-Game Spatial Presence — Fabric Mod Hologram Preview & Placement Hints
 **Strategic Priority:** P1 (Sprint 3–4)  
 **Target Personas:** Modded Minecraft Players, Server Admins, Content Creators  
 **Value Proposition:** Replaces ambiguous bounding-box particles with a crystal-clear, in-game holographic block ghost, allowing players to rotate, nudge, and verify spatial alignment in real time before building.
@@ -289,7 +289,7 @@ PHASE 1: Foundation & Survival (Weeks 1-4)
 └── Epic 3A: Instant 3-Way Aesthetic Variations & Studio Comparator Dock
 
 PHASE 2: Spatial Precision & Community Hub (Weeks 5-8)
-├── Epic 2: Fabric Mod Hologram Ghost Projection & Placement HUD Keybinds
+├── Epic 2: Fabric Mod Hologram Ghost Projection & Action-Bar Placement Hints
 └── Epic 4: Creator Commons Gallery, Social Forking & Embeddable 3D Viewer
 
 PHASE 3: Generative Depth & Social Studio (Weeks 9-12)

@@ -10,8 +10,8 @@ The product path, which every door (landing, dashboard, studio) is meant to tell
 **Make** (Build, Architecture, or a prompt) → **Save** (the library) → optionally **Compose**
 (World mode) → **Build in Minecraft / Export**. `1PLAN.md` is the working plan that made the
 three studio modes one product rather than three demos; `docs/PATCH-2.0.md` is the record of
-the release before it; `docs/STRATEGIC-ROADMAP.md` is the official forward-looking product
-roadmap following 1PLAN coherence and the PR #50 LEGO build guide overhaul.
+the release before it; `docs/STRATEGIC-ROADMAP.md` is a proposed product roadmap
+following 1PLAN coherence and the PR #50 LEGO build guide overhaul.
 
 ## Rebuilt Studio workspace
 
@@ -971,5 +971,5 @@ domain is registered, both change together.
 
 See `1PLAN.md` for the product plan this branch executed (its phases, notes and progress
 log), `docs/PATCH-2.0.md` for the release before it, and `docs/STRATEGIC-ROADMAP.md` for the
-official forward-looking product roadmap. The `.claude/plans/` directory that
+proposed product roadmap. The `.claude/plans/` directory that
 older notes point at is gone.
